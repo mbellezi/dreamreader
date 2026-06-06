@@ -6,6 +6,7 @@ import {
   VoiceProfileSchema,
   VoiceSampleSchema,
   type VoiceCloneInput,
+  type VoiceDesignPromptInput,
   type VoiceEngineBinding,
   type VoiceFilter,
   type VoiceProfile,
@@ -17,15 +18,21 @@ import { AppError } from "@main/lib/errors"
 import { hashBuffer } from "@main/lib/hash"
 import { createId } from "@main/lib/ids"
 import type { AppPaths } from "@main/lib/paths"
+import {
+  builtInBindingIdFor,
+  builtInBindingKindFor,
+  builtInCompatibilityFor,
+  builtInSettingsFor,
+  builtInVoicePresets,
+  DEFAULT_VOICE_PROFILE_ID
+} from "@main/services/default-voices"
 import { LocalTtsAdapter } from "@main/services/local-tts-adapter"
 import { buildPreviewPlan } from "@main/services/voice-preview"
 
-export const DEFAULT_VOICE_PROFILE_ID = "voice_builtin_ptbr_neutral"
-
-const builtInVoiceSettings = {
-  provider: "dreamreader",
-  preset: "pt-br-neutral"
-}
+const F5_ENGINE_ID = "f5-tts-pt-br"
+const F5_REFERENCE_MAX_MS = 12_000
+const QWEN_BASE_CLONE_ENGINE_IDS = new Set(["qwen3-tts-06b-mlx", "qwen3-tts-17b-base-mlx"])
+const QWEN_VOICE_DESIGN_ENGINE_ID = "qwen3-tts-17b-mlx"
 
 export class VoiceService {
   private readonly previewAdapter = new LocalTtsAdapter()
@@ -77,6 +84,9 @@ export class VoiceService {
     if (capabilities.supportsVoiceClone !== true) {
       throw new AppError("voice_clone_unsupported", "Selected engine does not support voice cloning")
     }
+    if (requiresReferenceTranscript(engine.id) && !input.transcript?.trim()) {
+      throw new AppError("voice_transcript_required", "Voice cloning requires a transcript that matches the reference audio")
+    }
 
     const now = new Date()
     const profileId = createId("voice")
@@ -95,7 +105,10 @@ export class VoiceService {
           sampleAssetId: sample.assetId
         }),
         tags: [input.language, "clonada"],
-        settingsJson: {},
+        settingsJson: {
+          compatibleAdapterIds: [engine.adapterId],
+          compatibleEngineIds: [input.engineId]
+        },
         consentConfirmedAt: now,
         consentNote: input.consentNote,
         createdFromEngineId: input.engineId,
@@ -125,6 +138,63 @@ export class VoiceService {
       settingsJson: {
         transcript: input.transcript ?? "",
         source: "local-reference"
+      },
+      compatibilityJson: {
+        language: input.language,
+        engineVersion: engine.version
+      },
+      updatedAt: now
+    })
+
+    return toVoiceProfile(voice, await this.bindingsForVoice(profileId))
+  }
+
+  async createFromDesignPrompt(input: VoiceDesignPromptInput): Promise<VoiceProfile> {
+    await this.ensureReady()
+    const engine = await this.db.query.ttsEngines.findFirst({ where: eq(ttsEngines.id, input.engineId) })
+    if (!engine) {
+      throw new AppError("tts_engine_not_found", "TTS engine not found")
+    }
+    if (!engine.installed) {
+      throw new AppError("tts_engine_not_configured", "TTS engine model is not installed")
+    }
+    if (engine.id !== QWEN_VOICE_DESIGN_ENGINE_ID || engine.adapterId !== "qwen3-tts-mlx") {
+      throw new AppError("voice_design_unsupported", "Selected engine does not support voice design prompts")
+    }
+
+    const now = new Date()
+    const profileId = createId("voice")
+    const [voice] = await this.db
+      .insert(voiceProfiles)
+      .values({
+        id: profileId,
+        name: input.name,
+        description: "",
+        language: input.language,
+        kind: "generated",
+        source: JSON.stringify({
+          type: "voice_design_prompt",
+          provider: "qwen3-tts"
+        }),
+        tags: [input.language, "voice-design"],
+        settingsJson: {
+          voiceDesignPrompt: input.prompt
+        },
+        createdFromEngineId: input.engineId,
+        updatedAt: now
+      })
+      .returning()
+
+    await this.db.insert(voiceEngineBindings).values({
+      id: createId("voice_binding"),
+      voiceProfileId: profileId,
+      engineId: input.engineId,
+      adapterId: engine.adapterId,
+      status: "ready",
+      bindingKind: "voice_design_prompt",
+      settingsJson: {
+        voiceDesignPrompt: input.prompt,
+        source: "local-voice-design"
       },
       compatibilityJson: {
         language: input.language,
@@ -251,6 +321,13 @@ export class VoiceService {
     }
     const contentHash = hashBuffer(buffer)
     const extension = path.extname(input.referenceAudioPath).toLowerCase() || ".wav"
+    const durationMs = estimateDurationMs(buffer)
+    if (input.engineId === F5_ENGINE_ID && durationMs > F5_REFERENCE_MAX_MS) {
+      throw new AppError(
+        "voice_reference_too_long",
+        "F5-TTS PT-BR reference audio must be 12 seconds or shorter with a matching transcript"
+      )
+    }
     const targetPath = path.join(this.paths.voicesDir, profileId, `reference-${contentHash.slice(0, 16)}${extension}`)
     await mkdir(path.dirname(targetPath), { recursive: true })
     await copyFile(input.referenceAudioPath, targetPath)
@@ -269,7 +346,7 @@ export class VoiceService {
     return {
       id: createId("voice_sample"),
       assetId: asset.id,
-      durationMs: estimateDurationMs(buffer),
+      durationMs,
       quality: {
         sourceBytes: buffer.byteLength,
         durationEstimate: "container-header-or-fallback"
@@ -285,72 +362,76 @@ export class VoiceService {
   private async ensureDefaults(): Promise<void> {
     await mkdir(this.paths.voicesDir, { recursive: true })
     const now = new Date()
-    await this.db
-      .insert(voiceProfiles)
-      .values({
-        id: DEFAULT_VOICE_PROFILE_ID,
-        name: "Narrador PT-BR neutro",
-        description: "Voz neutra padrao para leitura em portugues brasileiro.",
-        language: "pt-BR",
-        kind: "built_in",
-        source: JSON.stringify(builtInVoiceSettings),
-        tags: ["pt-BR", "narrador"],
-        settingsJson: {
-          preset: "pt-br-neutral"
-        },
-        updatedAt: now
-      })
-      .onConflictDoUpdate({
-        target: voiceProfiles.id,
-        set: {
-          name: "Narrador PT-BR neutro",
-          description: "Voz neutra padrao para leitura em portugues brasileiro.",
-          language: "pt-BR",
-          source: JSON.stringify(builtInVoiceSettings),
-          tags: ["pt-BR", "narrador"],
-          settingsJson: {
-            preset: "pt-br-neutral"
-          },
-          updatedAt: now
-        }
-      })
-
     const engines = await this.db.query.ttsEngines.findMany()
-    for (const engine of engines) {
+
+    for (const preset of builtInVoicePresets) {
       await this.db
-        .insert(voiceEngineBindings)
+        .insert(voiceProfiles)
         .values({
-          id: builtInBindingIdFor(engine.id),
-          voiceProfileId: DEFAULT_VOICE_PROFILE_ID,
-          engineId: engine.id,
-          adapterId: engine.adapterId,
-          status: "ready",
-          bindingKind: "preset",
+          id: preset.id,
+          name: preset.name,
+          description: preset.description,
+          language: preset.language,
+          kind: "built_in",
+          source: JSON.stringify(preset.source),
+          tags: preset.tags,
           settingsJson: {
-            preset: "pt-br-neutral"
-          },
-          compatibilityJson: {
-            builtIn: true,
-            languages: ["pt-BR", "en"]
+            ...preset.settings,
+            compatibleEngineIds: preset.engineIds,
+            compatibleAdapterIds: unique(
+              engines.filter((engine) => preset.engineIds.includes(engine.id)).map((engine) => engine.adapterId)
+            )
           },
           updatedAt: now
         })
         .onConflictDoUpdate({
-          target: [voiceEngineBindings.voiceProfileId, voiceEngineBindings.engineId],
+          target: voiceProfiles.id,
           set: {
-            adapterId: engine.adapterId,
-            status: "ready",
+            name: preset.name,
+            description: preset.description,
+            language: preset.language,
+            source: JSON.stringify(preset.source),
+            tags: preset.tags,
             settingsJson: {
-              preset: "pt-br-neutral"
-            },
-            compatibilityJson: {
-              builtIn: true,
-              languages: ["pt-BR", "en"]
+              ...preset.settings,
+              compatibleEngineIds: preset.engineIds,
+              compatibleAdapterIds: unique(
+                engines.filter((engine) => preset.engineIds.includes(engine.id)).map((engine) => engine.adapterId)
+              )
             },
             updatedAt: now
           }
         })
+
+      for (const engine of engines.filter((item) => preset.engineIds.includes(item.id))) {
+        await this.db
+          .insert(voiceEngineBindings)
+          .values({
+            id: builtInBindingIdFor(preset.id, engine.id),
+            voiceProfileId: preset.id,
+            engineId: engine.id,
+            adapterId: engine.adapterId,
+            status: "ready",
+            bindingKind: builtInBindingKindFor(preset, engine.id),
+            settingsJson: builtInSettingsFor(preset, engine.id),
+            compatibilityJson: builtInCompatibilityFor(preset, engine.id),
+            updatedAt: now
+          })
+          .onConflictDoUpdate({
+            target: [voiceEngineBindings.voiceProfileId, voiceEngineBindings.engineId],
+            set: {
+              adapterId: engine.adapterId,
+              status: "ready",
+              bindingKind: builtInBindingKindFor(preset, engine.id),
+              settingsJson: builtInSettingsFor(preset, engine.id),
+              compatibilityJson: builtInCompatibilityFor(preset, engine.id),
+              updatedAt: now
+            }
+          })
+      }
     }
+
+    await disableStaleBuiltInBindings(this.db, now)
   }
 
   private async getProfile(id: string) {
@@ -462,12 +543,31 @@ function unique(values: string[]): string[] {
   return [...new Set(values)]
 }
 
-function builtInBindingIdFor(engineId: string): string {
-  return `voice_binding_builtin_ptbr_neutral_${sanitizePathPart(engineId)}`
-}
-
 function sanitizePathPart(value: string): string {
   return value.replace(/[^a-z0-9._-]+/gi, "_").slice(0, 96) || "voice"
+}
+
+async function disableStaleBuiltInBindings(db: AppDatabase, now: Date): Promise<void> {
+  const allowed = new Set(
+    builtInVoicePresets.flatMap((preset) => preset.engineIds.map((engineId) => `${preset.id}:${engineId}`))
+  )
+  const bindings = await db.query.voiceEngineBindings.findMany()
+  for (const binding of bindings) {
+    const compatibility = jsonObject(binding.compatibilityJson)
+    if (compatibility.builtIn === true && !allowed.has(`${binding.voiceProfileId}:${binding.engineId}`)) {
+      await db
+        .update(voiceEngineBindings)
+        .set({
+          status: "disabled",
+          updatedAt: now
+        })
+        .where(eq(voiceEngineBindings.id, binding.id))
+    }
+  }
+}
+
+function requiresReferenceTranscript(engineId: string): boolean {
+  return engineId === F5_ENGINE_ID || QWEN_BASE_CLONE_ENGINE_IDS.has(engineId)
 }
 
 function mimeTypeFor(extension: string): string {

@@ -161,12 +161,15 @@ const api = {
     retryJob: (id: string) => invoke("tts.retryJob", { id }),
     getJob: (id: string) => invoke("tts.getJob", { id }),
     listJobs: (filter?: { bookId?: string; engineId?: string }) => invoke("tts.listJobs", filter ?? {}),
-    clearChapterAudio: (input: { bookId: string; chapterHref: string }) => invoke("tts.clearChapterAudio", input)
+    clearChapterAudio: (input: { bookId: string; chapterHref: string }) => invoke("tts.clearChapterAudio", input),
+    clearTerminalJobs: (input: { bookId: string }) => invoke("tts.clearTerminalJobs", input)
   },
   voices: {
     list: () => invoke("voices.list"),
     listCompatible: (engineId?: string) => invoke("voices.listCompatible", { engineId }),
     createFromReference: (input: Record<string, unknown>) => invoke("voices.createFromReference", input),
+    createFromDesignPrompt: (input: Record<string, unknown>) => invoke("voices.createFromDesignPrompt", input),
+    selectReferenceAudio: () => invoke("voices.selectReferenceAudio", {}),
     preview: (voiceProfileId: string, engineId: string) => invoke("voices.preview", { voiceProfileId, engineId }),
     update: (input: Record<string, unknown>) => invoke("voices.update", input),
     delete: (voiceProfileId: string) => invoke("voices.delete", { voiceProfileId })

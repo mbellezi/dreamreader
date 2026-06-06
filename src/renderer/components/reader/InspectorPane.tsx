@@ -50,8 +50,12 @@ export function InspectorPane({
   onChangePreference,
   onChangeTab,
   onClearChapterAudio,
+  onClearTerminalTtsJobs,
+  onCreateVoiceFromDesignPrompt,
+  onCreateVoiceFromReference,
   onCreatePronunciationEntry,
   onDeleteAnnotation,
+  onDeleteVoice,
   onDeletePronunciationEntry,
   onExportNotes,
   onDownloadModel,
@@ -61,6 +65,7 @@ export function InspectorPane({
   onJumpToChapter,
   onRebuildAudiobook,
   onRetryTtsJob,
+  onSelectVoiceReferenceAudio,
   onToggleAudiobookAutoBuild,
 }: {
   activeTab: InspectorTab
@@ -82,8 +87,20 @@ export function InspectorPane({
   onChangePreference: ReaderPreferenceChangeHandler
   onChangeTab: (tab: InspectorTab) => void
   onClearChapterAudio: () => Promise<void> | void
+  onClearTerminalTtsJobs: () => Promise<void> | void
+  onCreateVoiceFromDesignPrompt: (input: { engineId: string; language: string; name: string; prompt: string }) => Promise<VoiceProfile | void> | VoiceProfile | void
+  onCreateVoiceFromReference: (input: {
+    consentConfirmed: true
+    consentNote: string
+    engineId: string
+    language: string
+    name: string
+    referenceAudioPath: string
+    transcript?: string
+  }) => Promise<VoiceProfile | void> | VoiceProfile | void
   onCreatePronunciationEntry: (input: { pattern: string; replacement: string; scope: "global" | "book" }) => Promise<void> | void
   onDeleteAnnotation: (annotationId: string) => void
+  onDeleteVoice: (voiceProfileId: string) => Promise<void> | void
   onDeletePronunciationEntry: (id: string) => Promise<void> | void
   onExportNotes: () => void
   onDownloadModel: (modelId: string) => Promise<void> | void
@@ -98,6 +115,7 @@ export function InspectorPane({
   onJumpToChapter: (index: number) => void
   onRebuildAudiobook: () => void
   onRetryTtsJob: (jobId: string) => void
+  onSelectVoiceReferenceAudio: () => Promise<string | null>
   onToggleAudiobookAutoBuild: (enabled: boolean) => void
 }) {
   return (
@@ -308,13 +326,18 @@ export function InspectorPane({
             voices={voices}
             onCancelJob={onCancelTtsJob}
             onClearChapterAudio={onClearChapterAudio}
+            onClearTerminalJobs={onClearTerminalTtsJobs}
+            onCreateVoiceFromDesignPrompt={onCreateVoiceFromDesignPrompt}
+            onCreateVoiceFromReference={onCreateVoiceFromReference}
             onCreatePronunciationEntry={onCreatePronunciationEntry}
+            onDeleteVoice={onDeleteVoice}
             onDeletePronunciationEntry={onDeletePronunciationEntry}
             onDownloadModel={onDownloadModel}
             onGenerateChapter={onGenerateChapterAudio}
             onInstallModelFromPath={onInstallModelFromPath}
             onRebuildAudiobook={onRebuildAudiobook}
             onRetryJob={onRetryTtsJob}
+            onSelectVoiceReferenceAudio={onSelectVoiceReferenceAudio}
             onToggleAutoBuild={onToggleAudiobookAutoBuild}
           />
         ) : null}

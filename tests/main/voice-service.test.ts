@@ -7,7 +7,7 @@ import { migrate } from "drizzle-orm/pglite/migrator"
 import { eq } from "drizzle-orm"
 import { afterEach, describe, expect, it } from "vitest"
 import * as schema from "../../src/main/db/schema"
-import { ttsEngines } from "../../src/main/db/schema"
+import { ttsEngines, voiceEngineBindings } from "../../src/main/db/schema"
 import { AudiobookService } from "../../src/main/services/audiobook-service"
 import { TtsService } from "../../src/main/services/tts-service"
 import { VoiceService } from "../../src/main/services/voice-service"
@@ -33,15 +33,129 @@ describe("VoiceService", () => {
           installPath: path.join(paths.modelsDir, "f5")
         })
         .where(eq(ttsEngines.id, "f5-tts-pt-br"))
+      await db
+        .update(ttsEngines)
+        .set({
+          installed: true,
+          installPath: path.join(paths.modelsDir, "qwen3-tts-17b")
+        })
+        .where(eq(ttsEngines.id, "qwen3-tts-17b-mlx"))
+      await db
+        .update(ttsEngines)
+        .set({
+          installed: true,
+          installPath: path.join(paths.modelsDir, "qwen3-tts-17b-base")
+        })
+        .where(eq(ttsEngines.id, "qwen3-tts-17b-base-mlx"))
 
       const service = new VoiceService(db, paths)
       const builtIn = await service.listCompatible("dreamreader-local-tts")
       expect(builtIn.map((voice) => voice.id)).toContain("voice_builtin_ptbr_neutral")
 
+      expect(await service.listCompatible("qwen3-tts-06b-mlx")).toEqual([])
+      const qwenVoiceDesignIds = (await service.listCompatible("qwen3-tts-17b-mlx")).map((voice) => voice.id)
+      expect(qwenVoiceDesignIds).toEqual(
+        expect.arrayContaining(["voice_qwen3_design_ptbr_neutral", "voice_qwen3_design_ptbr_male", "voice_qwen3_design_ptbr_female"])
+      )
+      expect((await service.listCompatible("qwen3-tts-17b-base-mlx")).map((voice) => voice.id)).toEqual([])
+      const qwenVoiceDesignBinding = await db.query.voiceEngineBindings.findFirst({
+        where: eq(voiceEngineBindings.id, "voice_binding_voice_qwen3_design_ptbr_neutral_qwen3-tts-17b-mlx")
+      })
+      expect(qwenVoiceDesignBinding).toMatchObject({
+        bindingKind: "voice_design_prompt",
+        settingsJson: expect.objectContaining({
+          voiceDesignPrompt: expect.any(String)
+        })
+      })
+
+      const designed = await service.createFromDesignPrompt({
+        engineId: "qwen3-tts-17b-mlx",
+        language: "pt-BR",
+        name: "Voz prompt teste",
+        prompt: "A warm Brazilian Portuguese audiobook narrator with stable identity."
+      })
+      expect(designed.kind).toBe("generated")
+      expect(designed.settings).toMatchObject({
+        compatibleEngineIds: expect.arrayContaining(["qwen3-tts-17b-mlx"]),
+        voiceDesignPrompt: expect.any(String)
+      })
+      expect((await service.listCompatible("qwen3-tts-17b-mlx")).map((voice) => voice.id)).toContain(designed.id)
+      expect(await db.query.voiceEngineBindings.findFirst({ where: eq(voiceEngineBindings.voiceProfileId, designed.id) })).toMatchObject({
+        engineId: "qwen3-tts-17b-mlx",
+        bindingKind: "voice_design_prompt",
+        status: "ready"
+      })
+
       const samplePath = path.join(paths.voicesDir, "reference.wav")
       await mkdir(path.dirname(samplePath), { recursive: true })
       await writeFile(samplePath, Buffer.from("reference-audio"))
 
+      await expect(
+        service.createFromReference({
+          consentConfirmed: true,
+          consentNote: "Autorizado para teste local.",
+          engineId: "qwen3-tts-17b-base-mlx",
+          language: "pt-BR",
+          name: "Qwen 1.7B sem transcricao",
+          referenceAudioPath: samplePath
+        })
+      ).rejects.toMatchObject({ code: "voice_transcript_required" })
+
+      const qwenClone = await service.createFromReference({
+        consentConfirmed: true,
+        consentNote: "Autorizado para teste local.",
+        engineId: "qwen3-tts-17b-base-mlx",
+        language: "pt-BR",
+        name: "Qwen 1.7B clone",
+        referenceAudioPath: samplePath,
+        transcript: "Amostra curta."
+      })
+      expect(qwenClone.settings).toMatchObject({
+        compatibleEngineIds: ["qwen3-tts-17b-base-mlx"]
+      })
+      expect((await service.listCompatible("qwen3-tts-17b-base-mlx")).map((voice) => voice.id)).toContain(qwenClone.id)
+
+      await writeFile(samplePath, createSilentWav(61_000))
+      const qwenLongReferenceClone = await service.createFromReference({
+        consentConfirmed: true,
+        consentNote: "Autorizado para teste local.",
+        engineId: "qwen3-tts-17b-base-mlx",
+        language: "pt-BR",
+        name: "Qwen 1.7B clone longo",
+        referenceAudioPath: samplePath,
+        transcript: "Esta transcrição representa uma referência longa para o Qwen Base."
+      })
+      expect(qwenLongReferenceClone.settings).toMatchObject({
+        compatibleEngineIds: ["qwen3-tts-17b-base-mlx"]
+      })
+
+      const f5BuiltIns = await service.listCompatible("f5-tts-pt-br")
+      expect(f5BuiltIns.map((voice) => voice.id)).not.toContain("voice_builtin_ptbr_neutral")
+
+      await expect(
+        service.createFromReference({
+          consentConfirmed: true,
+          consentNote: "Autorizado para teste local.",
+          engineId: "f5-tts-pt-br",
+          language: "pt-BR",
+          name: "Voz sem transcricao",
+          referenceAudioPath: samplePath
+        })
+      ).rejects.toMatchObject({ code: "voice_transcript_required" })
+
+      await expect(
+        service.createFromReference({
+          consentConfirmed: true,
+          consentNote: "Autorizado para teste local.",
+          engineId: "f5-tts-pt-br",
+          language: "pt-BR",
+          name: "Voz longa",
+          referenceAudioPath: samplePath,
+          transcript: "Esta transcrição representa uma referência longa demais para o F5."
+        })
+      ).rejects.toMatchObject({ code: "voice_reference_too_long" })
+
+      await writeFile(samplePath, createSilentWav(8_000))
       const cloned = await service.createFromReference({
         consentConfirmed: true,
         consentNote: "Autorizado para teste local.",
@@ -57,9 +171,19 @@ describe("VoiceService", () => {
 
       const compatible = await service.listCompatible("f5-tts-pt-br")
       expect(compatible.map((voice) => voice.id)).toContain(cloned.id)
-      expect(await db.query.voiceSamples.findMany()).toHaveLength(1)
+      expect(await db.query.voiceSamples.findMany()).toHaveLength(3)
       expect(await db.query.voiceEngineBindings.findMany()).toEqual(
         expect.arrayContaining([
+          expect.objectContaining({
+            voiceProfileId: qwenClone.id,
+            engineId: "qwen3-tts-17b-base-mlx",
+            status: "ready"
+          }),
+          expect.objectContaining({
+            voiceProfileId: qwenLongReferenceClone.id,
+            engineId: "qwen3-tts-17b-base-mlx",
+            status: "ready"
+          }),
           expect.objectContaining({
             voiceProfileId: cloned.id,
             engineId: "f5-tts-pt-br",
@@ -93,4 +217,27 @@ async function createTestServices() {
     backupsDir: path.join(tempDir, "backups")
   }
   return { client, db, paths }
+}
+
+function createSilentWav(durationMs: number): Buffer {
+  const sampleRate = 24_000
+  const channelCount = 1
+  const bytesPerSample = 2
+  const frameCount = Math.max(1, Math.round((durationMs / 1000) * sampleRate))
+  const dataSize = frameCount * channelCount * bytesPerSample
+  const buffer = Buffer.alloc(44 + dataSize)
+  buffer.write("RIFF", 0)
+  buffer.writeUInt32LE(36 + dataSize, 4)
+  buffer.write("WAVE", 8)
+  buffer.write("fmt ", 12)
+  buffer.writeUInt32LE(16, 16)
+  buffer.writeUInt16LE(1, 20)
+  buffer.writeUInt16LE(channelCount, 22)
+  buffer.writeUInt32LE(sampleRate, 24)
+  buffer.writeUInt32LE(sampleRate * channelCount * bytesPerSample, 28)
+  buffer.writeUInt16LE(channelCount * bytesPerSample, 32)
+  buffer.writeUInt16LE(bytesPerSample * 8, 34)
+  buffer.write("data", 36)
+  buffer.writeUInt32LE(dataSize, 40)
+  return buffer
 }

@@ -1,5 +1,5 @@
 import { createWriteStream } from "node:fs"
-import { mkdir, rename, stat, unlink } from "node:fs/promises"
+import { mkdir, readdir, rename, stat, unlink } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { eq } from "drizzle-orm"
@@ -12,6 +12,10 @@ import type { AppPaths } from "@main/lib/paths"
 
 export const QWEN_PROSODY_MODEL_ID = "model_qwen3_4b_instruct_2507_gguf_q4km"
 export const QWEN_PROSODY_GGUF_FILE = "Qwen_Qwen3-4B-Instruct-2507-Q4_K_M.gguf"
+export const F5_TTS_MODEL_DIR_NAME = "f5-tts-pt-br"
+export const QWEN3_TTS_06B_MODEL_DIR_NAME = "qwen3-tts-06b-mlx"
+export const QWEN3_TTS_17B_MODEL_DIR_NAME = "qwen3-tts-17b-mlx"
+export const QWEN3_TTS_17B_BASE_MODEL_DIR_NAME = "qwen3-tts-17b-base-mlx"
 
 export type RuntimeDiagnostic = {
   id: string
@@ -72,15 +76,16 @@ const recommendedModels: RecommendedModel[] = [
     metadata: {
       role: "tts",
       huggingFaceRepo: "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
-      installMode: "local-folder"
+      installMode: "project-local-folder",
+      localFolder: `.dreamreader-local/models/${QWEN3_TTS_06B_MODEL_DIR_NAME}`
     }
   },
   {
     id: "model_qwen3_tts_17b_customvoice_mlx",
     kind: "tts",
-    name: "Qwen3-TTS 12Hz 1.7B CustomVoice",
+    name: "Qwen3-TTS 12Hz 1.7B VoiceDesign",
     provider: "Qwen",
-    version: "12Hz-1.7B-CustomVoice",
+    version: "12Hz-1.7B-VoiceDesign-4bit",
     runtime: "mlx-sidecar",
     format: "mlx",
     acceleratorPreference: "mlx",
@@ -89,8 +94,28 @@ const recommendedModels: RecommendedModel[] = [
     engineId: "qwen3-tts-17b-mlx",
     metadata: {
       role: "tts",
-      huggingFaceRepo: "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
-      installMode: "local-folder"
+      huggingFaceRepo: "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-4bit",
+      installMode: "project-local-folder",
+      localFolder: `.dreamreader-local/models/${QWEN3_TTS_17B_MODEL_DIR_NAME}`
+    }
+  },
+  {
+    id: "model_qwen3_tts_17b_base_mlx",
+    kind: "tts",
+    name: "Qwen3-TTS 12Hz 1.7B Base",
+    provider: "Qwen",
+    version: "12Hz-1.7B-Base-4bit",
+    runtime: "mlx-sidecar",
+    format: "mlx",
+    acceleratorPreference: "mlx",
+    memoryEstimateMb: 8192,
+    license: "apache-2.0",
+    engineId: "qwen3-tts-17b-base-mlx",
+    metadata: {
+      role: "tts",
+      huggingFaceRepo: "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-4bit",
+      installMode: "project-local-folder",
+      localFolder: `.dreamreader-local/models/${QWEN3_TTS_17B_BASE_MODEL_DIR_NAME}`
     }
   },
   {
@@ -108,7 +133,8 @@ const recommendedModels: RecommendedModel[] = [
     metadata: {
       role: "tts",
       huggingFaceRepo: "firstpixel/F5-TTS-pt-br",
-      installMode: "local-folder"
+      installMode: "project-local-folder",
+      localFolder: `.dreamreader-local/models/${F5_TTS_MODEL_DIR_NAME}`
     }
   }
 ]
@@ -121,7 +147,7 @@ const recommendedRuntimeManifests = [
     version: "sidecar-v1",
     capabilities: {
       protocol: "dreamreader-tts-sidecar/v1",
-      engines: ["qwen3-tts-06b-mlx", "qwen3-tts-17b-mlx"],
+      engines: ["qwen3-tts-06b-mlx", "qwen3-tts-17b-mlx", "qwen3-tts-17b-base-mlx"],
       output: ["audio/wav", "audio/mp4"]
     }
   },
@@ -148,7 +174,7 @@ export class RuntimeService {
   ) {}
 
   async listModels(): Promise<ModelAsset[]> {
-    await this.ensureReady()
+    await this.ensureCatalog()
     const rows = await this.db.query.modelAssets.findMany()
     const order = new Map(recommendedModels.map((model, index) => [model.id, index]))
     return rows
@@ -399,9 +425,10 @@ export class RuntimeService {
     await mkdir(this.paths.modelsDir, { recursive: true })
     for (const model of recommendedModels) {
       const existing = await this.db.query.modelAssets.findFirst({ where: eq(modelAssets.id, model.id) })
-      const possiblePath = model.fileName ? path.join(this.paths.modelsDir, model.id, model.fileName) : undefined
-      const pathExists = possiblePath ? await exists(possiblePath) : false
-      const installStatus = existing?.installStatus === "available" || pathExists ? "available" : existing?.installStatus ?? "not_configured"
+      const possiblePath = model.fileName ? path.join(this.paths.modelsDir, model.id, model.fileName) : projectLocalModelPathFor(model)
+      const pathReady = possiblePath ? await modelPathReady(model, possiblePath) : false
+      const resolvedPath = existing?.path ?? (pathReady ? possiblePath : undefined)
+      const installStatus = existing?.installStatus === "available" || pathReady ? "available" : existing?.installStatus ?? "not_configured"
       const downloadProgress = installStatus === "available" ? 1 : existing?.downloadProgress ?? 0
       await this.db
         .insert(modelAssets)
@@ -411,7 +438,7 @@ export class RuntimeService {
           name: model.name,
           provider: model.provider,
           version: model.version,
-          path: existing?.path ?? (pathExists ? possiblePath : undefined),
+          path: resolvedPath,
           sizeBytes: existing?.sizeBytes,
           checksum: existing?.checksum,
           license: model.license,
@@ -427,7 +454,7 @@ export class RuntimeService {
             ...model.metadata,
             engineId: model.engineId
           },
-          installedAt: existing?.installedAt ?? (pathExists ? new Date() : undefined),
+          installedAt: existing?.installedAt ?? (pathReady ? new Date() : undefined),
           updatedAt: new Date()
         })
         .onConflictDoUpdate({
@@ -442,18 +469,29 @@ export class RuntimeService {
             acceleratorPreference: model.acceleratorPreference,
             memoryEstimateMb: model.memoryEstimateMb,
             sourceUrl: model.sourceUrl,
+            path: resolvedPath,
             installStatus,
             downloadProgress,
             metadataJson: {
               ...model.metadata,
               engineId: model.engineId
             },
+            installedAt: existing?.installedAt ?? (pathReady ? new Date() : undefined),
             updatedAt: new Date()
           }
         })
+      if (installStatus === "available" && model.engineId && resolvedPath) {
+        await this.markTtsEngineInstalled(model, resolvedPath)
+      }
     }
     for (const manifest of recommendedRuntimeManifests) {
       const existing = await this.db.query.runtimeManifests.findFirst({ where: eq(runtimeManifests.id, manifest.id) })
+      const detectedRuntime = await detectedRuntimeForManifest(manifest.adapterId)
+      const executablePath = existing?.executablePath ?? detectedRuntime?.executablePath
+      const environmentJson = existing?.executablePath
+        ? existing.environmentJson
+        : detectedRuntime?.environmentJson ?? existing?.environmentJson ?? {}
+      const healthcheckCommand = existing?.healthcheckCommand ?? detectedRuntime?.healthcheckCommand
       await this.db
         .insert(runtimeManifests)
         .values({
@@ -462,9 +500,9 @@ export class RuntimeService {
           runtime: manifest.runtime,
           version: manifest.version,
           capabilitiesJson: manifest.capabilities,
-          environmentJson: existing?.environmentJson ?? {},
-          executablePath: existing?.executablePath,
-          healthcheckCommand: existing?.healthcheckCommand,
+          environmentJson,
+          executablePath,
+          healthcheckCommand,
           updatedAt: new Date()
         })
         .onConflictDoUpdate({
@@ -474,6 +512,9 @@ export class RuntimeService {
             runtime: manifest.runtime,
             version: manifest.version,
             capabilitiesJson: manifest.capabilities,
+            environmentJson,
+            executablePath,
+            healthcheckCommand,
             updatedAt: new Date()
           }
         })
@@ -517,22 +558,7 @@ export class RuntimeService {
         runtime: runtimeForModel(model),
         modelFormat: model.format,
         accelerator: acceleratorForModel(model),
-          capabilitiesJson: {
-            id: model.engineId,
-            displayName: model.name,
-            runtime: runtimeForModel(model),
-            modelFormat: model.format,
-            languages: model.engineId === "f5-tts-pt-br" ? ["pt-BR"] : ["pt-BR", "en"],
-            supportsVoiceClone: model.engineId !== "qwen3-tts-06b-mlx",
-            supportsNaturalLanguageInstruction: true,
-            supportsDiscreteEmotion: model.engineId !== "f5-tts-pt-br",
-            supportsBatch: true,
-            supportsStreaming: false,
-            supportsSegmentTimestamps: model.engineId !== "f5-tts-pt-br",
-            supportsSsmlLikeMarkup: false,
-            preferredInputCase: "preserve",
-            estimatedMemoryMb: model.memoryEstimateMb
-          },
+        capabilitiesJson: capabilitiesForModel(model),
         performanceProfileJson: {
           mode: model.runtime,
           requiresSidecar: true
@@ -555,16 +581,22 @@ export class RuntimeService {
 function modelForPath(modelPath: string): RecommendedModel {
   const normalized = path.basename(modelPath).toLowerCase()
   if (normalized.endsWith(".gguf") || normalized.includes("qwen3-4b-instruct-2507")) {
-    return recommendedModels[0]
+    return recommendedModelById(QWEN_PROSODY_MODEL_ID)
   }
-  if (normalized.includes("qwen3-tts") && normalized.includes("1.7b")) {
-    return recommendedModels[2]
+  if (
+    normalized.includes(QWEN3_TTS_17B_BASE_MODEL_DIR_NAME) ||
+    (normalized.includes("qwen3-tts") && (normalized.includes("1.7b") || normalized.includes("17b")) && normalized.includes("base"))
+  ) {
+    return recommendedModelById("model_qwen3_tts_17b_base_mlx")
+  }
+  if (normalized.includes("qwen3-tts") && (normalized.includes("1.7b") || normalized.includes("17b"))) {
+    return recommendedModelById("model_qwen3_tts_17b_customvoice_mlx")
   }
   if (normalized.includes("qwen3-tts")) {
-    return recommendedModels[1]
+    return recommendedModelById("model_qwen3_tts_06b_base_mlx")
   }
   if (normalized.includes("f5") || normalized.endsWith(".safetensors")) {
-    return recommendedModels[3]
+    return recommendedModelById("model_f5_tts_ptbr_pytorch")
   }
   return {
     id: createId("model"),
@@ -580,6 +612,14 @@ function modelForPath(modelPath: string): RecommendedModel {
       role: "runtime"
     }
   }
+}
+
+function recommendedModelById(id: string): RecommendedModel {
+  const model = recommendedModels.find((item) => item.id === id)
+  if (!model) {
+    throw new AppError("model_not_found", "Model not found")
+  }
+  return model
 }
 
 function toModelAsset(row: typeof modelAssets.$inferSelect): ModelAsset {
@@ -690,6 +730,120 @@ function acceleratorForModel(model: RecommendedModel): string {
     return "apple_mps"
   }
   return "cpu"
+}
+
+function capabilitiesForModel(model: RecommendedModel): Record<string, unknown> {
+  const runtime = runtimeForModel(model)
+  return {
+    id: model.engineId,
+    displayName: model.name,
+    runtime,
+    modelFormat: model.format,
+    languages: model.engineId === "f5-tts-pt-br" ? ["pt-BR"] : ["pt-BR", "en"],
+    supportsVoiceClone:
+      model.engineId === "f5-tts-pt-br" || model.engineId === "qwen3-tts-06b-mlx" || model.engineId === "qwen3-tts-17b-base-mlx",
+    supportsNaturalLanguageInstruction: model.engineId === "qwen3-tts-17b-mlx",
+    supportsDiscreteEmotion: model.engineId === "qwen3-tts-17b-mlx",
+    supportsBatch: true,
+    supportsStreaming: false,
+    supportsSegmentTimestamps: model.engineId !== "f5-tts-pt-br",
+    supportsSsmlLikeMarkup: false,
+    preferredInputCase: "preserve",
+    estimatedMemoryMb: model.memoryEstimateMb
+  }
+}
+
+function projectLocalModelPathFor(model: RecommendedModel): string | undefined {
+  if (model.id === "model_qwen3_tts_06b_base_mlx") {
+    return path.join(projectLocalRoot(), "models", QWEN3_TTS_06B_MODEL_DIR_NAME)
+  }
+  if (model.id === "model_qwen3_tts_17b_customvoice_mlx") {
+    return path.join(projectLocalRoot(), "models", QWEN3_TTS_17B_MODEL_DIR_NAME)
+  }
+  if (model.id === "model_qwen3_tts_17b_base_mlx") {
+    return path.join(projectLocalRoot(), "models", QWEN3_TTS_17B_BASE_MODEL_DIR_NAME)
+  }
+  if (model.id === "model_f5_tts_ptbr_pytorch") {
+    return path.join(projectLocalRoot(), "models", F5_TTS_MODEL_DIR_NAME)
+  }
+  return undefined
+}
+
+async function modelPathReady(model: RecommendedModel, modelPath: string): Promise<boolean> {
+  if (!(await exists(modelPath))) {
+    return false
+  }
+  if (model.id === "model_f5_tts_ptbr_pytorch") {
+    return hasAnyModelFile(modelPath, [".safetensors"])
+  }
+  if (
+    model.id === "model_qwen3_tts_06b_base_mlx" ||
+    model.id === "model_qwen3_tts_17b_customvoice_mlx" ||
+    model.id === "model_qwen3_tts_17b_base_mlx"
+  ) {
+    return (await exists(path.join(modelPath, "config.json"))) || hasAnyModelFile(modelPath, [".safetensors", ".npz"])
+  }
+  return true
+}
+
+async function detectedRuntimeForManifest(adapterId: string): Promise<
+  | {
+      environmentJson: Record<string, unknown>
+      executablePath: string
+      healthcheckCommand?: string
+    }
+  | undefined
+> {
+  const pythonExecutable = path.join(projectLocalRoot(), "python", "bin", "python")
+  const sidecarScript = sidecarScriptForAdapter(adapterId)
+  if (!sidecarScript || !(await exists(pythonExecutable)) || !(await exists(sidecarScript))) {
+    return undefined
+  }
+  return {
+    executablePath: pythonExecutable,
+    environmentJson: {
+      args: [sidecarScript],
+      env: {
+        HF_HOME: path.join(projectLocalRoot(), "huggingface"),
+        MPLCONFIGDIR: path.join(projectLocalRoot(), "cache", "matplotlib"),
+        PYTHONUNBUFFERED: "1"
+      },
+      timeoutMs: 30 * 60 * 1000
+    },
+    healthcheckCommand: `${pythonExecutable} ${sidecarScript} --health`
+  }
+}
+
+function sidecarScriptForAdapter(adapterId: string): string | undefined {
+  if (adapterId === "qwen3-tts-mlx") {
+    return path.join(projectRoot(), "sidecars", "tts", "qwen3_tts_mlx_sidecar.py")
+  }
+  if (adapterId === "f5-tts-pt-br") {
+    return path.join(projectRoot(), "sidecars", "tts", "f5_tts_ptbr_sidecar.py")
+  }
+  return undefined
+}
+
+async function hasAnyModelFile(directory: string, extensions: string[]): Promise<boolean> {
+  const entries = await readdir(directory, { withFileTypes: true }).catch(() => [])
+  for (const entry of entries) {
+    const fullPath = path.join(directory, entry.name)
+    if (entry.isFile() && extensions.some((extension) => entry.name.endsWith(extension))) {
+      return true
+    }
+    if (entry.isDirectory() && (await hasAnyModelFile(fullPath, extensions))) {
+      return true
+    }
+  }
+  return false
+}
+
+function projectLocalRoot(): string {
+  return path.join(projectRoot(), ".dreamreader-local")
+}
+
+function projectRoot(): string {
+  return process.env.DREAMREADER_PROJECT_ROOT ? path.resolve(process.env.DREAMREADER_PROJECT_ROOT) : process.cwd()
 }
 
 function sidecarReady(

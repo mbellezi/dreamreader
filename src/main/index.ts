@@ -17,6 +17,7 @@ protocol.registerSchemesAsPrivileged([
     privileges: {
       standard: true,
       secure: true,
+      stream: true,
       supportFetchAPI: true
     }
   }

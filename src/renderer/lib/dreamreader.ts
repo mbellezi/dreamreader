@@ -349,6 +349,14 @@ export const dreamreaderClient = {
     }
   },
 
+  async clearTerminalTtsJobs(bookId: string): Promise<void> {
+    const bridgeClear = window.dreamreader?.tts?.clearTerminalJobs
+
+    if (bridgeClear) {
+      await bridgeClear({ bookId })
+    }
+  },
+
   async getAudiobookExport(bookId: string): Promise<AudiobookExport | null> {
     const bridgeGet = window.dreamreader?.audiobook?.getExport
 
@@ -454,6 +462,58 @@ export const dreamreaderClient = {
         kind: "built_in"
       }
     ]
+  },
+
+  async selectVoiceReferenceAudio(): Promise<string | null> {
+    const bridgeSelect = window.dreamreader?.voices?.selectReferenceAudio
+
+    if (bridgeSelect) {
+      const result = await bridgeSelect()
+      return result.path ?? null
+    }
+
+    return null
+  },
+
+  async createVoiceFromReference(input: {
+    consentConfirmed: true
+    consentNote: string
+    engineId: string
+    language: string
+    name: string
+    referenceAudioPath: string
+    transcript?: string
+  }): Promise<VoiceProfile> {
+    const bridgeCreate = window.dreamreader?.voices?.createFromReference
+
+    if (bridgeCreate) {
+      return toVoiceProfile(await bridgeCreate(input))
+    }
+
+    return fallbackVoice(input.name, input.language, "cloned", input.engineId)
+  },
+
+  async createVoiceFromDesignPrompt(input: {
+    engineId: string
+    language: string
+    name: string
+    prompt: string
+  }): Promise<VoiceProfile> {
+    const bridgeCreate = window.dreamreader?.voices?.createFromDesignPrompt
+
+    if (bridgeCreate) {
+      return toVoiceProfile(await bridgeCreate(input))
+    }
+
+    return fallbackVoice(input.name, input.language, "generated", input.engineId)
+  },
+
+  async deleteVoice(voiceProfileId: string): Promise<void> {
+    const bridgeDelete = window.dreamreader?.voices?.delete
+
+    if (bridgeDelete) {
+      await bridgeDelete(voiceProfileId)
+    }
   },
 
   async listPronunciationEntries(bookId?: string): Promise<PronunciationEntry[]> {
@@ -647,9 +707,31 @@ function toVoiceProfile(input: unknown): VoiceProfile {
   return {
     id: String(voice.id ?? ""),
     name: String(voice.name ?? ""),
+    description: optionalString(voice.description),
     language: String(voice.language ?? "pt-BR"),
     kind: String(voice.kind ?? "built_in"),
-    settings: jsonObject(voice.settings)
+    source: jsonObject(voice.source),
+    tags: Array.isArray(voice.tags) ? voice.tags.map(String) : [],
+    settings: jsonObject(voice.settings),
+    createdFromEngineId: optionalString(voice.createdFromEngineId),
+    createdAt: optionalString(voice.createdAt),
+    updatedAt: optionalString(voice.updatedAt)
+  }
+}
+
+function fallbackVoice(name: string, language: string, kind: string, engineId: string): VoiceProfile {
+  const now = new Date().toISOString()
+  return {
+    id: crypto.randomUUID(),
+    name,
+    language,
+    kind,
+    settings: {
+      compatibleEngineIds: [engineId]
+    },
+    createdFromEngineId: engineId,
+    createdAt: now,
+    updatedAt: now
   }
 }
 

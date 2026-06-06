@@ -1,4 +1,4 @@
-import { Cpu, Download, FolderOpen, HardDrive, Plus, RefreshCw, RotateCcw, Square, Trash2, Volume2, Wand2 } from "lucide-react"
+import { Cpu, Download, FileAudio, FolderOpen, HardDrive, Mic2, Plus, RefreshCw, RotateCcw, Sparkles, Square, Trash2, Volume2, Wand2 } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { SelectField } from "@renderer/components/common/Controls"
 import type { TranslationFn } from "@renderer/app/types"
@@ -20,13 +20,18 @@ export function AudioPanel({
   voices,
   onCancelJob,
   onClearChapterAudio,
+  onClearTerminalJobs,
+  onCreateVoiceFromDesignPrompt,
+  onCreateVoiceFromReference,
   onCreatePronunciationEntry,
+  onDeleteVoice,
   onDeletePronunciationEntry,
   onDownloadModel,
   onGenerateChapter,
   onInstallModelFromPath,
   onRebuildAudiobook,
   onRetryJob,
+  onSelectVoiceReferenceAudio,
   onToggleAutoBuild
 }: {
   audiobook: AudiobookExport | null
@@ -41,7 +46,19 @@ export function AudioPanel({
   voices: VoiceProfile[]
   onCancelJob: (jobId: string) => Promise<void> | void
   onClearChapterAudio: () => Promise<void> | void
+  onClearTerminalJobs: () => Promise<void> | void
+  onCreateVoiceFromDesignPrompt: (input: { engineId: string; language: string; name: string; prompt: string }) => Promise<VoiceProfile | void> | VoiceProfile | void
+  onCreateVoiceFromReference: (input: {
+    consentConfirmed: true
+    consentNote: string
+    engineId: string
+    language: string
+    name: string
+    referenceAudioPath: string
+    transcript?: string
+  }) => Promise<VoiceProfile | void> | VoiceProfile | void
   onCreatePronunciationEntry: (input: { pattern: string; replacement: string; scope: "global" | "book" }) => Promise<void> | void
+  onDeleteVoice: (voiceProfileId: string) => Promise<void> | void
   onDeletePronunciationEntry: (id: string) => Promise<void> | void
   onDownloadModel: (modelId: string) => Promise<void> | void
   onGenerateChapter: (input: {
@@ -53,11 +70,22 @@ export function AudioPanel({
   onInstallModelFromPath: () => Promise<void> | void
   onRebuildAudiobook: () => Promise<void> | void
   onRetryJob: (jobId: string) => Promise<void> | void
+  onSelectVoiceReferenceAudio: () => Promise<string | null>
   onToggleAutoBuild: (enabled: boolean) => Promise<void> | void
 }) {
   const [quality, setQuality] = useState<"draft" | "standard" | "high">("standard")
   const [selectedEngineId, setSelectedEngineId] = useState(defaultEngineId)
   const [selectedVoiceId, setSelectedVoiceId] = useState("")
+  const [voiceManagerMode, setVoiceManagerMode] = useState<"reference" | "design">("reference")
+  const [referenceEngineId, setReferenceEngineId] = useState("")
+  const [referenceVoiceName, setReferenceVoiceName] = useState("")
+  const [referenceAudioPath, setReferenceAudioPath] = useState("")
+  const [referenceTranscript, setReferenceTranscript] = useState("")
+  const [referenceConsentNote, setReferenceConsentNote] = useState("")
+  const [referenceConsentConfirmed, setReferenceConsentConfirmed] = useState(false)
+  const [designEngineId, setDesignEngineId] = useState("qwen3-tts-17b-mlx")
+  const [designVoiceName, setDesignVoiceName] = useState("")
+  const [designPrompt, setDesignPrompt] = useState("")
   const [pronunciationPattern, setPronunciationPattern] = useState("")
   const [pronunciationReplacement, setPronunciationReplacement] = useState("")
   const [pronunciationScope, setPronunciationScope] = useState<"global" | "book">("book")
@@ -67,19 +95,19 @@ export function AudioPanel({
     () => audiobook?.manifest?.chapters.find((item) => item.chapterHref === chapter?.id),
     [audiobook?.manifest?.chapters, chapter?.id]
   )
-  const currentJob = useMemo(
-    () =>
-      [...jobs]
-        .filter((job) => job.chapterHref === chapter?.id)
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0],
-    [chapter?.id, jobs]
-  )
-  const activeJob = currentJob && !["completed", "failed", "cancelled"].includes(currentJob.status) ? currentJob : null
+  const chapterJobs = useMemo(() => jobs.filter((job) => job.chapterHref === chapter?.id), [chapter?.id, jobs])
+  const currentJob = useMemo(() => [...chapterJobs].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0], [chapterJobs])
+  const activeJob = chapterJobs.find((job) => !isTerminalJobStatus(job.status)) ?? null
+  const terminalJobs = useMemo(() => jobs.filter((job) => isTerminalJobStatus(job.status)), [jobs])
   const canRetry = currentJob?.status === "failed" || currentJob?.status === "cancelled"
+  const hasChapterGeneration = Boolean(chapterAudio || chapterJobs.length)
   const neutralComparisonJob = comparisonJobFor(jobs, chapter?.id, false)
   const expressiveComparisonJob = comparisonJobFor(jobs, chapter?.id, true)
+  const installedTtsModels = useMemo(
+    () => models.filter((model) => model.kind === "tts" && model.installStatus === "available" && model.engineId),
+    [models]
+  )
   const engineOptions = useMemo(() => {
-    const installedTtsModels = models.filter((model) => model.kind === "tts" && model.installStatus === "available" && model.engineId)
     return [
       { label: t("audio.engine.local"), value: defaultEngineId },
       ...installedTtsModels.map((model) => ({
@@ -87,18 +115,57 @@ export function AudioPanel({
         value: model.engineId ?? model.id
       }))
     ]
-  }, [models, t])
+  }, [installedTtsModels, t])
+  const referenceEngineOptions = useMemo(
+    () =>
+      installedTtsModels
+        .filter((model) => isReferenceVoiceEngine(model.engineId))
+        .map((model) => ({ label: model.name, value: model.engineId ?? model.id })),
+    [installedTtsModels]
+  )
+  const designEngineOptions = useMemo(
+    () =>
+      installedTtsModels
+        .filter((model) => model.engineId === "qwen3-tts-17b-mlx")
+        .map((model) => ({ label: model.name, value: model.engineId ?? model.id })),
+    [installedTtsModels]
+  )
   const voiceOptions = useMemo(() => {
     const compatible = voices.filter((voice) => {
       const engineIds = voice.settings?.compatibleEngineIds
       return !Array.isArray(engineIds) || engineIds.includes(selectedEngineId)
     })
-    const available = compatible.length ? compatible : voices
-    return (available.length ? available : [{ id: "", name: t("audio.voiceDefault"), language: "pt-BR", kind: "built_in" }]).map((voice) => ({
+    return (compatible.length ? compatible : [{ id: "", name: t("audio.voiceUnavailable"), language: "pt-BR", kind: "built_in" }]).map((voice) => ({
       label: voice.name,
       value: voice.id
     }))
   }, [selectedEngineId, t, voices])
+  const hasCompatibleVoice = voiceOptions.some((option) => option.value)
+  const referenceSelectOptions = referenceEngineOptions.length
+    ? referenceEngineOptions
+    : [{ label: t("audio.voiceManager.noReferenceEngine"), value: "" }]
+  const designSelectOptions = designEngineOptions.length
+    ? designEngineOptions
+    : [{ label: t("audio.voiceManager.noDesignEngine"), value: "" }]
+  const customVoicesForEngine = useMemo(
+    () =>
+      voices.filter((voice) => {
+        if (voice.kind !== "cloned" && voice.kind !== "generated") return false
+        const engineIds = voice.settings?.compatibleEngineIds
+        return !Array.isArray(engineIds) || engineIds.includes(selectedEngineId)
+      }),
+    [selectedEngineId, voices]
+  )
+  const referenceTranscriptRequired = requiresReferenceTranscript(referenceEngineId)
+  const canCreateReferenceVoice =
+    Boolean(referenceEngineId) &&
+    Boolean(referenceVoiceName.trim()) &&
+    Boolean(referenceAudioPath) &&
+    (!referenceTranscriptRequired || Boolean(referenceTranscript.trim())) &&
+    Boolean(referenceConsentNote.trim()) &&
+    referenceConsentConfirmed &&
+    !loading
+  const canCreateDesignVoice = Boolean(designEngineId) && Boolean(designVoiceName.trim()) && Boolean(designPrompt.trim()) && !loading
 
   useEffect(() => {
     if (!selectedVoiceId && voiceOptions[0]) {
@@ -117,6 +184,71 @@ export function AudioPanel({
       setSelectedEngineId(defaultEngineId)
     }
   }, [engineOptions, selectedEngineId])
+
+  useEffect(() => {
+    if (referenceEngineOptions.some((option) => option.value === selectedEngineId)) {
+      setReferenceEngineId(selectedEngineId)
+      return
+    }
+    if (!referenceEngineOptions.some((option) => option.value === referenceEngineId)) {
+      setReferenceEngineId(referenceEngineOptions[0]?.value ?? "")
+    }
+  }, [referenceEngineId, referenceEngineOptions, selectedEngineId])
+
+  useEffect(() => {
+    if (!designEngineOptions.some((option) => option.value === designEngineId)) {
+      setDesignEngineId(designEngineOptions[0]?.value ?? "")
+    }
+  }, [designEngineId, designEngineOptions])
+
+  const chooseReferenceAudio = async () => {
+    const audioPath = await onSelectVoiceReferenceAudio()
+    if (audioPath) {
+      setReferenceAudioPath(audioPath)
+    }
+  }
+
+  const createReferenceVoice = async () => {
+    if (!canCreateReferenceVoice) {
+      return
+    }
+    const voice = await onCreateVoiceFromReference({
+      consentConfirmed: true,
+      consentNote: referenceConsentNote.trim(),
+      engineId: referenceEngineId,
+      language: "pt-BR",
+      name: referenceVoiceName.trim(),
+      referenceAudioPath,
+      transcript: referenceTranscript.trim() || undefined
+    })
+    setReferenceVoiceName("")
+    setReferenceAudioPath("")
+    setReferenceTranscript("")
+    setReferenceConsentNote("")
+    setReferenceConsentConfirmed(false)
+    if (voice?.id) {
+      setSelectedEngineId(referenceEngineId)
+      setSelectedVoiceId(voice.id)
+    }
+  }
+
+  const createDesignVoice = async () => {
+    if (!canCreateDesignVoice) {
+      return
+    }
+    const voice = await onCreateVoiceFromDesignPrompt({
+      engineId: designEngineId,
+      language: "pt-BR",
+      name: designVoiceName.trim(),
+      prompt: designPrompt.trim()
+    })
+    setDesignVoiceName("")
+    setDesignPrompt("")
+    if (voice?.id) {
+      setSelectedEngineId(designEngineId)
+      setSelectedVoiceId(voice.id)
+    }
+  }
 
   if (!book || !chapter) {
     return <p className="rounded-md border bg-card p-3 text-sm text-muted-foreground">{t("audio.noChapter")}</p>
@@ -163,14 +295,14 @@ export function AudioPanel({
             </div>
           ) : null}
 
-          {chapterAudio ? (
+          {hasChapterGeneration ? (
             <button
               className="mt-3 inline-flex h-9 w-full items-center justify-center gap-2 rounded-md border bg-background px-3 text-sm"
               disabled={Boolean(activeJob) || loading}
               onClick={onClearChapterAudio}
             >
               <Trash2 className="h-4 w-4 shrink-0" aria-hidden="true" />
-              <span className="truncate">{t("audio.clearChapter")}</span>
+              <span className="truncate">{t("audio.clearChapterGeneration")}</span>
             </button>
           ) : null}
         </div>
@@ -189,6 +321,151 @@ export function AudioPanel({
           value={selectedVoiceId}
           onChange={setSelectedVoiceId}
         />
+        <div className="space-y-3 rounded-md border bg-card p-3">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold">{t("audio.voiceManager.title")}</h3>
+            <div className="grid shrink-0 grid-cols-2 gap-1 rounded-md border bg-background p-1">
+              <button
+                className={cn(
+                  "inline-flex h-8 min-w-0 items-center justify-center gap-1.5 rounded-sm px-2 text-xs text-muted-foreground",
+                  voiceManagerMode === "reference" && "bg-card text-foreground shadow-sm"
+                )}
+                title={t("audio.voiceManager.reference")}
+                onClick={() => setVoiceManagerMode("reference")}
+              >
+                <Mic2 className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                <span className="truncate">{t("audio.voiceManager.reference")}</span>
+              </button>
+              <button
+                className={cn(
+                  "inline-flex h-8 min-w-0 items-center justify-center gap-1.5 rounded-sm px-2 text-xs text-muted-foreground",
+                  voiceManagerMode === "design" && "bg-card text-foreground shadow-sm"
+                )}
+                title={t("audio.voiceManager.design")}
+                onClick={() => setVoiceManagerMode("design")}
+              >
+                <Sparkles className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                <span className="truncate">{t("audio.voiceManager.design")}</span>
+              </button>
+            </div>
+          </div>
+
+          {voiceManagerMode === "reference" ? (
+            <div className="grid grid-cols-1 gap-2">
+              <SelectField
+                label={t("audio.voiceManager.engine")}
+                options={referenceSelectOptions}
+                value={referenceEngineId}
+                onChange={setReferenceEngineId}
+              />
+              <input
+                className="h-9 rounded-md border bg-background px-3 text-sm outline-none"
+                placeholder={t("audio.voiceManager.name")}
+                value={referenceVoiceName}
+                onChange={(event) => setReferenceVoiceName(event.target.value)}
+              />
+              <button
+                className="inline-flex h-9 min-w-0 items-center justify-center gap-2 rounded-md border bg-background px-3 text-sm"
+                disabled={!referenceEngineId || loading}
+                onClick={chooseReferenceAudio}
+              >
+                <FileAudio className="h-4 w-4 shrink-0" aria-hidden="true" />
+                <span className="truncate">{referenceAudioPath ? fileNameForPath(referenceAudioPath) : t("audio.voiceManager.selectReference")}</span>
+              </button>
+              <textarea
+                className="min-h-20 rounded-md border bg-background px-3 py-2 text-sm outline-none"
+                placeholder={t("audio.voiceManager.transcript")}
+                value={referenceTranscript}
+                onChange={(event) => setReferenceTranscript(event.target.value)}
+              />
+              {referenceTranscriptRequired ? (
+                <p className="rounded-md border bg-background p-2 text-xs text-muted-foreground">
+                  {t("audio.voiceManager.f5TranscriptRequired")}
+                </p>
+              ) : null}
+              <input
+                className="h-9 rounded-md border bg-background px-3 text-sm outline-none"
+                placeholder={t("audio.voiceManager.consentNote")}
+                value={referenceConsentNote}
+                onChange={(event) => setReferenceConsentNote(event.target.value)}
+              />
+              <label className="flex items-center justify-between rounded-md border bg-background p-3 text-sm">
+                <span>{t("audio.voiceManager.consent")}</span>
+                <input
+                  className="h-4 w-4 accent-primary"
+                  type="checkbox"
+                  checked={referenceConsentConfirmed}
+                  onChange={(event) => setReferenceConsentConfirmed(event.target.checked)}
+                />
+              </label>
+              <button
+                className="inline-flex h-9 items-center justify-center gap-2 rounded-md border bg-background px-3 text-sm"
+                disabled={!canCreateReferenceVoice}
+                onClick={createReferenceVoice}
+              >
+                <Plus className="h-4 w-4" aria-hidden="true" />
+                {t("audio.voiceManager.createReference")}
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-2">
+              <SelectField
+                label={t("audio.voiceManager.engine")}
+                options={designSelectOptions}
+                value={designEngineId}
+                onChange={setDesignEngineId}
+              />
+              <input
+                className="h-9 rounded-md border bg-background px-3 text-sm outline-none"
+                placeholder={t("audio.voiceManager.name")}
+                value={designVoiceName}
+                onChange={(event) => setDesignVoiceName(event.target.value)}
+              />
+              <textarea
+                className="min-h-24 rounded-md border bg-background px-3 py-2 text-sm outline-none"
+                placeholder={t("audio.voiceManager.designPrompt")}
+                value={designPrompt}
+                onChange={(event) => setDesignPrompt(event.target.value)}
+              />
+              <button
+                className="inline-flex h-9 items-center justify-center gap-2 rounded-md border bg-background px-3 text-sm"
+                disabled={!canCreateDesignVoice}
+                onClick={createDesignVoice}
+              >
+                <Sparkles className="h-4 w-4" aria-hidden="true" />
+                {t("audio.voiceManager.createDesign")}
+              </button>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            {customVoicesForEngine.length ? (
+              customVoicesForEngine.map((voice) => (
+                <div key={voice.id} className="flex items-center justify-between gap-3 rounded-md border bg-background p-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">{voice.name}</p>
+                    <p className="mt-0.5 truncate text-xs text-muted-foreground">{t(`audio.voiceManager.kind.${voice.kind}`)}</p>
+                  </div>
+                  <button
+                    className="shrink-0 rounded-sm p-1 text-muted-foreground hover:text-destructive"
+                    disabled={loading}
+                    onClick={async () => {
+                      await onDeleteVoice(voice.id)
+                      if (selectedVoiceId === voice.id) {
+                        setSelectedVoiceId("")
+                      }
+                    }}
+                    title={t("audio.voiceManager.delete")}
+                  >
+                    <Trash2 className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </div>
+              ))
+            ) : (
+              <p className="rounded-md border bg-background p-3 text-sm text-muted-foreground">{t("audio.voiceManager.empty")}</p>
+            )}
+          </div>
+        </div>
         <SelectField
           label={t("audio.quality")}
           options={["draft", "standard", "high"].map((item) => ({
@@ -210,7 +487,7 @@ export function AudioPanel({
         <div className="grid grid-cols-2 gap-2">
           <button
             className="inline-flex h-10 min-w-0 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground"
-            disabled={Boolean(activeJob) || loading}
+            disabled={Boolean(activeJob) || loading || !hasCompatibleVoice}
             onClick={() =>
               onGenerateChapter({
                 engineId: selectedEngineId,
@@ -342,7 +619,19 @@ export function AudioPanel({
       </section>
 
       <section className="space-y-2">
-        <h3 className="text-sm font-semibold">{t("audio.queue")}</h3>
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold">{t("audio.queue")}</h3>
+          {terminalJobs.length ? (
+            <button
+              className="inline-flex h-8 min-w-0 items-center justify-center gap-1.5 rounded-md border bg-card px-2.5 text-xs"
+              disabled={loading}
+              onClick={onClearTerminalJobs}
+            >
+              <Trash2 className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              <span className="truncate">{t("audio.clearFinishedQueue")}</span>
+            </button>
+          ) : null}
+        </div>
         {jobs.length ? (
           jobs
             .slice()
@@ -503,6 +792,18 @@ function comparisonJobFor(jobs: TtsJob[], chapterHref: string | undefined, expre
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
 }
 
+function isTerminalJobStatus(status: TtsJob["status"]): boolean {
+  return status === "completed" || status === "failed" || status === "cancelled"
+}
+
+function isReferenceVoiceEngine(engineId: string | undefined): boolean {
+  return engineId === "qwen3-tts-06b-mlx" || engineId === "qwen3-tts-17b-base-mlx" || engineId === "f5-tts-pt-br"
+}
+
+function requiresReferenceTranscript(engineId: string): boolean {
+  return engineId === "qwen3-tts-06b-mlx" || engineId === "qwen3-tts-17b-base-mlx" || engineId === "f5-tts-pt-br"
+}
+
 function jobAudioAssetId(job: TtsJob | undefined): string | undefined {
   return typeof job?.settings.chapterAudioAssetId === "string" ? job.settings.chapterAudioAssetId : undefined
 }
@@ -541,4 +842,8 @@ function formatDuration(durationMs: number): string {
   const minutes = Math.floor(totalSeconds / 60)
   const seconds = String(totalSeconds % 60).padStart(2, "0")
   return `${minutes}:${seconds}`
+}
+
+function fileNameForPath(filePath: string): string {
+  return filePath.split(/[\\/]/).filter(Boolean).pop() ?? filePath
 }

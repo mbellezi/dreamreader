@@ -237,9 +237,15 @@ export type ModelDownloadJob = {
 export type VoiceProfile = {
   id: string
   name: string
+  description?: string
   language: string
   kind: string
+  source?: Record<string, unknown>
+  tags?: string[]
   settings?: Record<string, unknown>
+  createdFromEngineId?: string
+  createdAt?: string
+  updatedAt?: string
 }
 
 export type PronunciationEntry = {
@@ -286,11 +292,14 @@ export type DreamReaderBridge = {
     getJob?: (id: string) => Promise<unknown>
     listJobs?: (filter?: { bookId?: string; engineId?: string }) => Promise<unknown[]>
     clearChapterAudio?: (input: { bookId: string; chapterHref: string }) => Promise<unknown>
+    clearTerminalJobs?: (input: { bookId: string }) => Promise<unknown>
   }
   voices?: {
     list?: () => Promise<unknown[]>
     listCompatible?: (engineId?: string) => Promise<unknown[]>
     createFromReference?: (input: Record<string, unknown>) => Promise<unknown>
+    createFromDesignPrompt?: (input: Record<string, unknown>) => Promise<unknown>
+    selectReferenceAudio?: () => Promise<{ path?: string }>
     preview?: (voiceProfileId: string, engineId: string) => Promise<unknown>
     update?: (input: Record<string, unknown>) => Promise<unknown>
     delete?: (voiceProfileId: string) => Promise<unknown>

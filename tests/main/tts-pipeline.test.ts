@@ -29,9 +29,21 @@ describe("TTS pipeline", () => {
 
   it("keeps abbreviations together during sentence splitting", () => {
     expect(segmentTextForTts("O Dr. Silva chegou cedo. Depois saiu.")).toEqual([
-      "O Dr. Silva chegou cedo.",
-      "Depois saiu."
+      "O Dr. Silva chegou cedo. Depois saiu."
     ])
+  })
+
+  it("keeps short related sentences in one TTS segment", () => {
+    const segments = segmentTextForTts(
+      "Quando você lê as palavras nessa página, você percebe que a informação que está recebendo não é um atributo das letras das palavras em si mesmas. A linha impressa não contém informação. Ela transmite informação. Onde está a informação que está sendo transmitida, então, se não está na pagina?"
+    )
+
+    expect(segments).toHaveLength(1)
+    expect(segments[0]).toContain("Ela transmite informação. Onde está a informação")
+  })
+
+  it("removes invisible EPUB control characters before TTS", () => {
+    expect(segmentTextForTts("A infor\u00admação está\u200b aqui.")).toEqual(["A informação está aqui."])
   })
 
   it("applies pronunciation entries and versions the dictionary in narration plans", () => {

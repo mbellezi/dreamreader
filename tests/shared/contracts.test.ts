@@ -12,6 +12,7 @@ import {
   IpcContractSchemas,
   TtsAdapterManifestSchema,
   VoiceCloneInputSchema,
+  VoiceDesignPromptInputSchema,
 } from "../../src/shared/contracts/ipc";
 
 const now = "2026-06-06T12:00:00.000Z";
@@ -116,6 +117,25 @@ describe("shared contracts", () => {
         language: "pt-BR",
         consentConfirmed: false,
         consentNote: "Uso local autorizado.",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("validates voice design prompt creation input", () => {
+    expect(
+      VoiceDesignPromptInputSchema.safeParse({
+        engineId: "qwen3-tts-17b-mlx",
+        name: "Narrador quente",
+        prompt: "A warm Brazilian Portuguese audiobook narrator with stable speaker identity.",
+        language: "pt-BR",
+      }).success,
+    ).toBe(true);
+
+    expect(
+      VoiceDesignPromptInputSchema.safeParse({
+        engineId: "qwen3-tts-17b-mlx",
+        name: "Narrador quente",
+        prompt: "",
       }).success,
     ).toBe(false);
   });

@@ -11,6 +11,9 @@
     "preview": "electron-vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:tts-models": "node scripts/smoke-test-local-tts-models.mjs",
+    "setup:python-tts": "node scripts/setup-python-tts.mjs",
+    "download:tts-models": "node scripts/download-local-tts-models.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node scripts/migrate.mjs",
     "lint": "tsc --noEmit"

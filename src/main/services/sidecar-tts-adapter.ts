@@ -68,7 +68,10 @@ export type SidecarSynthesisInput = {
   outputDirectory: string
   plan: NarrationPlan
   quality: "draft" | "standard" | "high"
+  referenceAudioPath?: string
+  referenceText?: string
   runtimeManifest: SidecarRuntimeManifest
+  signal?: AbortSignal
   voiceBinding?: VoiceEngineBinding
   voiceProfile?: VoiceProfile
   voiceSamples: VoiceSample[]
@@ -98,6 +101,8 @@ export class SidecarTtsAdapter {
       outputDirectory: input.outputDirectory,
       plan: NarrationPlanSchema.parse(input.plan),
       quality: input.quality,
+      referenceAudioPath: input.referenceAudioPath,
+      referenceText: input.referenceText,
       voiceProfile: input.voiceProfile ? VoiceProfileSchema.parse(input.voiceProfile) : undefined,
       voiceBinding: input.voiceBinding ? VoiceEngineBindingSchema.parse(input.voiceBinding) : undefined,
       voiceSamples: input.voiceSamples.map((sample) => VoiceSampleSchema.parse(sample))
@@ -107,6 +112,7 @@ export class SidecarTtsAdapter {
       environment: input.runtimeManifest.environmentJson,
       executablePath,
       request,
+      signal: input.signal,
       timeoutMs: timeoutMsFor(input.runtimeManifest.environmentJson)
     })
     const parsed = SidecarSynthesisResultSchema.parse(raw)
@@ -136,25 +142,97 @@ function runSidecarProcess(input: {
   environment: Record<string, unknown>
   executablePath: string
   request: Record<string, unknown>
+  signal?: AbortSignal
   timeoutMs: number
 }): Promise<unknown> {
   return new Promise((resolve, reject) => {
+    if (input.signal?.aborted) {
+      reject(new AppError("tts_job_cancelled", "TTS job was cancelled"))
+      return
+    }
     const args = getStringArray(input.environment.args)
     const env = {
       ...process.env,
       ...stringRecord(input.environment.env)
     }
     const child = spawn(input.executablePath, args, {
+      detached: process.platform !== "win32",
       env,
       stdio: ["pipe", "pipe", "pipe"]
     })
     let stdout = ""
     let stderr = ""
-    const timer = setTimeout(() => {
-      child.kill("SIGTERM")
-      reject(new AppError("tts_sidecar_timeout", "TTS sidecar timed out"))
+    let cancelled = false
+    let settled = false
+    let timer: NodeJS.Timeout | undefined
+    let forceKillTimer: NodeJS.Timeout | undefined
+    let onAbort: (() => void) | undefined
+
+    const killChild = (signal: NodeJS.Signals): void => {
+      if (!child.pid) {
+        return
+      }
+      try {
+        if (process.platform !== "win32") {
+          process.kill(-child.pid, signal)
+        } else {
+          child.kill(signal)
+        }
+      } catch {
+        try {
+          child.kill(signal)
+        } catch {
+          // The process can exit between cancellation and signal delivery.
+        }
+      }
+    }
+
+    const forceKillSoon = (): void => {
+      forceKillTimer ??= setTimeout(() => {
+        killChild("SIGKILL")
+      }, 3_000)
+      forceKillTimer.unref?.()
+    }
+
+    const cleanup = (): void => {
+      if (timer) {
+        clearTimeout(timer)
+      }
+      if (forceKillTimer) {
+        clearTimeout(forceKillTimer)
+      }
+      if (onAbort) {
+        input.signal?.removeEventListener("abort", onAbort)
+      }
+    }
+
+    const finish = (callback: () => void): void => {
+      if (settled) {
+        return
+      }
+      settled = true
+      cleanup()
+      callback()
+    }
+
+    onAbort = (): void => {
+      cancelled = true
+      if (timer) {
+        clearTimeout(timer)
+      }
+      killChild("SIGTERM")
+      forceKillSoon()
+    }
+
+    timer = setTimeout(() => {
+      killChild("SIGTERM")
+      forceKillSoon()
+      finish(() => reject(new AppError("tts_sidecar_timeout", "TTS sidecar timed out")))
     }, input.timeoutMs)
-    timer.unref?.()
+    timer?.unref?.()
+    if (onAbort) {
+      input.signal?.addEventListener("abort", onAbort, { once: true })
+    }
 
     child.stdout.setEncoding("utf8")
     child.stdout.on("data", (chunk) => {
@@ -165,23 +243,40 @@ function runSidecarProcess(input: {
       stderr += chunk
     })
     child.on("error", (error) => {
-      clearTimeout(timer)
-      reject(error)
+      finish(() => reject(cancelled ? new AppError("tts_job_cancelled", "TTS job was cancelled") : error))
     })
     child.on("close", (code) => {
-      clearTimeout(timer)
+      if (cancelled) {
+        finish(() => reject(new AppError("tts_job_cancelled", "TTS job was cancelled")))
+        return
+      }
       if (code !== 0) {
-        reject(new AppError("tts_sidecar_failed", stderr.trim() || `TTS sidecar exited with code ${code}`))
+        finish(() => reject(new AppError("tts_sidecar_failed", stderr.trim() || `TTS sidecar exited with code ${code}`)))
         return
       }
       try {
-        resolve(JSON.parse(stdout))
+        const parsed = parseSidecarJson(stdout)
+        finish(() => resolve(parsed))
       } catch {
-        reject(new AppError("tts_sidecar_invalid_response", "TTS sidecar returned invalid JSON"))
+        finish(() => reject(new AppError("tts_sidecar_invalid_response", "TTS sidecar returned invalid JSON")))
       }
     })
     child.stdin.end(`${JSON.stringify(input.request)}\n`)
   })
+}
+
+function parseSidecarJson(stdout: string): unknown {
+  const trimmed = stdout.trim()
+  try {
+    return JSON.parse(trimmed)
+  } catch {
+    const jsonStart = trimmed.indexOf("{")
+    const jsonEnd = trimmed.lastIndexOf("}")
+    if (jsonStart < 0 || jsonEnd <= jsonStart) {
+      throw new Error("Sidecar stdout did not include a JSON object")
+    }
+    return JSON.parse(trimmed.slice(jsonStart, jsonEnd + 1))
+  }
 }
 
 function assertOutputPath(outputDirectory: string, candidatePath: string): void {

@@ -3,6 +3,8 @@ out/
 dist/
 release/
 .dreamreader-dev/
+.dreamreader-local/
+.venv/
 .DS_Store
 *.log
 .env

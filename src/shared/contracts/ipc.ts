@@ -44,6 +44,8 @@ import {
 import {
   AudiobookExportSchema,
   ClearChapterAudioRequestSchema,
+  ClearTerminalTtsJobsRequestSchema,
+  ClearTtsJobsResultSchema,
   CreatePronunciationEntryRequestSchema,
   DeletePronunciationEntryRequestSchema,
   DownloadModelRequestSchema,
@@ -58,6 +60,7 @@ import {
   TtsJobSchema,
   UpdatePronunciationEntryRequestSchema,
   VoiceCloneInputSchema,
+  VoiceDesignPromptInputSchema,
   VoiceFilterSchema,
   VoiceEngineBindingSchema,
   VoiceProfileSchema,
@@ -70,6 +73,8 @@ export {
   AudiobookExportSchema,
   BookmarkSchema,
   ClearChapterAudioRequestSchema,
+  ClearTerminalTtsJobsRequestSchema,
+  ClearTtsJobsResultSchema,
   BookSchema,
   CreatePronunciationEntryRequestSchema,
   CreateAnnotationInputSchema,
@@ -93,6 +98,7 @@ export {
   UpdateAnnotationInputSchema,
   UpdatePronunciationEntryRequestSchema,
   VoiceCloneInputSchema,
+  VoiceDesignPromptInputSchema,
   VoiceEngineBindingSchema,
   VoiceProfileSchema,
   VoiceSampleSchema,
@@ -144,8 +150,11 @@ export const IpcChannelSchema = z.enum([
   "tts.getJob",
   "tts.listJobs",
   "tts.clearChapterAudio",
+  "tts.clearTerminalJobs",
   "voices.list",
   "voices.createFromReference",
+  "voices.createFromDesignPrompt",
+  "voices.selectReferenceAudio",
   "voices.preview",
   "voices.update",
   "voices.delete",
@@ -249,6 +258,10 @@ export const IpcContractSchemas = {
     request: ClearChapterAudioRequestSchema,
     response: createIpcResponseSchema(z.object({ deleted: z.literal(true) })),
   },
+  "tts.clearTerminalJobs": {
+    request: ClearTerminalTtsJobsRequestSchema,
+    response: createIpcResponseSchema(ClearTtsJobsResultSchema),
+  },
   "voices.list": {
     request: VoiceFilterSchema.default({ includeUnavailable: false }),
     response: createIpcResponseSchema(z.array(VoiceProfileSchema)),
@@ -256,6 +269,16 @@ export const IpcContractSchemas = {
   "voices.createFromReference": {
     request: VoiceCloneInputSchema,
     response: createIpcResponseSchema(VoiceProfileSchema),
+  },
+  "voices.createFromDesignPrompt": {
+    request: VoiceDesignPromptInputSchema,
+    response: createIpcResponseSchema(VoiceProfileSchema),
+  },
+  "voices.selectReferenceAudio": {
+    request: EmptyRequestSchema,
+    response: createIpcResponseSchema(
+      z.object({ path: z.string().trim().min(1).optional() }),
+    ),
   },
   "voices.preview": {
     request: z.object({

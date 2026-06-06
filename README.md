@@ -11,7 +11,7 @@ As fases 0, 1, 2 e 3 do roadmap estao implementadas:
 - Fase 2: audio local basico com jobs TTS persistidos em PGlite, fila por capitulo, segmentacao/normalizacao PT-BR, adapter local WAV, cache de audio por capitulo, player no leitor, cancelamento/retry/retomada, diagnostico de modelos e manifesto parcial de audiobook.
 - Fase 3: prosodia expressiva com analisador local estruturado, cache por segmento em PGlite, fallback neutro validado por Zod e comparacao entre audio neutro e expressivo na UI.
 
-Runtime GGUF/MLX real para prosodia, voice cloning persistente, engines neurais Qwen/F5 e encoder M4B real ainda pertencem as proximas fases. As fases 2 e 3 geram audio WAV local deterministico para exercitar fila, cache, player, prosodia e manifestos sem baixar modelos externos.
+Runtime GGUF/MLX real para prosodia, voice cloning persistente, engines neurais Qwen/F5 e encoder M4B real ainda pertencem as proximas fases. As fases 2 e 3 geram audio WAV local deterministico para exercitar fila, cache, player, prosodia e manifestos sem baixar modelos externos. Para preparar Qwen3-TTS/F5-TTS-pt-br locais, rode `npm run setup:python-tts`; isso instala um CPython 3.12 standalone e cria pastas de modelos em `.dreamreader-local/`, que nao entra no git.
 
 ## Documentacao
 
@@ -30,8 +30,11 @@ Runtime GGUF/MLX real para prosodia, voice cloning persistente, engines neurais 
 ```bash
 npm run dev
 npm test
+npm run test:tts-models
 npm run lint
 npm run build
+npm run setup:python-tts
+npm run download:tts-models
 npm run db:generate
 npm run db:migrate
 ```

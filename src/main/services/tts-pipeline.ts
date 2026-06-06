@@ -2,11 +2,12 @@ import type { NarrationPlan, NarrationProsody, NarrationSegment, PronunciationEn
 import { hashBuffer } from "@main/lib/hash"
 
 export const NORMALIZER_ID = "pt-br-basic-normalizer"
-export const NORMALIZER_VERSION = "1.0.0"
+export const NORMALIZER_VERSION = "1.1.0"
 export const DICTIONARY_VERSION = "builtin-pt-br-v1"
 export const PROSODY_ANALYZER_ID = "neutral-rule-prosody"
 export const PROSODY_VERSION = "1.0.0"
 export const NARRATION_PLAN_VERSION = "narration-plan/v1"
+const MAX_TTS_SEGMENT_CHARS = 420
 
 const commonAbbreviations: Record<string, string> = {
   "Dr.": "doutor",
@@ -89,7 +90,8 @@ export function buildNarrationPlan(input: ChapterNarrationInput): NarrationPlan 
 }
 
 export function htmlToReadableText(html: string): string {
-  return html
+  return sanitizeReadableText(
+    html
     .replace(/<head[\s\S]*?<\/head>/gi, "")
     .replace(/<script[\s\S]*?<\/script>/gi, "")
     .replace(/<style[\s\S]*?<\/style>/gi, "")
@@ -105,26 +107,25 @@ export function htmlToReadableText(html: string): string {
     .replace(/\n[^\S\n]+/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim()
+  )
 }
 
 export function segmentTextForTts(text: string): string[] {
-  const paragraphs = text
+  const paragraphs = sanitizeReadableText(text)
     .split(/\n{2,}/)
     .map((paragraph) => paragraph.replace(/\s+/g, " ").trim())
     .filter(Boolean)
   const segments: string[] = []
 
   for (const paragraph of paragraphs) {
-    for (const sentence of splitSentences(paragraph)) {
-      segments.push(...splitLongSentence(sentence))
-    }
+    segments.push(...chunkSentencesForTts(splitSentences(paragraph)))
   }
 
   return segments.length ? segments : [text.replace(/\s+/g, " ").trim()].filter(Boolean)
 }
 
 function splitLongSentence(sentence: string): string[] {
-  if (sentence.length <= 420) {
+  if (sentence.length <= MAX_TTS_SEGMENT_CHARS) {
     return [sentence]
   }
   const words = sentence.split(/\s+/)
@@ -132,7 +133,7 @@ function splitLongSentence(sentence: string): string[] {
   let current = ""
   for (const word of words) {
     const candidate = current ? `${current} ${word}` : word
-    if (candidate.length > 420 && current) {
+    if (candidate.length > MAX_TTS_SEGMENT_CHARS && current) {
       chunks.push(current)
       current = word
     } else {
@@ -145,8 +146,30 @@ function splitLongSentence(sentence: string): string[] {
   return chunks
 }
 
+function chunkSentencesForTts(sentences: string[]): string[] {
+  const chunks: string[] = []
+  let current = ""
+
+  for (const sentence of sentences) {
+    const candidate = current ? `${current} ${sentence}` : sentence
+    if (candidate.length <= MAX_TTS_SEGMENT_CHARS) {
+      current = candidate
+      continue
+    }
+    if (current) {
+      chunks.push(...splitLongSentence(current))
+    }
+    current = sentence
+  }
+
+  if (current) {
+    chunks.push(...splitLongSentence(current))
+  }
+  return chunks
+}
+
 export function normalizePtBr(text: string, pronunciationEntries: PronunciationEntry[] = []): string {
-  let normalized = text
+  let normalized = sanitizeReadableText(text)
 
   normalized = normalized.replace(/\bR\$\s*(\d{1,6})(?:,(\d{2}))?\b/g, (_match, reais: string, centavos: string | undefined) => {
     const realCount = Number(reais)
@@ -237,6 +260,13 @@ function splitSentences(paragraph: string): string[] {
     .split(/(?<=[.!?…])\s+/)
     .map((sentence) => sentence.replaceAll("<dot>", ".").trim())
     .filter(Boolean)
+}
+
+function sanitizeReadableText(text: string): string {
+  return text
+    .normalize("NFC")
+    .replace(/\u00ad/g, "")
+    .replace(/[\u200b-\u200f\u202a-\u202e\u2060\ufeff]/g, "")
 }
 
 export function neutralProsodyFor(text: string): NarrationProsody {

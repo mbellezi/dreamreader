@@ -412,6 +412,79 @@ export function App(): ReactElement {
     }
   }
 
+  const clearTerminalTtsJobs = async () => {
+    if (!selectedBook) {
+      return
+    }
+
+    setAudioLoading(true)
+    try {
+      await dreamreaderClient.clearTerminalTtsJobs(selectedBook.id)
+      await refreshAudioState(selectedBook.id)
+    } finally {
+      setAudioLoading(false)
+    }
+  }
+
+  const selectVoiceReferenceAudio = async () => dreamreaderClient.selectVoiceReferenceAudio()
+
+  const createVoiceFromReference = async (input: {
+    consentConfirmed: true
+    consentNote: string
+    engineId: string
+    language: string
+    name: string
+    referenceAudioPath: string
+    transcript?: string
+  }) => {
+    if (!selectedBook) {
+      return
+    }
+
+    setAudioLoading(true)
+    try {
+      const voice = await dreamreaderClient.createVoiceFromReference(input)
+      await refreshAudioState(selectedBook.id)
+      return voice
+    } finally {
+      setAudioLoading(false)
+    }
+  }
+
+  const createVoiceFromDesignPrompt = async (input: {
+    engineId: string
+    language: string
+    name: string
+    prompt: string
+  }) => {
+    if (!selectedBook) {
+      return
+    }
+
+    setAudioLoading(true)
+    try {
+      const voice = await dreamreaderClient.createVoiceFromDesignPrompt(input)
+      await refreshAudioState(selectedBook.id)
+      return voice
+    } finally {
+      setAudioLoading(false)
+    }
+  }
+
+  const deleteVoice = async (voiceProfileId: string) => {
+    if (!selectedBook) {
+      return
+    }
+
+    setAudioLoading(true)
+    try {
+      await dreamreaderClient.deleteVoice(voiceProfileId)
+      await refreshAudioState(selectedBook.id)
+    } finally {
+      setAudioLoading(false)
+    }
+  }
+
   const createPronunciationEntry = async (input: {
     pattern: string
     replacement: string
@@ -637,8 +710,12 @@ export function App(): ReactElement {
                 onChangePreference={updateReaderPreference}
                 onChangeTab={setInspectorTab}
                 onClearChapterAudio={clearChapterAudio}
+                onClearTerminalTtsJobs={clearTerminalTtsJobs}
+                onCreateVoiceFromDesignPrompt={createVoiceFromDesignPrompt}
+                onCreateVoiceFromReference={createVoiceFromReference}
                 onCreatePronunciationEntry={createPronunciationEntry}
                 onDeleteAnnotation={deleteAnnotation}
+                onDeleteVoice={deleteVoice}
                 onDeletePronunciationEntry={deletePronunciationEntry}
                 onExportNotes={exportNotes}
                 onDownloadModel={downloadModel}
@@ -648,6 +725,7 @@ export function App(): ReactElement {
                 onJumpToChapter={jumpToChapter}
                 onRebuildAudiobook={rebuildAudiobook}
                 onRetryTtsJob={retryTtsJob}
+                onSelectVoiceReferenceAudio={selectVoiceReferenceAudio}
                 onToggleAudiobookAutoBuild={toggleAudiobookAutoBuild}
               />
             ) : null}

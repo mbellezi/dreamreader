@@ -1,4 +1,4 @@
-import { mkdir, unlink, writeFile } from "node:fs/promises"
+import { mkdir, rm, unlink, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { and, asc, eq, inArray } from "drizzle-orm"
 import {
@@ -28,15 +28,23 @@ import { AppError } from "@main/lib/errors"
 import { hashBuffer } from "@main/lib/hash"
 import { createId } from "@main/lib/ids"
 import type { AppPaths } from "@main/lib/paths"
+import {
+  builtInBindingIdFor,
+  builtInBindingKindFor,
+  builtInCompatibilityFor,
+  builtInSettingsFor,
+  builtInVoicePresets,
+  DEFAULT_VOICE_PROFILE_ID
+} from "@main/services/default-voices"
 import { LocalTtsAdapter } from "@main/services/local-tts-adapter"
 import { importSidecarAudio, SidecarTtsAdapter, type SidecarRuntimeManifest } from "@main/services/sidecar-tts-adapter"
 import type { AudiobookService } from "@main/services/audiobook-service"
-import { buildNarrationPlan, dictionaryVersionFor, NARRATION_PLAN_VERSION } from "@main/services/tts-pipeline"
+import { buildNarrationPlan, dictionaryVersionFor, NARRATION_PLAN_VERSION, NORMALIZER_VERSION } from "@main/services/tts-pipeline"
 import { createDefaultProsodyAnalyzerProvider, ProsodyService, type ProsodyPlanResult } from "@main/services/prosody-service"
 
 export const DEFAULT_TTS_ENGINE_ID = "dreamreader-local-tts"
 export const DEFAULT_TTS_ADAPTER_ID = "dreamreader-local-wav"
-export const DEFAULT_VOICE_PROFILE_ID = "voice_builtin_ptbr_neutral"
+export { DEFAULT_VOICE_PROFILE_ID } from "@main/services/default-voices"
 
 const activeStatuses = ["queued", "preparing", "analyzing", "synthesizing", "assembling", "updating_m4b"] as const
 const terminalStatuses = ["completed", "failed", "cancelled"] as const
@@ -89,9 +97,9 @@ const neuralTtsEngineDefinitions: TtsEngineDefinition[] = [
       runtime: "mlx",
       modelFormat: "mlx",
       languages: ["pt-BR", "en"],
-      supportsVoiceClone: false,
-      supportsNaturalLanguageInstruction: true,
-      supportsDiscreteEmotion: true,
+      supportsVoiceClone: true,
+      supportsNaturalLanguageInstruction: false,
+      supportsDiscreteEmotion: false,
       supportsBatch: true,
       supportsStreaming: false,
       supportsSegmentTimestamps: true,
@@ -106,8 +114,8 @@ const neuralTtsEngineDefinitions: TtsEngineDefinition[] = [
   },
   {
     id: "qwen3-tts-17b-mlx",
-    displayName: "Qwen3-TTS 12Hz 1.7B CustomVoice",
-    version: "12Hz-1.7B-CustomVoice",
+    displayName: "Qwen3-TTS 12Hz 1.7B VoiceDesign",
+    version: "12Hz-1.7B-VoiceDesign-4bit",
     adapterId: "qwen3-tts-mlx",
     runtime: "mlx",
     modelFormat: "mlx",
@@ -115,13 +123,43 @@ const neuralTtsEngineDefinitions: TtsEngineDefinition[] = [
     installed: false,
     capabilities: {
       id: "qwen3-tts-17b-mlx",
-      displayName: "Qwen3-TTS 12Hz 1.7B CustomVoice",
+      displayName: "Qwen3-TTS 12Hz 1.7B VoiceDesign",
+      runtime: "mlx",
+      modelFormat: "mlx",
+      languages: ["pt-BR", "en"],
+      supportsVoiceClone: false,
+      supportsNaturalLanguageInstruction: true,
+      supportsDiscreteEmotion: true,
+      supportsBatch: true,
+      supportsStreaming: false,
+      supportsSegmentTimestamps: true,
+      supportsSsmlLikeMarkup: false,
+      preferredInputCase: "preserve",
+      estimatedMemoryMb: 8192
+    },
+    performanceProfile: {
+      mode: "mlx-sidecar",
+      requiresSidecar: true
+    }
+  },
+  {
+    id: "qwen3-tts-17b-base-mlx",
+    displayName: "Qwen3-TTS 12Hz 1.7B Base",
+    version: "12Hz-1.7B-Base-4bit",
+    adapterId: "qwen3-tts-mlx",
+    runtime: "mlx",
+    modelFormat: "mlx",
+    accelerator: "apple_metal",
+    installed: false,
+    capabilities: {
+      id: "qwen3-tts-17b-base-mlx",
+      displayName: "Qwen3-TTS 12Hz 1.7B Base",
       runtime: "mlx",
       modelFormat: "mlx",
       languages: ["pt-BR", "en"],
       supportsVoiceClone: true,
-      supportsNaturalLanguageInstruction: true,
-      supportsDiscreteEmotion: true,
+      supportsNaturalLanguageInstruction: false,
+      supportsDiscreteEmotion: false,
       supportsBatch: true,
       supportsStreaming: false,
       supportsSegmentTimestamps: true,
@@ -150,7 +188,7 @@ const neuralTtsEngineDefinitions: TtsEngineDefinition[] = [
       modelFormat: "safetensors",
       languages: ["pt-BR"],
       supportsVoiceClone: true,
-      supportsNaturalLanguageInstruction: true,
+      supportsNaturalLanguageInstruction: false,
       supportsDiscreteEmotion: false,
       supportsBatch: true,
       supportsStreaming: false,
@@ -169,6 +207,7 @@ const neuralTtsEngineDefinitions: TtsEngineDefinition[] = [
 export class TtsService {
   private readonly adapter = new LocalTtsAdapter()
   private readonly sidecarAdapter = new SidecarTtsAdapter()
+  private readonly sidecarAbortControllers = new Map<string, AbortController>()
   private readonly prosody: ProsodyService
   private processing = false
   private queueTimer: NodeJS.Timeout | undefined
@@ -224,6 +263,7 @@ export class TtsService {
           prosodyMode: input.useExpressiveNarration ? "expressive" : "neutral",
           quality: input.quality,
           normalizationDictionaryVersion: dictionaryVersion,
+          normalizationVersion: NORMALIZER_VERSION,
           sourceContentHash: source.contentHash,
           useExpressiveNarration: input.useExpressiveNarration
         }),
@@ -260,6 +300,10 @@ export class TtsService {
       })
       .where(eq(ttsJobs.id, id))
       .returning()
+    this.sidecarAbortControllers.get(id)?.abort()
+    if (!activeStatuses.includes(job.status as (typeof activeStatuses)[number])) {
+      await this.cleanupTtsJobArtifacts([updated], { removeAudiobookChapters: "withChapterAudio" })
+    }
     return toTtsJob(updated)
   }
 
@@ -312,12 +356,50 @@ export class TtsService {
       throw new AppError("tts_job_active", "Cancel active TTS jobs before deleting chapter audio")
     }
 
+    await this.deleteTtsJobRows(jobs, { removeAudiobookChapters: "all" })
+    return { deleted: true as const }
+  }
+
+  async clearTerminalJobs(input: { bookId: string }) {
+    await this.ensureReady()
+    const jobs = await this.db.query.ttsJobs.findMany({
+      where: eq(ttsJobs.bookId, input.bookId)
+    })
+    const terminalJobs = jobs.filter((job) => terminalStatuses.includes(job.status as (typeof terminalStatuses)[number]))
+    const result = await this.deleteTtsJobRows(terminalJobs, { removeAudiobookChapters: "withChapterAudio" })
+    return {
+      deleted: true as const,
+      jobsDeleted: result.jobsDeleted,
+      assetsDeleted: result.assetsDeleted
+    }
+  }
+
+  private async deleteTtsJobRows(
+    jobs: TtsJobRow[],
+    options: { removeAudiobookChapters: "all" | "withChapterAudio" }
+  ): Promise<{ assetsDeleted: number; jobsDeleted: number }> {
+    const cleanup = await this.cleanupTtsJobArtifacts(jobs, options)
+    const jobIds = jobs.map((job) => job.id)
+    if (jobIds.length) {
+      await this.db.delete(ttsJobs).where(inArray(ttsJobs.id, jobIds))
+    }
+    return { assetsDeleted: cleanup.assetsDeleted, jobsDeleted: jobIds.length }
+  }
+
+  private async cleanupTtsJobArtifacts(
+    jobs: TtsJobRow[],
+    options: { removeAudiobookChapters: "all" | "withChapterAudio" }
+  ): Promise<{ assetsDeleted: number }> {
     const assetIds = new Set<string>()
     const jobIds = jobs.map((job) => job.id)
+    const chapterKeys = uniqueChapterKeys(
+      options.removeAudiobookChapters === "all" ? jobs : jobs.filter((job) => hasChapterAudioAsset(job))
+    )
+
     jobs.forEach((job) => {
-      const settings = jsonObject(job.settingsJson)
-      if (typeof settings.chapterAudioAssetId === "string") {
-        assetIds.add(settings.chapterAudioAssetId)
+      const chapterAudioAssetId = chapterAudioAssetIdFor(job)
+      if (chapterAudioAssetId) {
+        assetIds.add(chapterAudioAssetId)
       }
     })
 
@@ -332,8 +414,10 @@ export class TtsService {
       })
     }
 
-    const audiobookAssetIds = await this.audiobook.removeChapterAudio(input.bookId, input.chapterHref)
-    audiobookAssetIds.forEach((assetId) => assetIds.add(assetId))
+    for (const chapter of chapterKeys) {
+      const audiobookAssetIds = await this.audiobook.removeChapterAudio(chapter.bookId, chapter.chapterHref)
+      audiobookAssetIds.forEach((assetId) => assetIds.add(assetId))
+    }
     const assetRows = assetIds.size
       ? await this.db.query.assets.findMany({
           where: inArray(assets.id, [...assetIds])
@@ -342,13 +426,15 @@ export class TtsService {
 
     if (jobIds.length) {
       await this.db.delete(ttsSegments).where(inArray(ttsSegments.jobId, jobIds))
-      await this.db.delete(ttsJobs).where(inArray(ttsJobs.id, jobIds))
     }
     if (assetIds.size) {
       await this.db.delete(assets).where(inArray(assets.id, [...assetIds]))
     }
-    await Promise.all(assetRows.map((asset) => unlink(asset.path).catch(() => undefined)))
-    return { deleted: true as const }
+    await Promise.all([
+      ...assetRows.map((asset) => unlink(asset.path).catch(() => undefined)),
+      ...jobs.map((job) => rm(this.jobOutputDirectory(job), { force: true, recursive: true }).catch(() => undefined))
+    ])
+    return { assetsDeleted: assetRows.length }
   }
 
   async resumePendingJobs(): Promise<void> {
@@ -429,6 +515,7 @@ export class TtsService {
             chapterAudioAssetId: cached.chapterAudioAssetId,
             chapterDurationMs: cached.chapterDurationMs,
             normalizationDictionaryVersion: dictionaryVersion,
+            normalizationVersion: NORMALIZER_VERSION,
             sourceContentHash: source.contentHash
           }),
           narrationPlanVersion: NARRATION_PLAN_VERSION,
@@ -461,6 +548,7 @@ export class TtsService {
           prosodyMode: useExpressiveNarration ? "expressive" : "neutral",
           prosodyPromptVersion: prosodyResult.promptVersion,
           normalizationDictionaryVersion: plan.normalization.dictionaryVersion,
+          normalizationVersion: plan.normalization.version,
           sourceContentHash: source.contentHash
         }),
         status: "synthesizing",
@@ -516,6 +604,9 @@ export class TtsService {
       })
     } catch (error) {
       if (error instanceof AppError && error.code === "tts_job_cancelled") {
+        await this.cleanupTtsJobArtifacts([await this.getJobRow(job.id).catch(() => job)], {
+          removeAudiobookChapters: "withChapterAudio"
+        })
         await this.updateJob(job.id, {
           status: "cancelled",
           finishedAt: new Date()
@@ -667,19 +758,31 @@ export class TtsService {
       throw new AppError("tts_sidecar_not_configured", "TTS engine sidecar runtime is not configured")
     }
     const voice = await this.voiceForJob(input.job)
-    const result = await this.sidecarAdapter.synthesize({
-      adapterId: input.readyEngine.adapterId,
-      engineId: input.job.engineId,
-      jobId: input.job.id,
-      modelPath: input.readyEngine.modelPath,
-      outputDirectory: input.outputDir,
-      plan: input.plan,
-      quality: input.quality,
-      runtimeManifest: input.readyEngine.runtimeManifest,
-      voiceBinding: voice.binding,
-      voiceProfile: voice.profile,
-      voiceSamples: voice.samples
-    })
+    const reference = voice.binding?.bindingAssetId
+      ? await this.referenceForBinding(voice.binding.bindingAssetId, voice.binding.settings)
+      : undefined
+    const controller = new AbortController()
+    this.sidecarAbortControllers.set(input.job.id, controller)
+    const result = await this.sidecarAdapter
+      .synthesize({
+        adapterId: input.readyEngine.adapterId,
+        engineId: input.job.engineId,
+        jobId: input.job.id,
+        modelPath: input.readyEngine.modelPath,
+        outputDirectory: input.outputDir,
+        plan: input.plan,
+        quality: input.quality,
+        referenceAudioPath: reference?.audioPath,
+        referenceText: reference?.text,
+        runtimeManifest: input.readyEngine.runtimeManifest,
+        signal: controller.signal,
+        voiceBinding: voice.binding,
+        voiceProfile: voice.profile,
+        voiceSamples: voice.samples
+      })
+      .finally(() => {
+        this.sidecarAbortControllers.delete(input.job.id)
+      })
 
     const totalSegments = input.plan.segments.length
     for (const [index, segment] of input.plan.segments.entries()) {
@@ -830,70 +933,75 @@ export class TtsService {
         })
     }
 
-    await this.db
-      .insert(voiceProfiles)
-      .values({
-        id: DEFAULT_VOICE_PROFILE_ID,
-        name: "Narrador PT-BR neutro",
-        description: "Voz neutra padrao para leitura em portugues brasileiro.",
-        language: "pt-BR",
-        kind: "built_in",
-        source: JSON.stringify({ provider: "dreamreader", preset: "pt-br-neutral" }),
-        tags: ["pt-BR", "narrador"],
-        settingsJson: {
-          compatibleEngineIds: [DEFAULT_TTS_ENGINE_ID, ...neuralTtsEngineDefinitions.map((engine) => engine.id)],
-          compatibleAdapterIds: [DEFAULT_TTS_ADAPTER_ID, "qwen3-tts-mlx", "f5-tts-pt-br"]
-        },
-        updatedAt: now
-      })
-      .onConflictDoUpdate({
-        target: voiceProfiles.id,
-        set: {
-          settingsJson: {
-            compatibleEngineIds: [DEFAULT_TTS_ENGINE_ID, ...neuralTtsEngineDefinitions.map((engine) => engine.id)],
-            compatibleAdapterIds: [DEFAULT_TTS_ADAPTER_ID, "qwen3-tts-mlx", "f5-tts-pt-br"]
-          },
-          updatedAt: now
-        }
-      })
-
     const engines = await this.db.query.ttsEngines.findMany()
-    for (const engine of engines) {
+    for (const preset of builtInVoicePresets) {
       await this.db
-        .insert(voiceEngineBindings)
+        .insert(voiceProfiles)
         .values({
-          id: `voice_binding_builtin_ptbr_neutral_${sanitizePathPart(engine.id)}`,
-          voiceProfileId: DEFAULT_VOICE_PROFILE_ID,
-          engineId: engine.id,
-          adapterId: engine.adapterId,
-          status: "ready",
-          bindingKind: "preset",
+          id: preset.id,
+          name: preset.name,
+          description: preset.description,
+          language: preset.language,
+          kind: "built_in",
+          source: JSON.stringify(preset.source),
+          tags: preset.tags,
           settingsJson: {
-            preset: "pt-br-neutral"
-          },
-          compatibilityJson: {
-            builtIn: true,
-            languages: ["pt-BR", "en"]
+            ...preset.settings,
+            compatibleEngineIds: preset.engineIds,
+            compatibleAdapterIds: uniqueStrings(
+              engines.filter((engine) => preset.engineIds.includes(engine.id)).map((engine) => engine.adapterId)
+            )
           },
           updatedAt: now
         })
         .onConflictDoUpdate({
-          target: [voiceEngineBindings.voiceProfileId, voiceEngineBindings.engineId],
+          target: voiceProfiles.id,
           set: {
-            adapterId: engine.adapterId,
-            status: "ready",
-            bindingKind: "preset",
+            name: preset.name,
+            description: preset.description,
+            language: preset.language,
+            source: JSON.stringify(preset.source),
+            tags: preset.tags,
             settingsJson: {
-              preset: "pt-br-neutral"
-            },
-            compatibilityJson: {
-              builtIn: true,
-              languages: ["pt-BR", "en"]
+              ...preset.settings,
+              compatibleEngineIds: preset.engineIds,
+              compatibleAdapterIds: uniqueStrings(
+                engines.filter((engine) => preset.engineIds.includes(engine.id)).map((engine) => engine.adapterId)
+              )
             },
             updatedAt: now
           }
         })
+
+      for (const engine of engines.filter((item) => preset.engineIds.includes(item.id))) {
+        await this.db
+          .insert(voiceEngineBindings)
+          .values({
+            id: builtInBindingIdFor(preset.id, engine.id),
+            voiceProfileId: preset.id,
+            engineId: engine.id,
+            adapterId: engine.adapterId,
+            status: "ready",
+            bindingKind: builtInBindingKindFor(preset, engine.id),
+            settingsJson: builtInSettingsFor(preset, engine.id),
+            compatibilityJson: builtInCompatibilityFor(preset, engine.id),
+            updatedAt: now
+          })
+          .onConflictDoUpdate({
+            target: [voiceEngineBindings.voiceProfileId, voiceEngineBindings.engineId],
+            set: {
+              adapterId: engine.adapterId,
+              status: "ready",
+              bindingKind: builtInBindingKindFor(preset, engine.id),
+              settingsJson: builtInSettingsFor(preset, engine.id),
+              compatibilityJson: builtInCompatibilityFor(preset, engine.id),
+              updatedAt: now
+            }
+          })
+      }
     }
+
+    await disableStaleBuiltInBindings(this.db, now)
   }
 
   private async getChapterSource(bookId: string, chapterHref: string): Promise<ChapterSource> {
@@ -950,6 +1058,7 @@ export class TtsService {
       return (
         settings.sourceContentHash === input.contentHash &&
         settings.normalizationDictionaryVersion === input.dictionaryVersion &&
+        settings.normalizationVersion === NORMALIZER_VERSION &&
         settings.useExpressiveNarration === input.useExpressiveNarration &&
         typeof settings.chapterAudioAssetId === "string"
       )
@@ -1101,6 +1210,21 @@ export class TtsService {
     }
   }
 
+  private async referenceForBinding(bindingAssetId: string, settings: Record<string, unknown>) {
+    const asset = await this.db.query.assets.findFirst({ where: eq(assets.id, bindingAssetId) })
+    if (!asset) {
+      throw new AppError("voice_reference_missing", "Voice reference audio asset was not found")
+    }
+    return {
+      audioPath: asset.path,
+      text: typeof settings.transcript === "string" ? settings.transcript : undefined
+    }
+  }
+
+  private jobOutputDirectory(job: TtsJobRow): string {
+    return path.join(this.paths.audioCacheDir, job.bookId, sanitizePathPart(job.chapterHref), job.id)
+  }
+
   private async pronunciationEntriesForBook(bookId: string): Promise<PronunciationEntry[]> {
     const rows = await this.db.query.pronunciationEntries.findMany({
       orderBy: [asc(pronunciationEntries.scope), asc(pronunciationEntries.pattern)]
@@ -1228,6 +1352,50 @@ function toIso(value: Date | string): string {
 
 function sanitizePathPart(value: string): string {
   return value.replace(/[^a-z0-9._-]+/gi, "_").slice(0, 96) || "chapter"
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)]
+}
+
+function uniqueChapterKeys(jobs: TtsJobRow[]): Array<{ bookId: string; chapterHref: string }> {
+  const seen = new Set<string>()
+  return jobs.flatMap((job) => {
+    const key = `${job.bookId}\n${job.chapterHref}`
+    if (seen.has(key)) {
+      return []
+    }
+    seen.add(key)
+    return [{ bookId: job.bookId, chapterHref: job.chapterHref }]
+  })
+}
+
+function hasChapterAudioAsset(job: TtsJobRow): boolean {
+  return Boolean(chapterAudioAssetIdFor(job))
+}
+
+function chapterAudioAssetIdFor(job: TtsJobRow): string | undefined {
+  const settings = jsonObject(job.settingsJson)
+  return typeof settings.chapterAudioAssetId === "string" ? settings.chapterAudioAssetId : undefined
+}
+
+async function disableStaleBuiltInBindings(db: AppDatabase, now: Date): Promise<void> {
+  const allowed = new Set(
+    builtInVoicePresets.flatMap((preset) => preset.engineIds.map((engineId) => `${preset.id}:${engineId}`))
+  )
+  const bindings = await db.query.voiceEngineBindings.findMany()
+  for (const binding of bindings) {
+    const compatibility = jsonObject(binding.compatibilityJson)
+    if (compatibility.builtIn === true && !allowed.has(`${binding.voiceProfileId}:${binding.engineId}`)) {
+      await db
+        .update(voiceEngineBindings)
+        .set({
+          status: "disabled",
+          updatedAt: now
+        })
+        .where(eq(voiceEngineBindings.id, binding.id))
+    }
+  }
 }
 
 function qualityFor(value: unknown): "draft" | "standard" | "high" {

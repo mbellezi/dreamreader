@@ -286,6 +286,16 @@ export const VoiceCloneInputSchema = z.object({
 });
 export type VoiceCloneInput = z.infer<typeof VoiceCloneInputSchema>;
 
+export const VoiceDesignPromptInputSchema = z.object({
+  engineId: IdSchema,
+  name: NonEmptyStringSchema,
+  prompt: NonEmptyStringSchema.max(1200),
+  language: LocaleSchema.or(NonEmptyStringSchema).default("pt-BR"),
+});
+export type VoiceDesignPromptInput = z.infer<
+  typeof VoiceDesignPromptInputSchema
+>;
+
 export const PronunciationScopeSchema = z.enum(["global", "book"]);
 export type PronunciationScope = z.infer<typeof PronunciationScopeSchema>;
 
@@ -358,6 +368,20 @@ export const ClearChapterAudioRequestSchema = z.object({
 export type ClearChapterAudioRequest = z.infer<
   typeof ClearChapterAudioRequestSchema
 >;
+
+export const ClearTerminalTtsJobsRequestSchema = z.object({
+  bookId: IdSchema,
+});
+export type ClearTerminalTtsJobsRequest = z.infer<
+  typeof ClearTerminalTtsJobsRequestSchema
+>;
+
+export const ClearTtsJobsResultSchema = z.object({
+  deleted: z.literal(true),
+  jobsDeleted: z.number().int().nonnegative(),
+  assetsDeleted: z.number().int().nonnegative(),
+});
+export type ClearTtsJobsResult = z.infer<typeof ClearTtsJobsResultSchema>;
 
 export const TtsSynthesisInputSchema = z.object({
   jobId: IdSchema,

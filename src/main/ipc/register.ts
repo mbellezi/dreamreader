@@ -61,6 +61,7 @@ export function registerIpc(services: Services): void {
   handle("tts.getJob", contract["tts.getJob"].request, (input) => services.tts.getJob(input.id))
   handle("tts.listJobs", contract["tts.listJobs"].request, (input) => services.tts.listJobs(input))
   handle("tts.clearChapterAudio", contract["tts.clearChapterAudio"].request, (input) => services.tts.clearChapterAudio(input))
+  handle("tts.clearTerminalJobs", contract["tts.clearTerminalJobs"].request, (input) => services.tts.clearTerminalJobs(input))
   handle("settings.get", contract["settings.get"].request, () => services.library.getSettings())
   handle("settings.update", contract["settings.update"].request, (input) => services.library.updateSettings(input))
   handle("models.list", contract["models.list"].request, () => services.runtime.listModels())
@@ -84,6 +85,20 @@ export function registerIpc(services: Services): void {
   handle("voices.createFromReference", contract["voices.createFromReference"].request, (input) =>
     services.voices.createFromReference(input)
   )
+  handle("voices.createFromDesignPrompt", contract["voices.createFromDesignPrompt"].request, (input) =>
+    services.voices.createFromDesignPrompt(input)
+  )
+  handle("voices.selectReferenceAudio", contract["voices.selectReferenceAudio"].request, async () => {
+    const selectedPath = (
+      await dialog.showOpenDialog({
+        properties: ["openFile"],
+        filters: [
+          { name: "Audio", extensions: ["wav", "mp3", "m4a", "flac", "ogg"] }
+        ]
+      })
+    ).filePaths[0]
+    return selectedPath ? { path: selectedPath } : {}
+  })
   handle("voices.preview", contract["voices.preview"].request, (input) => services.voices.preview(input))
   handle("voices.update", contract["voices.update"].request, (input) => services.voices.update(input))
   handle("voices.delete", contract["voices.delete"].request, (input) => services.voices.delete(input))
