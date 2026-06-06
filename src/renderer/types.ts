@@ -70,6 +70,11 @@ export type Annotation = {
   excerpt: string
   note: string
   createdAt: string
+  // Layout-independent anchor for the highlighted text: which paragraph it lives
+  // in and the character offset of its start. Distinguishes repeated words (e.g.
+  // "que") so a highlight lands on the exact occurrence, not every match.
+  anchorParagraphIndex?: number
+  anchorTextOffset?: number
 }
 
 export type AnnotationUpdateDraft = {

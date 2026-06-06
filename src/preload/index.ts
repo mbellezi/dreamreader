@@ -99,10 +99,19 @@ const api = {
       color: string
       excerpt: string
       note: string
+      anchorParagraphIndex?: number
+      anchorTextOffset?: number
     }) => {
+      // Strip undefined: locator.text crosses IPC as a JSON object contract that
+      // rejects undefined values, so an undefined anchor would fail validation.
+      const text = compact({
+        anchorParagraphIndex: draft.anchorParagraphIndex,
+        anchorTextOffset: draft.anchorTextOffset,
+        anchorText: draft.excerpt
+      })
       const created = await invoke("annotations.create", {
         bookId: draft.bookId,
-        locator: { href: draft.chapterId },
+        locator: Object.keys(text).length ? { href: draft.chapterId, text } : { href: draft.chapterId },
         quote: draft.excerpt,
         color: draft.color === "rose" ? "pink" : draft.color,
         note: draft.note,
@@ -203,6 +212,7 @@ function toRendererBookSummary(input: unknown) {
 function toRendererAnnotation(input: unknown, fallbackKind = "highlight", fallbackChapterId = "chapter-1") {
   const annotation = (input ?? {}) as Record<string, unknown>
   const locator = (annotation.locator ?? {}) as Record<string, unknown>
+  const text = (locator.text ?? {}) as Record<string, unknown>
   const tags = toArray(annotation.tags).map(String)
   return {
     id: String(annotation.id ?? ""),
@@ -212,7 +222,9 @@ function toRendererAnnotation(input: unknown, fallbackKind = "highlight", fallba
     color: String(annotation.color ?? "yellow") === "pink" ? "rose" : String(annotation.color ?? "yellow"),
     excerpt: String(annotation.quote ?? ""),
     note: String(annotation.note ?? ""),
-    createdAt: String(annotation.createdAt ?? new Date().toISOString())
+    createdAt: String(annotation.createdAt ?? new Date().toISOString()),
+    anchorParagraphIndex: optionalNumber(text.anchorParagraphIndex),
+    anchorTextOffset: optionalNumber(text.anchorTextOffset)
   }
 }
 
@@ -322,4 +334,8 @@ function optionalString(value: unknown): string | undefined {
 function optionalNumber(value: unknown): number | undefined {
   const numberValue = Number(value)
   return Number.isFinite(numberValue) ? numberValue : undefined
+}
+
+function compact<T extends Record<string, unknown>>(value: T): Partial<T> {
+  return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined)) as Partial<T>
 }

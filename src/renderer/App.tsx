@@ -39,6 +39,7 @@ import {
   pageTranslateX,
   totalColumns
 } from "@renderer/lib/pagination"
+import { findAnnotationRanges, findOverlappingAnnotations, resolveAnnotationPlacements, type AnnotationPlacement } from "@renderer/lib/annotations"
 import { clamp, cn, formatAuthors } from "@renderer/lib/utils"
 import type {
   Annotation,
@@ -58,6 +59,8 @@ type AppView = "library" | "reader" | "settings"
 type LibraryMode = "grid" | "list"
 type InspectorTab = "summary" | "annotations" | "preferences"
 type ReaderSelection = {
+  anchorParagraphIndex?: number
+  anchorTextOffset?: number
   overlappingAnnotationIds: string[]
   text: string
   x: number
@@ -350,6 +353,8 @@ export function App(): ReactElement {
   )
 
   const createAnnotation = async (draft: {
+    anchorParagraphIndex?: number
+    anchorTextOffset?: number
     chapterId: string
     color: HighlightColor
     excerpt: string
@@ -361,6 +366,8 @@ export function App(): ReactElement {
     }
 
     const annotation = await dreamreaderClient.createAnnotation({
+      anchorParagraphIndex: draft.anchorParagraphIndex,
+      anchorTextOffset: draft.anchorTextOffset,
       bookId: selectedBook.id,
       chapterId: draft.chapterId,
       kind: draft.kind,
@@ -841,7 +848,7 @@ function ReaderPane({
   cleanReading: boolean
   preferences: ReaderPreferences
   t: (key: string, values?: Record<string, string | number>) => string
-  onCreateAnnotation: (draft: { chapterId: string; color: HighlightColor; excerpt: string; kind: AnnotationKind; note: string }) => Promise<void> | void
+  onCreateAnnotation: (draft: { anchorParagraphIndex?: number; anchorTextOffset?: number; chapterId: string; color: HighlightColor; excerpt: string; kind: AnnotationKind; note: string }) => Promise<void> | void
   onDeleteAnnotation: (annotationId: string) => Promise<void> | void
   onFocusAnnotation: (annotation: Annotation) => void
   onJumpToAnnotation: (annotation: Annotation) => void
@@ -884,6 +891,13 @@ function ReaderPane({
   const chapterAnnotations = useMemo(
     () => annotations.filter((annotation) => annotation.chapterId === chapter?.id),
     [annotations, chapter?.id]
+  )
+  // Resolve every chapter annotation to exactly one location (paragraph + range)
+  // so a highlight renders once, on its precise occurrence, rather than matching
+  // its text in every paragraph.
+  const annotationPlacements = useMemo(
+    () => resolveAnnotationPlacements(chapterAnnotations, paragraphs),
+    [chapterAnnotations, paragraphs]
   )
   const readerFontFamily = fontStackByFamily[preferences.fontFamily] ?? fontStackByFamily.georgia
   const contentMaxWidth = preferences.columnCount === 2 ? preferences.columnWidth * 2 + 72 : preferences.columnWidth
@@ -1223,15 +1237,37 @@ function ReaderPane({
       return
     }
 
-    const rect = selected.getRangeAt(0).getBoundingClientRect()
+    const range = selected.getRangeAt(0)
+    const rect = range.getBoundingClientRect()
     if (rect.width === 0 && rect.height === 0) {
       setSelection(null)
       return
     }
 
-    const overlappingAnnotations = findOverlappingAnnotations(text, chapterAnnotations, paragraphs)
+    // Anchor the selection to its start paragraph + character offset so a
+    // highlight resolves to this exact occurrence, even for repeated words.
+    const startParagraph = closestParagraphElement(range.startContainer, articleRef.current)
+    const anchorParagraphIndex = startParagraph ? Number(startParagraph.dataset.paragraphIndex) : undefined
+    const anchorTextOffset = startParagraph
+      ? textOffsetWithin(startParagraph, range.startContainer, range.startOffset)
+      : undefined
+    const anchorTextEnd = startParagraph && startParagraph.contains(range.endContainer)
+      ? textOffsetWithin(startParagraph, range.endContainer, range.endOffset)
+      : (anchorTextOffset ?? 0) + text.length
+
+    const overlappingAnnotations = findOverlappingAnnotations(
+      {
+        paragraphIndex: Number.isFinite(anchorParagraphIndex) ? anchorParagraphIndex : undefined,
+        start: anchorTextOffset ?? 0,
+        end: anchorTextEnd
+      },
+      chapterAnnotations,
+      paragraphs
+    )
     setAnnotationMenu(null)
     setSelection({
+      anchorParagraphIndex: Number.isFinite(anchorParagraphIndex) ? anchorParagraphIndex : undefined,
+      anchorTextOffset,
       overlappingAnnotationIds: overlappingAnnotations.map((annotation) => annotation.id),
       text,
       x: clamp(rect.left + rect.width / 2, 216, window.innerWidth - 216),
@@ -1246,6 +1282,8 @@ function ReaderPane({
 
     await Promise.all(selection.overlappingAnnotationIds.map((annotationId) => onDeleteAnnotation(annotationId)))
     await onCreateAnnotation({
+      anchorParagraphIndex: selection.anchorParagraphIndex,
+      anchorTextOffset: selection.anchorTextOffset,
       chapterId: chapter.id,
       color,
       excerpt: selection.text,
@@ -1428,7 +1466,7 @@ function ReaderPane({
                         data-readable-block
                         style={{ marginTop: index === 0 ? 0 : paginatedParagraphSpacing }}
                       >
-                        {renderParagraphWithAnnotations(paragraph, chapterAnnotations, activeAnnotationId, openAnnotationMenu)}
+                        {renderParagraphWithAnnotations(paragraph, index, chapterAnnotations, annotationPlacements, activeAnnotationId, openAnnotationMenu)}
                       </p>
                     ))}
                   </div>
@@ -1470,7 +1508,7 @@ function ReaderPane({
                         data-readable-block
                         style={{ marginTop: index === 0 ? 0 : `${preferences.paragraphSpacing}em` }}
                       >
-                        {renderParagraphWithAnnotations(paragraph, chapterAnnotations, activeAnnotationId, openAnnotationMenu)}
+                        {renderParagraphWithAnnotations(paragraph, index, chapterAnnotations, annotationPlacements, activeAnnotationId, openAnnotationMenu)}
                       </p>
                     ))}
                   </div>
@@ -1744,11 +1782,13 @@ function AnnotationContextMenu({
 
 function renderParagraphWithAnnotations(
   paragraph: string,
+  paragraphIndex: number,
   annotations: Annotation[],
+  placements: Map<string, AnnotationPlacement>,
   activeAnnotationId: string | null,
   onOpenAnnotationMenu: (annotation: Annotation, x: number, y: number) => void
 ) {
-  const ranges = findAnnotationRanges(paragraph, annotations)
+  const ranges = findAnnotationRanges(paragraphIndex, annotations, placements)
 
   if (!ranges.length) {
     return paragraph
@@ -1789,32 +1829,6 @@ function renderParagraphWithAnnotations(
   }
 
   return nodes
-}
-
-function findAnnotationRanges(paragraph: string, annotations: Annotation[]): Array<{ annotation: Annotation; start: number; end: number }> {
-  const lowerParagraph = paragraph.toLocaleLowerCase()
-  const ranges = annotations
-    .map((annotation) => {
-      const quote = annotation.excerpt.trim()
-      const start = quote ? lowerParagraph.indexOf(quote.toLocaleLowerCase()) : -1
-      return start >= 0
-        ? {
-          annotation,
-          start,
-          end: start + quote.length
-        }
-        : null
-    })
-    .filter((range): range is { annotation: Annotation; start: number; end: number } => Boolean(range))
-    .sort((first, second) => first.start - second.start || second.end - first.end)
-
-  const accepted: Array<{ annotation: Annotation; start: number; end: number }> = []
-  for (const range of ranges) {
-    if (!accepted.some((item) => range.start < item.end && range.end > item.start)) {
-      accepted.push(range)
-    }
-  }
-  return accepted
 }
 
 function readVisibleTextAnchor(article: HTMLElement, topInset: number): { paragraphIndex: number; text: string; textOffset: number } | undefined {
@@ -2010,41 +2024,6 @@ function textOffsetWithin(container: HTMLElement, targetNode: Node, targetOffset
   return 0
 }
 
-function findOverlappingAnnotations(selectionText: string, annotations: Annotation[], paragraphs: string[]): Annotation[] {
-  return annotations.filter((annotation) => textSelectionsOverlap(selectionText, annotation.excerpt, paragraphs))
-}
-
-function textSelectionsOverlap(selectionText: string, annotationText: string, paragraphs: string[]): boolean {
-  const selected = normalizeTextSelection(selectionText)
-  const annotated = normalizeTextSelection(annotationText)
-
-  if (!selected || !annotated) {
-    return false
-  }
-
-  if (selected.includes(annotated) || annotated.includes(selected)) {
-    return true
-  }
-
-  return paragraphs.some((paragraph) => {
-    const normalizedParagraph = normalizeTextSelection(paragraph)
-    const selectedStart = normalizedParagraph.indexOf(selected)
-    const annotatedStart = normalizedParagraph.indexOf(annotated)
-
-    if (selectedStart < 0 || annotatedStart < 0) {
-      return false
-    }
-
-    const selectedEnd = selectedStart + selected.length
-    const annotatedEnd = annotatedStart + annotated.length
-    return selectedStart < annotatedEnd && annotatedStart < selectedEnd
-  })
-}
-
-function normalizeTextSelection(value: string): string {
-  return value.replace(/\s+/g, " ").trim().toLocaleLowerCase()
-}
-
 function InspectorPane({
   activeTab,
   activeAnnotationId,
@@ -2128,7 +2107,7 @@ function InspectorPane({
                     const chapterTitle = book?.chapters.find((chapter) => chapter.id === annotation.chapterId)?.title
 
                     return (
-                    <div key={annotation.id} className={cn("rounded-md border bg-card p-3", `annotation-${annotation.color}`, annotation.id === activeAnnotationId && "border-primary ring-2 ring-primary/15")}>
+                    <div key={annotation.id} className={cn("rounded-md border bg-card p-3", `annotation-${annotation.color}`, annotation.id === activeAnnotationId && "bg-primary/5")}>
                       <div className="flex items-start justify-between gap-3">
                         <button className="min-w-0 flex-1 text-left" onClick={() => onJumpToAnnotation(annotation)}>
                           <span className="inline-flex items-center gap-2 text-xs font-medium">
