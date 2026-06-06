@@ -29,6 +29,16 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactElement } from "react"
 import { translate } from "@renderer/i18n"
 import { dreamreaderClient } from "@renderer/lib/dreamreader"
+import {
+  clampPageIndex,
+  columnStep,
+  pageClipWidth,
+  pageCountForColumns,
+  pageIndexForColumn,
+  pageProgress,
+  pageTranslateX,
+  totalColumns
+} from "@renderer/lib/pagination"
 import { clamp, cn, formatAuthors } from "@renderer/lib/utils"
 import type {
   Annotation,
@@ -59,9 +69,19 @@ type AnnotationMenuState = {
   y: number
 }
 type PageEdgeHint = "previous" | "next"
-type TextLineBox = {
-  bottom: number
-  top: number
+// A layout-independent reading anchor: the paragraph at the top-left of the
+// current page, plus how many columns into that paragraph the page starts.
+// Survives reflow (resize / font change) so the reader stays on the same text.
+type ColumnAnchor = {
+  paragraphIndex: number
+  columnWithin: number
+}
+type PageLayout = {
+  pageHeight: number
+  clipWidth: number
+  columnWidth: number
+  columnGap: number
+  columnsPerPage: number
 }
 type LibraryStatus = {
   tone: "info" | "success" | "warning" | "error"
@@ -69,6 +89,12 @@ type LibraryStatus = {
 }
 
 const READING_SETTLE_MS = 12000
+// Inter-column gap for paginated reading. For a two-column page the gap is
+// visible between the two columns; for a single-column page it only spaces the
+// (clipped) next page, so the value is cosmetic there.
+const PAGINATED_COLUMN_GAP_DOUBLE = 72
+const PAGINATED_COLUMN_GAP_SINGLE = 64
+const MIN_PAGINATED_COLUMN_WIDTH = 200
 
 const themeOptions: AppearanceTheme[] = ["light", "dark", "sepia", "contrast"]
 const colorOptions: HighlightColor[] = ["yellow", "green", "blue", "rose", "purple"]
@@ -824,20 +850,21 @@ function ReaderPane({
   const isRestoringPositionRef = useRef(false)
   const lastSavedPositionRef = useRef("")
   const latestPositionRef = useRef<ReaderLocator | undefined>(undefined)
-  const knownLastPageCountRef = useRef<number | null>(null)
-  const pageCountRef = useRef(1)
   const pageIndexRef = useRef(0)
-  const pageOffsetRef = useRef(0)
-  const pageOffsetsRef = useRef<number[]>([0])
+  const columnAnchorRef = useRef<ColumnAnchor | undefined>(undefined)
   const savePositionTimerRef = useRef<number | null>(null)
   const [annotationMenu, setAnnotationMenu] = useState<AnnotationMenuState | null>(null)
   const [pageEdgeHint, setPageEdgeHint] = useState<PageEdgeHint | null>(null)
   const [pageCount, setPageCount] = useState(1)
-  const [pageClipHeight, setPageClipHeight] = useState<number | null>(null)
   const [pageIndex, setPageIndex] = useState(0)
-  const [pageOffset, setPageOffset] = useState(0)
-  const [pageStep, setPageStep] = useState(1)
-  const [paginatedBottomPadding, setPaginatedBottomPadding] = useState(28)
+  const [pageLayout, setPageLayout] = useState<PageLayout>({
+    pageHeight: 0,
+    clipWidth: 0,
+    columnWidth: preferences.columnWidth,
+    columnGap: PAGINATED_COLUMN_GAP_SINGLE,
+    columnsPerPage: 1
+  })
+  const [pageTranslate, setPageTranslate] = useState(0)
   const [selection, setSelection] = useState<ReaderSelection | null>(null)
   const [noteDraft, setNoteDraft] = useState("")
   const [selectedColor, setSelectedColor] = useState<HighlightColor>("yellow")
@@ -858,70 +885,71 @@ function ReaderPane({
   const readerTopPadding = isPaginated ? readerLineHeightPx : readerVerticalPadding
   const paginatedParagraphSpacing = Math.max(1, Math.round(preferences.paragraphSpacing)) * readerLineHeightPx
   const readerAnchorInset = isPaginated ? readerTopPadding : 8
-  const chapterTextProgress = isPaginated && contentRef.current
-    ? visibleChapterProgressFor(
-      contentRef.current,
-      pageOffset,
-      Math.max((pageClipHeight ?? readerTopPadding + pageStep) - readerTopPadding, 1)
-    )
-    : 0
+  const readerHorizontalPadding = cleanReading ? Math.max(preferences.margins, 56) : preferences.margins
+  const chapterTextProgress = isPaginated ? pageProgress(pageIndex, pageCount) : 0
 
-  const setCurrentPage = useCallback((nextPageIndex: number, nextPageOffset = pageOffsetsRef.current[nextPageIndex] ?? 0) => {
-    pageIndexRef.current = nextPageIndex
-    pageOffsetRef.current = nextPageOffset
-    setPageIndex(nextPageIndex)
-    setPageOffset(nextPageOffset)
-    if (!Number.isNaN(nextPageOffset)) {
-      pageOffsetsRef.current[nextPageIndex] = nextPageOffset
-    }
-  }, [])
-
-  const setStablePageCount = useCallback((nextPageCount: number, allowDecrease = false) => {
-    const resolvedPageCount = allowDecrease
-      ? nextPageCount
-      : Math.max(pageCountRef.current, nextPageCount)
-
-    pageCountRef.current = resolvedPageCount
-    setPageCount(resolvedPageCount)
-    return resolvedPageCount
-  }, [])
-
-  const pageStepFor = useCallback(
-    (article: HTMLElement) => {
-      const contentHeight = Math.max(article.clientHeight - readerTopPadding, readerLineHeightPx)
-      const lineCount = Math.max(1, Math.floor(contentHeight / readerLineHeightPx))
-      return Math.max(lineCount * readerLineHeightPx, 1)
+  // Geometry of one page for the current viewport + preferences. Pure: depends
+  // only on the article box and reader settings, never on prior navigation.
+  const computeLayout = useCallback(
+    (article: HTMLElement): PageLayout => {
+      const columnsPerPage = preferences.columnCount === 2 ? 2 : 1
+      const columnGap = columnsPerPage === 2 ? PAGINATED_COLUMN_GAP_DOUBLE : PAGINATED_COLUMN_GAP_SINGLE
+      const availableWidth = Math.max(article.clientWidth - readerHorizontalPadding * 2, MIN_PAGINATED_COLUMN_WIDTH)
+      const fittedColumnWidth = (availableWidth - (columnsPerPage - 1) * columnGap) / columnsPerPage
+      const columnWidth = Math.max(1, Math.min(preferences.columnWidth, fittedColumnWidth))
+      const clipWidth = pageClipWidth(columnWidth, columnGap, columnsPerPage)
+      const pageHeight = Math.max(article.clientHeight - readerTopPadding - readerVerticalPadding, readerLineHeightPx)
+      return { pageHeight, clipWidth, columnWidth, columnGap, columnsPerPage }
     },
-    [readerLineHeightPx, readerTopPadding]
+    [preferences.columnCount, preferences.columnWidth, readerHorizontalPadding, readerLineHeightPx, readerTopPadding, readerVerticalPadding]
   )
+
+  // Commit a resolved page: update refs (used synchronously by save/measure),
+  // the layout, the horizontal translate, and the React state that renders them.
+  const applyPage = useCallback((layout: PageLayout, nextPageCount: number, nextPageIndex: number) => {
+    pageIndexRef.current = nextPageIndex
+    setPageLayout(layout)
+    setPageCount(nextPageCount)
+    setPageIndex(nextPageIndex)
+    setPageTranslate(pageTranslateX(nextPageIndex, layout.columnsPerPage, layout.columnWidth, layout.columnGap))
+  }, [])
 
   const measurePages = useCallback(() => {
     const article = articleRef.current
+    const content = contentRef.current
     if (!article) {
       setPageCount(1)
-      setPageClipHeight(null)
       return 1
     }
 
-    const contentHeight = contentRef.current ? measureReadableContentHeight(contentRef.current) : 0
-    const nextPageStep = isPaginated ? pageStepFor(article) : Math.max(article.clientHeight, 1)
-    const readableHeight = Math.max(contentHeight, nextPageStep)
-    const estimatedPageCount = isPaginated ? Math.max(1, Math.ceil(readableHeight / nextPageStep)) : 1
-    const lockedPageCount = knownLastPageCountRef.current
-    const nextPageCount = lockedPageCount ?? Math.max(estimatedPageCount, pageOffsetsRef.current.length, pageIndexRef.current + 1)
-    const nextPageIndex = isPaginated ? clamp(pageIndexRef.current, 0, nextPageCount - 1) : 0
-    const nextPageOffset = pageOffsetsRef.current[nextPageIndex] ?? 0
-    const nextBottomPadding = isPaginated
-      ? Math.max(article.clientHeight, readerLineHeightPx)
-      : readerVerticalPadding
+    if (!isPaginated || !content) {
+      setPageCount(1)
+      return 1
+    }
 
-    setPageClipHeight(isPaginated && contentRef.current ? readerTopPadding + visiblePageHeightFor(contentRef.current, nextPageOffset, nextPageStep) : null)
-    setPageStep(nextPageStep)
-    const resolvedPageCount = setStablePageCount(nextPageCount, lockedPageCount !== null)
-    setCurrentPage(nextPageIndex)
-    setPaginatedBottomPadding(nextBottomPadding)
-    return resolvedPageCount
-  }, [isPaginated, pageStepFor, readerLineHeightPx, readerTopPadding, readerVerticalPadding, setCurrentPage, setStablePageCount])
+    const layout = computeLayout(article)
+    // Apply the measuring styles before reading scrollWidth so the column track
+    // reflects the new viewport; React will re-render the same values.
+    applyColumnStyles(content, layout)
+    const columns = totalColumns(content.scrollWidth, layout.columnWidth, layout.columnGap)
+    const nextPageCount = pageCountForColumns(columns, layout.columnsPerPage)
+
+    // Re-anchor: keep the same paragraph (and column within it) on screen across
+    // the reflow instead of trusting the old page index.
+    let nextPageIndex = clampPageIndex(pageIndexRef.current, nextPageCount)
+    const anchor = columnAnchorRef.current
+    if (anchor) {
+      const paragraph = content.querySelector<HTMLElement>(`[data-paragraph-index="${anchor.paragraphIndex}"]`)
+      if (paragraph) {
+        const targetColumn = columnIndexOfElement(content, paragraph, layout) + anchor.columnWithin
+        nextPageIndex = clampPageIndex(pageIndexForColumn(targetColumn, layout.columnsPerPage), nextPageCount)
+      }
+    }
+
+    applyPage(layout, nextPageCount, nextPageIndex)
+    columnAnchorRef.current = anchorForPage(content, nextPageIndex, layout)
+    return nextPageCount
+  }, [applyPage, computeLayout, isPaginated])
 
   const saveCurrentPosition = useCallback(() => {
     const article = articleRef.current
@@ -929,17 +957,23 @@ function ReaderPane({
       return
     }
 
-    const anchor = readVisibleTextAnchor(article, readerAnchorInset)
-    const nextPageCount = isPaginated ? measurePages() : pageCount
-    const nextPageStep = isPaginated ? pageStepFor(article) : pageStep
-    const nextPageIndex = isPaginated
-      ? clamp(pageIndexRef.current, 0, nextPageCount - 1)
-      : 0
-    const virtualScrollTop = isPaginated ? pageOffsetRef.current : article.scrollTop
-    const scrollableHeight = isPaginated
-      ? Math.max((contentRef.current ? measureReadableContentHeight(contentRef.current) : 0) - nextPageStep, 0)
-      : Math.max(article.scrollHeight - article.clientHeight, 0)
-    const scrollProgress = scrollableHeight > 0 ? clamp(virtualScrollTop / scrollableHeight, 0, 1) : 0
+    // In paginated mode the column anchor is the source of truth for which
+    // paragraph sits at the page's top-left; the caret heuristic is unreliable
+    // across columns. In continuous mode, read the paragraph under the viewport top.
+    const anchor = isPaginated
+      ? columnAnchorRef.current
+        ? { paragraphIndex: columnAnchorRef.current.paragraphIndex, text: undefined, textOffset: undefined }
+        : undefined
+      : readVisibleTextAnchor(article, readerAnchorInset)
+    const nextPageCount = isPaginated ? Math.max(pageCount, 1) : pageCount
+    const nextPageIndex = isPaginated ? clampPageIndex(pageIndexRef.current, nextPageCount) : 0
+    const scrollProgress = isPaginated
+      ? pageProgress(nextPageIndex, nextPageCount) / 100
+      : (() => {
+          const scrollableHeight = Math.max(article.scrollHeight - article.clientHeight, 0)
+          return scrollableHeight > 0 ? clamp(article.scrollTop / scrollableHeight, 0, 1) : 0
+        })()
+    const scrollTopValue = isPaginated ? pageTranslate : article.scrollTop
     const progress = Math.round(((chapterIndex + scrollProgress) / Math.max(book.chapters.length, 1)) * 100)
     const locator: ReaderLocator = {
       anchorParagraphIndex: anchor?.paragraphIndex,
@@ -952,7 +986,7 @@ function ReaderPane({
       progress: clamp(progress, 0, 100),
       readingFlow: preferences.readingFlow,
       scrollProgress,
-      scrollTop: Math.round(virtualScrollTop),
+      scrollTop: Math.round(scrollTopValue),
       updatedAt: new Date().toISOString()
     }
     const signature = [
@@ -975,7 +1009,7 @@ function ReaderPane({
     lastSavedPositionRef.current = signature
     latestPositionRef.current = locator
     void onSavePosition(locator)
-  }, [book, chapter, chapterIndex, isPaginated, measurePages, onSavePosition, pageCount, pageStep, pageStepFor, preferences.readingFlow, readerAnchorInset])
+  }, [book, chapter, chapterIndex, isPaginated, onSavePosition, pageCount, pageTranslate, preferences.readingFlow, readerAnchorInset])
 
   const schedulePositionSave = useCallback(
     (delay = 900) => {
@@ -991,63 +1025,23 @@ function ReaderPane({
     (nextPageIndex: number) => {
       const article = articleRef.current
       const content = contentRef.current
-      if (!article || !content) {
+      if (!article || !content || !isPaginated) {
         return
       }
 
-      const nextPageCount = measurePages()
-      const nextPageStep = pageStepFor(article)
+      const layout = computeLayout(article)
+      applyColumnStyles(content, layout)
+      const columns = totalColumns(content.scrollWidth, layout.columnWidth, layout.columnGap)
+      const count = pageCountForColumns(columns, layout.columnsPerPage)
+      const safePageIndex = clampPageIndex(nextPageIndex, count)
 
-      if (isPaginated && nextPageIndex > pageIndexRef.current) {
-        const currentPageIndex = pageIndexRef.current
-        const currentOffset = pageOffsetRef.current
-        const existingOffset = pageOffsetsRef.current[nextPageIndex]
-        const nextOffset = existingOffset ?? findNextPageOffset(content, currentOffset, nextPageStep)
-
-        if (nextOffset === undefined || nextOffset <= currentOffset + 0.5) {
-          knownLastPageCountRef.current = currentPageIndex + 1
-          setStablePageCount(currentPageIndex + 1, true)
-          setPageEdgeHint(null)
-          return
-        }
-
-        const safePageIndex = currentPageIndex + 1
-        const nextOffsets = pageOffsetsRef.current.slice(0, safePageIndex + 1)
-        nextOffsets[safePageIndex] = nextOffset
-        pageOffsetsRef.current = nextOffsets
-        setCurrentPage(safePageIndex, nextOffset)
-        setPageStep(nextPageStep)
-        setPageClipHeight(readerTopPadding + visiblePageHeightFor(content, nextOffset, nextPageStep))
-        setStablePageCount(Math.max(nextPageCount, safePageIndex + 1))
-        article.scrollTo({ top: 0, left: 0, behavior: "auto" })
-        schedulePositionSave(250)
-        return
-      }
-
-      if (isPaginated && nextPageIndex < pageIndexRef.current) {
-        const safePageIndex = Math.max(0, pageIndexRef.current - 1)
-        const nextOffset = pageOffsetsRef.current[safePageIndex] ?? findPreviousPageOffset(content, pageOffsetRef.current, nextPageStep)
-        pageOffsetsRef.current[safePageIndex] = nextOffset
-        setCurrentPage(safePageIndex, nextOffset)
-        setPageStep(nextPageStep)
-        setPageClipHeight(readerTopPadding + visiblePageHeightFor(content, nextOffset, nextPageStep))
-        article.scrollTo({ top: 0, left: 0, behavior: "auto" })
-        schedulePositionSave(250)
-        return
-      }
-
-      const safePageIndex = clamp(nextPageIndex, 0, nextPageCount - 1)
-      const nextScrollTop = Math.min(safePageIndex * nextPageStep, Math.max(article.scrollHeight - article.clientHeight, 0))
-      setCurrentPage(safePageIndex)
-      setPageStep(nextPageStep)
-      setPageClipHeight(isPaginated ? readerTopPadding + visiblePageHeightFor(content, pageOffsetsRef.current[safePageIndex] ?? 0, nextPageStep) : null)
-      article.scrollTo({
-        top: nextScrollTop,
-        behavior: "auto"
-      })
+      applyPage(layout, count, safePageIndex)
+      columnAnchorRef.current = anchorForPage(content, safePageIndex, layout)
+      setPageEdgeHint(null)
+      article.scrollTo({ top: 0, left: 0, behavior: "auto" })
       schedulePositionSave(250)
     },
-    [isPaginated, measurePages, pageStepFor, readerTopPadding, schedulePositionSave, setCurrentPage, setStablePageCount]
+    [applyPage, computeLayout, isPaginated, schedulePositionSave]
   )
 
   useEffect(() => {
@@ -1060,47 +1054,43 @@ function ReaderPane({
     const savedPosition = latestPosition ?? (book?.lastPosition?.chapterId === chapter?.id ? book?.lastPosition : undefined)
     isRestoringPositionRef.current = true
     lastSavedPositionRef.current = ""
-    knownLastPageCountRef.current = null
-    pageCountRef.current = 1
-    pageOffsetsRef.current = [0]
+    columnAnchorRef.current = undefined
     setAnnotationMenu(null)
     setPageCount(1)
     setSelection(null)
     setNoteDraft("")
 
     window.requestAnimationFrame(() => {
-      const nextPageCount = measurePages()
+      const content = contentRef.current
 
-      if (preferences.readingFlow === "paginated") {
-        const nextPageStep = pageStepFor(article)
-        const contentHeight = contentRef.current ? measureReadableContentHeight(contentRef.current) : 0
-        const maxOffset = Math.max(contentHeight - nextPageStep, 0)
-        const anchorOffset = savedPosition && contentRef.current
-          ? offsetForTextAnchor(article, contentRef.current, savedPosition)
-          : undefined
-        const restoredOffset = clamp(
-          anchorOffset ?? savedPosition?.scrollTop ?? ((savedPosition?.scrollProgress ?? 0) * maxOffset),
-          0,
-          maxOffset
-        )
-        const savedPageIndex = (
-          savedPosition?.readingFlow === "paginated"
-            ? savedPosition.pageIndex ?? 0
-            : Math.floor(restoredOffset / nextPageStep)
-        )
-        const nextPageIndex = clamp(savedPageIndex, 0, nextPageCount - 1)
-        pageOffsetsRef.current = [0]
-        pageOffsetsRef.current[nextPageIndex] = restoredOffset
-        setCurrentPage(nextPageIndex, restoredOffset)
-        setPageStep(nextPageStep)
-        if (contentRef.current) {
-          setPageClipHeight(readerTopPadding + visiblePageHeightFor(contentRef.current, restoredOffset, nextPageStep))
+      if (preferences.readingFlow === "paginated" && content) {
+        const layout = computeLayout(article)
+        applyColumnStyles(content, layout)
+        const columns = totalColumns(content.scrollWidth, layout.columnWidth, layout.columnGap)
+        const count = pageCountForColumns(columns, layout.columnsPerPage)
+
+        let nextPageIndex = 0
+        if (savedPosition?.anchorParagraphIndex !== undefined) {
+          const paragraph = content.querySelector<HTMLElement>(`[data-paragraph-index="${savedPosition.anchorParagraphIndex}"]`)
+          if (paragraph) {
+            nextPageIndex = clampPageIndex(pageIndexForColumn(columnIndexOfElement(content, paragraph, layout), layout.columnsPerPage), count)
+          }
+        } else if (savedPosition?.readingFlow === "paginated" && savedPosition.pageIndex !== undefined) {
+          // Remap a stored page index proportionally — the saved layout may have
+          // had a different page count (e.g. saved on a shorter window).
+          const savedCount = Math.max(savedPosition.pageCount ?? count, 1)
+          const fraction = savedCount > 1 ? savedPosition.pageIndex / (savedCount - 1) : 0
+          nextPageIndex = clampPageIndex(Math.round(fraction * (count - 1)), count)
+        } else if (savedPosition?.scrollProgress !== undefined) {
+          nextPageIndex = clampPageIndex(Math.round(savedPosition.scrollProgress * (count - 1)), count)
         }
+
+        applyPage(layout, count, nextPageIndex)
+        columnAnchorRef.current = anchorForPage(content, nextPageIndex, layout)
         article.scrollTo({ top: 0, left: 0 })
       } else {
+        measurePages()
         const restoredFromAnchor = savedPosition ? restoreToTextAnchor(article, savedPosition, readerAnchorInset) : false
-        pageOffsetsRef.current = [0]
-        setCurrentPage(0, 0)
         if (!restoredFromAnchor) {
           article.scrollTo({ top: savedPosition?.scrollTop ?? 0, left: 0 })
         }
@@ -1110,13 +1100,30 @@ function ReaderPane({
         isRestoringPositionRef.current = false
       }, 150)
     })
-  }, [book?.id, book?.lastPosition, chapter?.id, measurePages, pageStepFor, preferences.readingFlow, readerAnchorInset, readerTopPadding, setCurrentPage])
+  }, [applyPage, book?.id, book?.lastPosition, chapter?.id, computeLayout, measurePages, preferences.readingFlow, readerAnchorInset])
 
   useEffect(() => {
+    const article = articleRef.current
     measurePages()
-    window.addEventListener("resize", measurePages)
+    // Don't let a reflow re-anchor while a position restore is mid-flight.
+    const remeasure = () => {
+      if (isRestoringPositionRef.current) {
+        return
+      }
+      measurePages()
+    }
+    window.addEventListener("resize", remeasure)
 
-    return () => window.removeEventListener("resize", measurePages)
+    let observer: ResizeObserver | undefined
+    if (article && typeof ResizeObserver !== "undefined") {
+      observer = new ResizeObserver(remeasure)
+      observer.observe(article)
+    }
+
+    return () => {
+      window.removeEventListener("resize", remeasure)
+      observer?.disconnect()
+    }
   }, [
     chapter?.id,
     cleanReading,
@@ -1161,14 +1168,14 @@ function ReaderPane({
       }
 
       if (isPaginated && contentRef.current) {
-        const nextPageCount = measurePages()
-        const nextPageStep = pageStepFor(article)
-        const nextOffset = offsetForElement(contentRef.current, annotationElement)
-        const nextPageIndex = clamp(Math.floor(nextOffset / nextPageStep), 0, nextPageCount - 1)
-        pageOffsetsRef.current[nextPageIndex] = nextOffset
-        setCurrentPage(nextPageIndex, nextOffset)
-        setPageStep(nextPageStep)
-        setPageClipHeight(readerTopPadding + visiblePageHeightFor(contentRef.current, nextOffset, nextPageStep))
+        const content = contentRef.current
+        const layout = computeLayout(article)
+        applyColumnStyles(content, layout)
+        const columns = totalColumns(content.scrollWidth, layout.columnWidth, layout.columnGap)
+        const count = pageCountForColumns(columns, layout.columnsPerPage)
+        const nextPageIndex = clampPageIndex(pageIndexForColumn(columnIndexOfElement(content, annotationElement, layout), layout.columnsPerPage), count)
+        applyPage(layout, count, nextPageIndex)
+        columnAnchorRef.current = anchorForPage(content, nextPageIndex, layout)
         article.scrollTo({ top: 0, left: 0 })
         return
       }
@@ -1178,7 +1185,7 @@ function ReaderPane({
         inline: "nearest"
       })
     })
-  }, [activeAnnotationId, chapter?.id, isPaginated, measurePages, pageStepFor, readerTopPadding, setCurrentPage])
+  }, [activeAnnotationId, applyPage, chapter?.id, computeLayout, isPaginated])
 
   const updateSelection = useCallback(() => {
     const selected = window.getSelection()
@@ -1356,9 +1363,9 @@ function ReaderPane({
               ref={articleRef}
               className={cn("h-full min-h-0 w-full", isPaginated ? "overflow-hidden" : "overflow-auto")}
               style={{
-                paddingBottom: isPaginated ? paginatedBottomPadding : readerVerticalPadding,
-                paddingLeft: cleanReading ? Math.max(preferences.margins, 56) : preferences.margins,
-                paddingRight: cleanReading ? Math.max(preferences.margins, 56) : preferences.margins,
+                paddingBottom: readerVerticalPadding,
+                paddingLeft: readerHorizontalPadding,
+                paddingRight: readerHorizontalPadding,
                 paddingTop: readerTopPadding
               }}
               onClick={handleReaderClick}
@@ -1366,66 +1373,91 @@ function ReaderPane({
               onMouseUp={updateSelection}
               onScroll={handleReaderScroll}
             >
-              <div
-                ref={contentRef}
-                className="mx-auto"
-                style={{
-                  maxWidth: contentMaxWidth,
-                  fontSize: preferences.fontScale,
-                  lineHeight: preferences.lineHeight,
-                  hyphens: preferences.hyphenation ? "auto" : "manual",
-                  fontFamily: readerFontFamily,
-                  textAlign: preferences.textAlign === "justify" ? "justify" : "start",
-                  transform: isPaginated ? `translate3d(0, -${pageOffset}px, 0)` : undefined,
-                  willChange: isPaginated ? "transform" : undefined
-                }}
-              >
+              {isPaginated ? (
                 <div
-                  className={cn(cleanReading && "text-center", !isPaginated && "mb-8")}
-                  style={isPaginated ? { marginBottom: readerLineHeightPx * 2 } : undefined}
+                  className="relative mx-auto overflow-hidden"
+                  style={{ width: pageLayout.clipWidth || undefined, height: pageLayout.pageHeight || undefined }}
                 >
-                  {!cleanReading && !isPaginated ? <p className="reader-muted mb-2 text-sm">{t("reader.bookProgress", { progress })}</p> : null}
-                  <h2
-                    className={cn(cleanReading ? "reader-muted text-base font-medium" : "text-3xl font-semibold", "tracking-normal")}
-                    data-readable-block
-                    style={isPaginated ? { fontSize: preferences.fontScale, lineHeight: preferences.lineHeight } : undefined}
+                  <div
+                    ref={contentRef}
+                    style={{
+                      height: pageLayout.pageHeight || undefined,
+                      width: pageLayout.clipWidth || undefined,
+                      columnWidth: pageLayout.columnWidth,
+                      columnGap: pageLayout.columnGap,
+                      columnFill: "auto",
+                      fontSize: preferences.fontScale,
+                      lineHeight: preferences.lineHeight,
+                      hyphens: preferences.hyphenation ? "auto" : "manual",
+                      fontFamily: readerFontFamily,
+                      textAlign: preferences.textAlign === "justify" ? "justify" : "start",
+                      transform: `translate3d(${-pageTranslate}px, 0, 0)`,
+                      willChange: "transform"
+                    }}
                   >
-                    {chapter.title}
-                  </h2>
+                    <h2
+                      className={cn(cleanReading ? "reader-muted text-base font-medium" : "text-2xl font-semibold", "tracking-normal")}
+                      data-readable-block
+                      style={{ fontSize: preferences.fontScale, lineHeight: preferences.lineHeight, marginBottom: readerLineHeightPx }}
+                    >
+                      {chapter.title}
+                    </h2>
+                    {paragraphs.map((paragraph, index) => (
+                      <p
+                        key={`${chapter.id}-${index}`}
+                        data-paragraph-index={index}
+                        data-readable-block
+                        style={{ marginTop: index === 0 ? 0 : paginatedParagraphSpacing }}
+                      >
+                        {renderParagraphWithAnnotations(paragraph, chapterAnnotations, activeAnnotationId, openAnnotationMenu)}
+                      </p>
+                    ))}
+                  </div>
                 </div>
+              ) : (
                 <div
-                  className="reader-copy"
+                  ref={contentRef}
+                  className="mx-auto"
                   style={{
-                    columnCount: preferences.columnCount,
-                    columnGap: preferences.columnCount === 2 ? 72 : undefined
+                    maxWidth: contentMaxWidth,
+                    fontSize: preferences.fontScale,
+                    lineHeight: preferences.lineHeight,
+                    hyphens: preferences.hyphenation ? "auto" : "manual",
+                    fontFamily: readerFontFamily,
+                    textAlign: preferences.textAlign === "justify" ? "justify" : "start"
                   }}
                 >
-                  {paragraphs.map((paragraph, index) => (
-                    <p
-                      key={`${chapter.id}-${index}`}
-                      className="break-inside-avoid"
-                      data-paragraph-index={index}
+                  <div className={cn(cleanReading && "text-center", "mb-8")}>
+                    {!cleanReading ? <p className="reader-muted mb-2 text-sm">{t("reader.bookProgress", { progress })}</p> : null}
+                    <h2
+                      className={cn(cleanReading ? "reader-muted text-base font-medium" : "text-3xl font-semibold", "tracking-normal")}
                       data-readable-block
-                      style={{
-                        marginTop: index === 0
-                          ? 0
-                          : isPaginated
-                            ? paginatedParagraphSpacing
-                            : `${preferences.paragraphSpacing}em`
-                      }}
                     >
-                      {renderParagraphWithAnnotations(paragraph, chapterAnnotations, activeAnnotationId, openAnnotationMenu)}
-                    </p>
-                  ))}
+                      {chapter.title}
+                    </h2>
+                  </div>
+                  <div
+                    className="reader-copy"
+                    style={{
+                      columnCount: preferences.columnCount,
+                      columnGap: preferences.columnCount === 2 ? 72 : undefined
+                    }}
+                  >
+                    {paragraphs.map((paragraph, index) => (
+                      <p
+                        key={`${chapter.id}-${index}`}
+                        className="break-inside-avoid"
+                        data-paragraph-index={index}
+                        data-readable-block
+                        style={{ marginTop: index === 0 ? 0 : `${preferences.paragraphSpacing}em` }}
+                      >
+                        {renderParagraphWithAnnotations(paragraph, chapterAnnotations, activeAnnotationId, openAnnotationMenu)}
+                      </p>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
             </article>
-            {isPaginated && pageClipHeight !== null ? (
-              <div
-                className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-reader"
-                style={{ top: pageClipHeight }}
-              />
-            ) : null}
           </div>
 
           {isPaginated ? (
@@ -1782,130 +1814,61 @@ function restoreToTextAnchor(article: HTMLElement, locator: ReaderLocator, topIn
   return true
 }
 
-function offsetForTextAnchor(
-  article: HTMLElement,
-  content: HTMLElement,
-  locator: ReaderLocator
-): number | undefined {
-  if (locator.anchorParagraphIndex === undefined) {
-    return undefined
-  }
+// Imperatively apply the column track styles so a subsequent scrollWidth read
+// reflects the new layout in the same frame. React re-renders the same values
+// from `pageLayout`, so this never fights the declarative styles.
+function applyColumnStyles(content: HTMLElement, layout: PageLayout): void {
+  content.style.height = `${layout.pageHeight}px`
+  content.style.width = `${layout.clipWidth}px`
+  content.style.columnWidth = `${layout.columnWidth}px`
+  content.style.columnGap = `${layout.columnGap}px`
+  content.style.columnFill = "auto"
+}
 
-  const paragraph = article.querySelector<HTMLElement>(`[data-paragraph-index="${locator.anchorParagraphIndex}"]`)
-  if (!paragraph) {
-    return undefined
-  }
-
-  const paragraphText = paragraph.textContent ?? ""
-  const preferredOffset = clamp(locator.anchorTextOffset ?? 0, 0, paragraphText.length)
-  const anchorOffset = locator.anchorText
-    ? paragraphText.indexOf(locator.anchorText, Math.max(preferredOffset - 24, 0))
-    : -1
-  const textOffset = anchorOffset >= 0 ? anchorOffset : preferredOffset
-  const range = rangeAtTextOffset(paragraph, textOffset)
-
-  if (!range) {
-    return offsetForElement(content, paragraph)
-  }
-
+// Which column (zero-based) an element's first fragment sits in. Measured
+// relative to the content box so the current translateX cancels out, giving the
+// element's intrinsic column even while the track is shifted for paging.
+function columnIndexOfElement(content: HTMLElement, element: HTMLElement, layout: PageLayout): number {
   const contentRect = content.getBoundingClientRect()
-  const rangeRect = range.getBoundingClientRect()
-  return Math.max(0, rangeRect.top - contentRect.top)
-}
-
-function offsetForElement(content: HTMLElement, element: HTMLElement): number {
-  const contentRect = content.getBoundingClientRect()
-  const elementRect = element.getBoundingClientRect()
-  return Math.max(0, elementRect.top - contentRect.top)
-}
-
-function measureReadableContentHeight(content: HTMLElement): number {
-  const lines = collectTextLineBoxes(content)
-  return Math.max(content.scrollHeight, lines.at(-1)?.bottom ?? 0)
-}
-
-function findNextPageOffset(content: HTMLElement, currentOffset: number, pageHeight: number): number | undefined {
-  const lines = collectTextLineBoxes(content)
-  return findNextPageOffsetFromLines(lines, currentOffset, pageHeight)
-}
-
-function findNextPageOffsetFromLines(lines: TextLineBox[], currentOffset: number, pageHeight: number): number | undefined {
-  const pageBottom = currentOffset + pageHeight
-  const nextLine = lines.find((line) => line.bottom > pageBottom + 0.5 && line.top > currentOffset + 0.5)
-  return nextLine?.top
-}
-
-function findPreviousPageOffset(content: HTMLElement, currentOffset: number, pageHeight: number): number {
-  const lines = collectTextLineBoxes(content)
-  let previousOffset = 0
-
-  for (const line of lines) {
-    if (line.top >= currentOffset - 0.5) {
-      break
-    }
-
-    const nextOffset = findNextPageOffsetFromLines(lines, line.top, pageHeight)
-    if (nextOffset === undefined || nextOffset > currentOffset + 0.5) {
-      break
-    }
-
-    previousOffset = line.top
-  }
-
-  return previousOffset
-}
-
-function visiblePageHeightFor(content: HTMLElement, currentOffset: number, pageHeight: number): number {
-  const nextOffset = findNextPageOffset(content, currentOffset, pageHeight)
-  if (nextOffset !== undefined && nextOffset < currentOffset + pageHeight) {
-    return Math.max(1, nextOffset - currentOffset)
-  }
-
-  return pageHeight
-}
-
-function visibleChapterProgressFor(content: HTMLElement, currentOffset: number, visibleHeight: number): number {
-  const contentHeight = measureReadableContentHeight(content)
-  if (contentHeight <= 0) {
+  const rects = element.getClientRects()
+  if (rects.length === 0) {
     return 0
   }
 
-  return clamp(Math.round(((currentOffset + visibleHeight) / contentHeight) * 100), 0, 100)
+  let leftMost = Infinity
+  for (const rect of rects) {
+    leftMost = Math.min(leftMost, rect.left)
+  }
+  const step = columnStep(layout.columnWidth, layout.columnGap)
+  return Math.max(0, Math.round((leftMost - contentRect.left) / step))
 }
 
-function collectTextLineBoxes(content: HTMLElement): TextLineBox[] {
-  const contentRect = content.getBoundingClientRect()
-  const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT)
-  const lines: TextLineBox[] = []
-  let node = walker.nextNode()
+// The paragraph anchor for the column at the left edge of the given page. Used
+// to keep the reader on the same text across a reflow.
+function anchorForPage(content: HTMLElement, pageIndex: number, layout: PageLayout): ColumnAnchor | undefined {
+  const leftColumn = pageIndex * layout.columnsPerPage
+  const paragraphs = Array.from(content.querySelectorAll<HTMLElement>("[data-paragraph-index]"))
+  let chosen: HTMLElement | undefined
+  let chosenFirstColumn = 0
 
-  while (node) {
-    const textLength = node.textContent?.length ?? 0
-    if (textLength > 0 && node.textContent?.trim()) {
-      const range = document.createRange()
-      range.selectNodeContents(node)
-      Array.from(range.getClientRects()).forEach((rect) => {
-        if (rect.width <= 0 || rect.height <= 0) {
-          return
-        }
-
-        const top = rect.top - contentRect.top
-        const bottom = rect.bottom - contentRect.top
-        const existingLine = lines.find((line) => Math.abs(line.top - top) < 1)
-
-        if (existingLine) {
-          existingLine.top = Math.min(existingLine.top, top)
-          existingLine.bottom = Math.max(existingLine.bottom, bottom)
-        } else {
-          lines.push({ bottom, top })
-        }
-      })
-      range.detach()
+  for (const paragraph of paragraphs) {
+    const firstColumn = columnIndexOfElement(content, paragraph, layout)
+    if (firstColumn <= leftColumn) {
+      chosen = paragraph
+      chosenFirstColumn = firstColumn
+    } else {
+      break
     }
-    node = walker.nextNode()
   }
 
-  return lines.sort((first, second) => first.top - second.top)
+  if (!chosen) {
+    return undefined
+  }
+
+  return {
+    paragraphIndex: Number(chosen.dataset.paragraphIndex),
+    columnWithin: Math.max(0, leftColumn - chosenFirstColumn)
+  }
 }
 
 function caretRangeFromPoint(x: number, y: number): Range | null {
