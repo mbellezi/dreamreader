@@ -418,8 +418,12 @@ Notas:
 - `accelerator_preference`
 - `memory_estimate_mb`
 - `checksum_algorithm`
+- `source_url`
+- `install_status`
+- `download_progress`
 - `metadata_json`
 - `installed_at`
+- `created_at`
 - `updated_at`
 
 Usos:
@@ -428,6 +432,29 @@ Usos:
 - Pesos Qwen3-TTS.
 - Pesos F5-TTS-pt-br.
 - Tokenizers e vocoders.
+
+### `model_download_jobs`
+
+- `id`
+- `model_asset_id`
+- `status`
+- `progress`
+- `received_bytes`
+- `total_bytes`
+- `source_url`
+- `target_path`
+- `error_code`
+- `error_message`
+- `created_at`
+- `started_at`
+- `finished_at`
+- `updated_at`
+
+Usos:
+
+- Persistir downloads iniciados pelo main process.
+- Expor progresso visual no renderer sem acesso direto ao filesystem.
+- Registrar falhas recuperaveis de download de modelos.
 
 ### `runtime_manifests`
 

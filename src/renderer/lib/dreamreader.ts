@@ -8,8 +8,10 @@ import type {
   BookSummary,
   ImportBooksResult,
   LibraryQuery,
+  ModelDownloadJob,
   ReaderLocator,
   RuntimeDiagnostic,
+  RuntimeModel,
   TtsJob,
   VoiceProfile
 } from "@renderer/types"
@@ -393,6 +395,28 @@ export const dreamreaderClient = {
     ]
   },
 
+  async listModels(): Promise<RuntimeModel[]> {
+    const bridgeList = window.dreamreader?.models?.list
+
+    if (bridgeList) {
+      return (await bridgeList()).map(toRuntimeModel)
+    }
+
+    return fallbackRuntimeModels()
+  },
+
+  async downloadModel(modelId: string): Promise<ModelDownloadJob> {
+    const bridgeDownload = window.dreamreader?.models?.download
+
+    if (bridgeDownload) {
+      return toModelDownloadJob(await bridgeDownload(modelId))
+    }
+
+    throw Object.assign(new Error("Model downloads require the Electron bridge"), {
+      code: "model_download_requires_app_bridge"
+    })
+  },
+
   async listCompatibleVoices(engineId?: string): Promise<VoiceProfile[]> {
     const bridgeList = window.dreamreader?.voices?.listCompatible
 
@@ -500,6 +524,55 @@ function toRuntimeDiagnostic(input: unknown): RuntimeDiagnostic {
   }
 }
 
+function toRuntimeModel(input: unknown): RuntimeModel {
+  const item = (input ?? {}) as Record<string, unknown>
+  return {
+    id: String(item.id ?? ""),
+    kind: toRuntimeModelKind(item.kind),
+    name: String(item.name ?? ""),
+    provider: String(item.provider ?? ""),
+    version: String(item.version ?? ""),
+    runtime: String(item.runtime ?? ""),
+    format: String(item.format ?? "unknown"),
+    acceleratorPreference: String(item.acceleratorPreference ?? "cpu"),
+    installStatus: toModelInstallStatus(item.installStatus),
+    downloadProgress: clampProgress(item.downloadProgress),
+    path: optionalString(item.path),
+    sizeBytes: optionalNumber(item.sizeBytes),
+    checksum: optionalString(item.checksum),
+    checksumAlgorithm: optionalString(item.checksumAlgorithm),
+    license: String(item.license ?? "unknown"),
+    memoryEstimateMb: optionalNumber(item.memoryEstimateMb),
+    sourceUrl: optionalString(item.sourceUrl),
+    canDownload: Boolean(item.canDownload),
+    engineId: optionalString(item.engineId),
+    metadata: jsonObject(item.metadata),
+    installedAt: optionalString(item.installedAt),
+    createdAt: String(item.createdAt ?? new Date().toISOString()),
+    updatedAt: String(item.updatedAt ?? new Date().toISOString())
+  }
+}
+
+function toModelDownloadJob(input: unknown): ModelDownloadJob {
+  const item = (input ?? {}) as Record<string, unknown>
+  return {
+    id: String(item.id ?? ""),
+    modelAssetId: String(item.modelAssetId ?? ""),
+    status: toModelInstallStatus(item.status),
+    progress: clampProgress(item.progress),
+    receivedBytes: Number(item.receivedBytes ?? 0),
+    totalBytes: optionalNumber(item.totalBytes),
+    sourceUrl: String(item.sourceUrl ?? ""),
+    targetPath: String(item.targetPath ?? ""),
+    errorCode: optionalString(item.errorCode),
+    errorMessage: optionalString(item.errorMessage),
+    createdAt: String(item.createdAt ?? new Date().toISOString()),
+    startedAt: optionalString(item.startedAt),
+    finishedAt: optionalString(item.finishedAt),
+    updatedAt: String(item.updatedAt ?? new Date().toISOString())
+  }
+}
+
 function toVoiceProfile(input: unknown): VoiceProfile {
   const voice = (input ?? {}) as Record<string, unknown>
   return {
@@ -508,6 +581,52 @@ function toVoiceProfile(input: unknown): VoiceProfile {
     language: String(voice.language ?? "pt-BR"),
     kind: String(voice.kind ?? "built_in")
   }
+}
+
+function fallbackRuntimeModels(): RuntimeModel[] {
+  const now = new Date().toISOString()
+  return [
+    {
+      id: "model_qwen3_4b_instruct_2507_gguf_q4km",
+      kind: "llm",
+      name: "Qwen3 4B Instruct 2507 GGUF Q4_K_M",
+      provider: "Qwen",
+      version: "Qwen3-4B-Instruct-2507-Q4_K_M",
+      runtime: "node-llama-cpp",
+      format: "gguf",
+      acceleratorPreference: "metal",
+      installStatus: "not_configured",
+      downloadProgress: 0,
+      license: "apache-2.0",
+      memoryEstimateMb: 4096,
+      canDownload: false,
+      metadata: { role: "prosody" },
+      createdAt: now,
+      updatedAt: now
+    }
+  ]
+}
+
+function toRuntimeModelKind(value: unknown): RuntimeModel["kind"] {
+  const kind = String(value ?? "runtime")
+  if (kind === "llm" || kind === "tts" || kind === "tokenizer" || kind === "vocoder" || kind === "runtime") {
+    return kind
+  }
+  return "runtime"
+}
+
+function toModelInstallStatus(value: unknown): RuntimeModel["installStatus"] {
+  const status = String(value ?? "not_configured")
+  if (
+    status === "not_configured" ||
+    status === "queued" ||
+    status === "downloading" ||
+    status === "available" ||
+    status === "failed"
+  ) {
+    return status
+  }
+  return "not_configured"
 }
 
 function toTtsJobStatus(value: unknown): TtsJob["status"] {
@@ -550,6 +669,11 @@ function optionalString(value: unknown): string | undefined {
 function optionalNumber(value: unknown): number | undefined {
   const numberValue = Number(value)
   return Number.isFinite(numberValue) ? numberValue : undefined
+}
+
+function clampProgress(value: unknown): number {
+  const progress = Number(value ?? 0)
+  return Number.isFinite(progress) ? Math.min(Math.max(progress, 0), 1) : 0
 }
 
 function jsonObject(value: unknown): Record<string, unknown> {

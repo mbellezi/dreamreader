@@ -30,6 +30,7 @@ import type {
   ReaderLocator,
   ReaderPreferences,
   RuntimeDiagnostic,
+  RuntimeModel,
   TtsJob,
   VoiceProfile,
   AudiobookExport
@@ -44,6 +45,7 @@ export function App(): ReactElement {
   const [audiobookExport, setAudiobookExport] = useState<AudiobookExport | null>(null)
   const [audioLoading, setAudioLoading] = useState(false)
   const [diagnostics, setDiagnostics] = useState<RuntimeDiagnostic[]>([])
+  const [runtimeModels, setRuntimeModels] = useState<RuntimeModel[]>([])
   const [voices, setVoices] = useState<VoiceProfile[]>([])
   const [activeView, setActiveView] = useState<AppView>("library")
   const [libraryMode, setLibraryMode] = useState<LibraryMode>("grid")
@@ -83,15 +85,17 @@ export function App(): ReactElement {
   )
 
   const refreshAudioState = useCallback(async (bookId: string) => {
-    const [nextJobs, nextExport, nextDiagnostics, nextVoices] = await Promise.all([
+    const [nextJobs, nextExport, nextDiagnostics, nextModels, nextVoices] = await Promise.all([
       dreamreaderClient.listTtsJobs({ bookId }),
       dreamreaderClient.getAudiobookExport(bookId),
       dreamreaderClient.listModelDiagnostics(),
-      dreamreaderClient.listCompatibleVoices("dreamreader-local-tts")
+      dreamreaderClient.listModels(),
+      dreamreaderClient.listCompatibleVoices()
     ])
     setAudioJobs(nextJobs)
     setAudiobookExport(nextExport)
     setDiagnostics(nextDiagnostics)
+    setRuntimeModels(nextModels)
     setVoices(nextVoices)
   }, [])
 
@@ -175,7 +179,8 @@ export function App(): ReactElement {
     }
 
     const hasActiveJob = audioJobs.some((job) => !["completed", "failed", "cancelled"].includes(job.status))
-    if (!hasActiveJob) {
+    const hasActiveModelDownload = runtimeModels.some((model) => model.installStatus === "queued" || model.installStatus === "downloading")
+    if (!hasActiveJob && !hasActiveModelDownload) {
       return
     }
 
@@ -183,7 +188,7 @@ export function App(): ReactElement {
       void refreshAudioState(selectedBook.id)
     }, 1400)
     return () => window.clearInterval(interval)
-  }, [audioJobs, refreshAudioState, selectedBook])
+  }, [audioJobs, refreshAudioState, runtimeModels, selectedBook])
 
   const importBooks = async () => {
     setImporting(true)
@@ -385,6 +390,15 @@ export function App(): ReactElement {
     }
   }
 
+  const downloadModel = async (modelId: string) => {
+    if (!selectedBook) {
+      return
+    }
+
+    await dreamreaderClient.downloadModel(modelId)
+    await refreshAudioState(selectedBook.id)
+  }
+
   const updateSettings = (nextSettings: AppSettings) => {
     setSettings(nextSettings)
     setSettingsSaved(false)
@@ -555,6 +569,7 @@ export function App(): ReactElement {
                 chapterIndex={chapterIndex}
                 diagnostics={diagnostics}
                 exportContent={exportContent}
+                models={runtimeModels}
                 preferences={settings.reader}
                 t={t}
                 voices={voices}
@@ -563,6 +578,7 @@ export function App(): ReactElement {
                 onChangeTab={setInspectorTab}
                 onDeleteAnnotation={deleteAnnotation}
                 onExportNotes={exportNotes}
+                onDownloadModel={downloadModel}
                 onGenerateChapterAudio={generateChapterAudio}
                 onJumpToAnnotation={jumpToAnnotation}
                 onJumpToChapter={jumpToChapter}

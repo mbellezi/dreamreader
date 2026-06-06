@@ -1,4 +1,5 @@
 import {
+  bigint,
   boolean,
   index,
   integer,
@@ -319,6 +320,84 @@ export const prosodyAnalyses = pgTable(
       table.analyzerVersion,
       table.promptVersion
     )
+  })
+)
+
+export const modelAssets = pgTable(
+  "model_assets",
+  {
+    id: text("id").primaryKey(),
+    kind: text("kind").notNull(),
+    name: text("name").notNull(),
+    provider: text("provider").notNull(),
+    version: text("version").notNull(),
+    path: text("path"),
+    sizeBytes: bigint("size_bytes", { mode: "number" }),
+    checksum: text("checksum"),
+    license: text("license").notNull().default("unknown"),
+    runtime: text("runtime").notNull(),
+    format: text("format").notNull(),
+    acceleratorPreference: text("accelerator_preference").notNull().default("cpu"),
+    memoryEstimateMb: integer("memory_estimate_mb"),
+    checksumAlgorithm: text("checksum_algorithm"),
+    sourceUrl: text("source_url"),
+    installStatus: text("install_status").notNull().default("not_configured"),
+    downloadProgress: real("download_progress").notNull().default(0),
+    metadataJson: jsonb("metadata_json").$type<Record<string, unknown>>().notNull().default({}),
+    installedAt: timestamp("installed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => ({
+    modelAssetsKindIdx: index("model_assets_kind_idx").on(table.kind),
+    modelAssetsRuntimeIdx: index("model_assets_runtime_idx").on(table.runtime),
+    modelAssetsStatusIdx: index("model_assets_status_idx").on(table.installStatus)
+  })
+)
+
+export const modelDownloadJobs = pgTable(
+  "model_download_jobs",
+  {
+    id: text("id").primaryKey(),
+    modelAssetId: text("model_asset_id")
+      .notNull()
+      .references(() => modelAssets.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("queued"),
+    progress: real("progress").notNull().default(0),
+    receivedBytes: bigint("received_bytes", { mode: "number" }).notNull().default(0),
+    totalBytes: bigint("total_bytes", { mode: "number" }),
+    sourceUrl: text("source_url").notNull(),
+    targetPath: text("target_path").notNull(),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => ({
+    modelDownloadJobsModelIdx: index("model_download_jobs_model_idx").on(table.modelAssetId),
+    modelDownloadJobsStatusIdx: index("model_download_jobs_status_idx").on(table.status)
+  })
+)
+
+export const runtimeManifests = pgTable(
+  "runtime_manifests",
+  {
+    id: text("id").primaryKey(),
+    adapterId: text("adapter_id").notNull(),
+    runtime: text("runtime").notNull(),
+    version: text("version").notNull(),
+    executablePath: text("executable_path"),
+    environmentJson: jsonb("environment_json").$type<Record<string, unknown>>().notNull().default({}),
+    healthcheckCommand: text("healthcheck_command"),
+    capabilitiesJson: jsonb("capabilities_json").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => ({
+    runtimeManifestsAdapterIdx: index("runtime_manifests_adapter_id_idx").on(table.adapterId),
+    runtimeManifestsRuntimeIdx: index("runtime_manifests_runtime_idx").on(table.runtime)
   })
 )
 

@@ -65,6 +65,7 @@ export function registerIpc(services: Services): void {
   handle("models.installFromPath", contract["models.installFromPath"].request, (input) =>
     services.runtime.installFromPath(input.path)
   )
+  handle("models.download", contract["models.download"].request, (input) => services.runtime.downloadModel(input.modelId))
   handle("voices.list", contract["voices.list"].request, (input) => services.voices.list(input))
   handle("voices.createFromReference", contract["voices.createFromReference"].request, (input) =>
     services.voices.createFromReference(input)

@@ -188,6 +188,51 @@ export type RuntimeDiagnostic = {
   detail: string
 }
 
+export type ModelInstallStatus = "not_configured" | "queued" | "downloading" | "available" | "failed"
+
+export type RuntimeModel = {
+  id: string
+  kind: "llm" | "tts" | "tokenizer" | "vocoder" | "runtime"
+  name: string
+  provider: string
+  version: string
+  runtime: string
+  format: string
+  acceleratorPreference: string
+  installStatus: ModelInstallStatus
+  downloadProgress: number
+  path?: string
+  sizeBytes?: number
+  checksum?: string
+  checksumAlgorithm?: string
+  license: string
+  memoryEstimateMb?: number
+  sourceUrl?: string
+  canDownload: boolean
+  engineId?: string
+  metadata: Record<string, unknown>
+  installedAt?: string
+  createdAt: string
+  updatedAt: string
+}
+
+export type ModelDownloadJob = {
+  id: string
+  modelAssetId: string
+  status: ModelInstallStatus
+  progress: number
+  receivedBytes: number
+  totalBytes?: number
+  sourceUrl: string
+  targetPath: string
+  errorCode?: string
+  errorMessage?: string
+  createdAt: string
+  startedAt?: string
+  finishedAt?: string
+  updatedAt: string
+}
+
 export type VoiceProfile = {
   id: string
   name: string
@@ -218,6 +263,7 @@ export type DreamReaderBridge = {
     list?: () => Promise<unknown[]>
     diagnostics?: () => Promise<unknown[]>
     installFromPath?: (modelPath: string) => Promise<unknown>
+    download?: (modelId: string) => Promise<unknown>
   }
   tts?: {
     enqueueChapter?: (input: Record<string, unknown>) => Promise<unknown>

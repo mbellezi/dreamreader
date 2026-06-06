@@ -137,6 +137,65 @@ export const TtsEngineSchema = z.object({
 });
 export type TtsEngine = z.infer<typeof TtsEngineSchema>;
 
+export const ModelInstallStatusSchema = z.enum([
+  "not_configured",
+  "queued",
+  "downloading",
+  "available",
+  "failed",
+]);
+export type ModelInstallStatus = z.infer<typeof ModelInstallStatusSchema>;
+
+export const ModelAssetSchema = z.object({
+  id: IdSchema,
+  kind: z.enum(["llm", "tts", "tokenizer", "vocoder", "runtime"]),
+  name: NonEmptyStringSchema,
+  provider: NonEmptyStringSchema,
+  version: NonEmptyStringSchema,
+  runtime: NonEmptyStringSchema,
+  format: ModelFormatSchema,
+  acceleratorPreference: NonEmptyStringSchema,
+  installStatus: ModelInstallStatusSchema,
+  downloadProgress: ProgressSchema.default(0),
+  path: z.string().trim().optional(),
+  sizeBytes: z.number().int().nonnegative().optional(),
+  checksum: z.string().trim().optional(),
+  checksumAlgorithm: z.string().trim().optional(),
+  license: NonEmptyStringSchema,
+  memoryEstimateMb: z.number().int().positive().optional(),
+  sourceUrl: z.string().url().optional(),
+  canDownload: z.boolean().default(false),
+  engineId: IdSchema.optional(),
+  metadata: JsonObjectSchema.default({}),
+  installedAt: IsoDateTimeStringSchema.optional(),
+  createdAt: IsoDateTimeStringSchema,
+  updatedAt: IsoDateTimeStringSchema,
+});
+export type ModelAsset = z.infer<typeof ModelAssetSchema>;
+
+export const ModelDownloadJobSchema = z.object({
+  id: IdSchema,
+  modelAssetId: IdSchema,
+  status: ModelInstallStatusSchema,
+  progress: ProgressSchema,
+  receivedBytes: z.number().int().nonnegative(),
+  totalBytes: z.number().int().nonnegative().optional(),
+  sourceUrl: z.string().url(),
+  targetPath: NonEmptyStringSchema,
+  errorCode: z.string().trim().optional(),
+  errorMessage: z.string().trim().optional(),
+  createdAt: IsoDateTimeStringSchema,
+  startedAt: IsoDateTimeStringSchema.optional(),
+  finishedAt: IsoDateTimeStringSchema.optional(),
+  updatedAt: IsoDateTimeStringSchema,
+});
+export type ModelDownloadJob = z.infer<typeof ModelDownloadJobSchema>;
+
+export const DownloadModelRequestSchema = z.object({
+  modelId: IdSchema,
+});
+export type DownloadModelRequest = z.infer<typeof DownloadModelRequestSchema>;
+
 export const VoiceKindSchema = z.enum([
   "built_in",
   "cloned",

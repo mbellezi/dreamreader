@@ -25,6 +25,7 @@
     "jszip": "^3.10.1",
     "lucide-react": "^0.555.0",
     "marked": "^17.0.1",
+    "node-llama-cpp": "^3.18.1",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
     "tailwind-merge": "^3.4.0",
@@ -45,4 +46,3 @@
     "vitest": "^4.0.14"
   }
 }
-

@@ -18,7 +18,16 @@ import { AudioPanel } from "@renderer/components/reader/AudioPanel"
 import type { InspectorTab, ReaderPreferenceChangeHandler, TranslationFn } from "@renderer/app/types"
 import { fontFamilyOptions, swatchClasses, themeOptions, themePreviewClasses } from "@renderer/lib/readerOptions"
 import { cn } from "@renderer/lib/utils"
-import type { Annotation, AudiobookExport, BookDetails, ReaderPreferences, RuntimeDiagnostic, TtsJob, VoiceProfile } from "@renderer/types"
+import type {
+  Annotation,
+  AudiobookExport,
+  BookDetails,
+  ReaderPreferences,
+  RuntimeDiagnostic,
+  RuntimeModel,
+  TtsJob,
+  VoiceProfile
+} from "@renderer/types"
 
 export function InspectorPane({
   activeTab,
@@ -28,6 +37,7 @@ export function InspectorPane({
   chapterIndex,
   diagnostics,
   exportContent,
+  models,
   audiobook,
   audioJobs,
   audioLoading,
@@ -39,6 +49,7 @@ export function InspectorPane({
   onChangeTab,
   onDeleteAnnotation,
   onExportNotes,
+  onDownloadModel,
   onGenerateChapterAudio,
   onJumpToAnnotation,
   onJumpToChapter,
@@ -56,6 +67,7 @@ export function InspectorPane({
   chapterIndex: number
   diagnostics: RuntimeDiagnostic[]
   exportContent: string
+  models: RuntimeModel[]
   preferences: ReaderPreferences
   t: TranslationFn
   voices: VoiceProfile[]
@@ -64,6 +76,7 @@ export function InspectorPane({
   onChangeTab: (tab: InspectorTab) => void
   onDeleteAnnotation: (annotationId: string) => void
   onExportNotes: () => void
+  onDownloadModel: (modelId: string) => Promise<void> | void
   onGenerateChapterAudio: (input: {
     engineId: string
     quality: "draft" | "standard" | "high"
@@ -278,9 +291,11 @@ export function InspectorPane({
             diagnostics={diagnostics}
             jobs={audioJobs}
             loading={audioLoading}
+            models={models}
             t={t}
             voices={voices}
             onCancelJob={onCancelTtsJob}
+            onDownloadModel={onDownloadModel}
             onGenerateChapter={onGenerateChapterAudio}
             onRebuildAudiobook={onRebuildAudiobook}
             onRetryJob={onRetryTtsJob}

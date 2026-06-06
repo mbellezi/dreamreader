@@ -43,7 +43,10 @@ import {
 } from "./settings";
 import {
   AudiobookExportSchema,
+  DownloadModelRequestSchema,
   EnqueueChapterTtsRequestSchema,
+  ModelAssetSchema,
+  ModelDownloadJobSchema,
   NarrationPlanSchema,
   TtsAdapterManifestSchema,
   TtsEngineCapabilitiesSchema,
@@ -63,6 +66,8 @@ export {
   ExportAnnotationsInputSchema,
   ImportBooksInputSchema,
   LibraryBookSchema,
+  ModelAssetSchema,
+  ModelDownloadJobSchema,
   NarrationPlanSchema,
   ReaderChapterSchema,
   ReaderManifestSchema,
@@ -83,7 +88,7 @@ export type {
   ExportAnnotationsInput,
   UpdateAnnotationInput,
 } from "./annotations";
-export type { AudiobookExport, NarrationPlan, TtsEngineCapabilities, TtsJob, VoiceProfile } from "./ai";
+export type { AudiobookExport, ModelAsset, ModelDownloadJob, NarrationPlan, TtsEngineCapabilities, TtsJob, VoiceProfile } from "./ai";
 export type { Book, ImportBooksInput, LibraryBook } from "./library";
 export type {
   ReaderChapter,
@@ -124,6 +129,7 @@ export const IpcChannelSchema = z.enum([
   "models.list",
   "models.diagnostics",
   "models.installFromPath",
+  "models.download",
   "settings.get",
   "settings.update",
 ]);
@@ -264,7 +270,7 @@ export const IpcContractSchemas = {
   },
   "models.list": {
     request: EmptyRequestSchema,
-    response: createIpcResponseSchema(z.array(JsonObjectSchema)),
+    response: createIpcResponseSchema(z.array(ModelAssetSchema)),
   },
   "models.diagnostics": {
     request: EmptyRequestSchema,
@@ -272,7 +278,11 @@ export const IpcContractSchemas = {
   },
   "models.installFromPath": {
     request: z.object({ path: z.string().trim().min(1) }),
-    response: createIpcResponseSchema(JsonObjectSchema),
+    response: createIpcResponseSchema(ModelAssetSchema),
+  },
+  "models.download": {
+    request: DownloadModelRequestSchema,
+    response: createIpcResponseSchema(ModelDownloadJobSchema),
   },
   "settings.get": {
     request: EmptyRequestSchema,

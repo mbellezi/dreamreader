@@ -2,8 +2,13 @@ import type { VoiceCloneInput, VoiceFilter, VoiceProfile } from "@shared/contrac
 import { AppError } from "@main/lib/errors"
 import { createId } from "@main/lib/ids"
 
-const compatibleEngineIds = ["dreamreader-local-tts", "qwen3-tts-mlx", "f5-tts-pt-br"]
-const compatibleAdapterIds = ["dreamreader-local-wav", "qwen3-tts", "f5-tts-pt-br"]
+const compatibleEngineIds = [
+  "dreamreader-local-tts",
+  "qwen3-tts-06b-mlx",
+  "qwen3-tts-17b-mlx",
+  "f5-tts-pt-br"
+]
+const compatibleAdapterIds = ["dreamreader-local-wav", "qwen3-tts-mlx", "f5-tts-pt-br"]
 const builtInCreatedAt = "2026-06-06T00:00:00.000Z"
 
 export class VoiceService {

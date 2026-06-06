@@ -11,7 +11,7 @@ import type { AppPaths } from "@main/lib/paths"
 import { LocalTtsAdapter } from "@main/services/local-tts-adapter"
 import type { AudiobookService } from "@main/services/audiobook-service"
 import { buildNarrationPlan, NARRATION_PLAN_VERSION } from "@main/services/tts-pipeline"
-import { ProsodyService, type ProsodyPlanResult } from "@main/services/prosody-service"
+import { createDefaultProsodyAnalyzerProvider, ProsodyService, type ProsodyPlanResult } from "@main/services/prosody-service"
 
 export const DEFAULT_TTS_ENGINE_ID = "dreamreader-local-tts"
 export const DEFAULT_TTS_ADAPTER_ID = "dreamreader-local-wav"
@@ -31,6 +31,112 @@ type ChapterSource = {
 
 type TtsJobRow = typeof ttsJobs.$inferSelect
 
+type TtsEngineDefinition = {
+  accelerator: string
+  adapterId: string
+  capabilities: Record<string, unknown>
+  displayName: string
+  id: string
+  installed: boolean
+  modelFormat: string
+  performanceProfile: Record<string, unknown>
+  runtime: string
+  version: string
+}
+
+const neuralTtsEngineDefinitions: TtsEngineDefinition[] = [
+  {
+    id: "qwen3-tts-06b-mlx",
+    displayName: "Qwen3-TTS 12Hz 0.6B Base",
+    version: "12Hz-0.6B-Base",
+    adapterId: "qwen3-tts-mlx",
+    runtime: "mlx",
+    modelFormat: "mlx",
+    accelerator: "apple_metal",
+    installed: false,
+    capabilities: {
+      id: "qwen3-tts-06b-mlx",
+      displayName: "Qwen3-TTS 12Hz 0.6B Base",
+      runtime: "mlx",
+      modelFormat: "mlx",
+      languages: ["pt-BR", "en"],
+      supportsVoiceClone: false,
+      supportsNaturalLanguageInstruction: true,
+      supportsDiscreteEmotion: true,
+      supportsBatch: true,
+      supportsStreaming: false,
+      supportsSegmentTimestamps: true,
+      supportsSsmlLikeMarkup: false,
+      preferredInputCase: "preserve",
+      estimatedMemoryMb: 3072
+    },
+    performanceProfile: {
+      mode: "mlx-sidecar",
+      requiresSidecar: true
+    }
+  },
+  {
+    id: "qwen3-tts-17b-mlx",
+    displayName: "Qwen3-TTS 12Hz 1.7B CustomVoice",
+    version: "12Hz-1.7B-CustomVoice",
+    adapterId: "qwen3-tts-mlx",
+    runtime: "mlx",
+    modelFormat: "mlx",
+    accelerator: "apple_metal",
+    installed: false,
+    capabilities: {
+      id: "qwen3-tts-17b-mlx",
+      displayName: "Qwen3-TTS 12Hz 1.7B CustomVoice",
+      runtime: "mlx",
+      modelFormat: "mlx",
+      languages: ["pt-BR", "en"],
+      supportsVoiceClone: true,
+      supportsNaturalLanguageInstruction: true,
+      supportsDiscreteEmotion: true,
+      supportsBatch: true,
+      supportsStreaming: false,
+      supportsSegmentTimestamps: true,
+      supportsSsmlLikeMarkup: false,
+      preferredInputCase: "preserve",
+      estimatedMemoryMb: 8192
+    },
+    performanceProfile: {
+      mode: "mlx-sidecar",
+      requiresSidecar: true
+    }
+  },
+  {
+    id: "f5-tts-pt-br",
+    displayName: "F5-TTS PT-BR",
+    version: "pt-br",
+    adapterId: "f5-tts-pt-br",
+    runtime: "pytorch",
+    modelFormat: "safetensors",
+    accelerator: process.platform === "darwin" && process.arch === "arm64" ? "apple_mps" : "cpu",
+    installed: false,
+    capabilities: {
+      id: "f5-tts-pt-br",
+      displayName: "F5-TTS PT-BR",
+      runtime: "pytorch",
+      modelFormat: "safetensors",
+      languages: ["pt-BR"],
+      supportsVoiceClone: true,
+      supportsNaturalLanguageInstruction: true,
+      supportsDiscreteEmotion: false,
+      supportsBatch: true,
+      supportsStreaming: false,
+      supportsSegmentTimestamps: false,
+      supportsSsmlLikeMarkup: false,
+      preferredInputCase: "preserve",
+      estimatedMemoryMb: 6144
+    },
+    performanceProfile: {
+      mode: "python-pytorch-sidecar",
+      requiresSidecar: true
+    }
+  }
+]
+
 export class TtsService {
   private readonly adapter = new LocalTtsAdapter()
   private readonly prosody: ProsodyService
@@ -43,7 +149,7 @@ export class TtsService {
     private readonly paths: AppPaths,
     private readonly audiobook: AudiobookService
   ) {
-    this.prosody = new ProsodyService(db)
+    this.prosody = new ProsodyService(db, createDefaultProsodyAnalyzerProvider(paths))
   }
 
   async enqueueChapter(input: EnqueueChapterTtsRequest): Promise<TtsJob> {
@@ -60,6 +166,7 @@ export class TtsService {
       useExpressiveNarration: input.useExpressiveNarration
     })
     const now = new Date()
+    const adapterId = adapterIdForEngine(engineId)
     const [job] = await this.db
       .insert(ttsJobs)
       .values({
@@ -85,7 +192,7 @@ export class TtsService {
         resourcePolicyJson: {
           acceleratorPreference: "portable_local_first",
           exclusiveGpuJobs: false,
-          engine: DEFAULT_TTS_ADAPTER_ID
+          engine: adapterId
         },
         startedAt: cached ? now : undefined,
         finishedAt: cached ? now : undefined,
@@ -238,6 +345,7 @@ export class TtsService {
         return
       }
 
+      const adapterId = await this.assertEngineReady(job.engineId)
       await this.updateJob(job.id, { status: "analyzing", progress: 0.12 })
       const neutralPlan = buildNarrationPlan({
         bookId: job.bookId,
@@ -248,7 +356,7 @@ export class TtsService {
       })
       const prosodyResult = await this.prosody.applyProsody(neutralPlan, useExpressiveNarration)
       const plan = prosodyResult.plan
-      await this.persistSegments(job.id, plan, prosodyResult)
+      await this.persistSegments(job.id, plan, prosodyResult, adapterId)
       await this.updateJob(job.id, {
         narrationPlanVersion: plan.schemaVersion,
         settingsJson: compactJson({
@@ -367,7 +475,12 @@ export class TtsService {
     }
   }
 
-  private async persistSegments(jobId: string, plan: NarrationPlan, prosodyResult: ProsodyPlanResult): Promise<void> {
+  private async persistSegments(
+    jobId: string,
+    plan: NarrationPlan,
+    prosodyResult: ProsodyPlanResult,
+    adapterId: string
+  ): Promise<void> {
     await this.db.delete(ttsSegments).where(eq(ttsSegments.jobId, jobId))
     for (const [index, segment] of plan.segments.entries()) {
       await this.db.insert(ttsSegments).values({
@@ -382,7 +495,7 @@ export class TtsService {
         normalizedText: segment.normalizedText,
         prosodyJson: segment.prosody,
         adapterPayloadJson: {
-          adapterId: DEFAULT_TTS_ADAPTER_ID,
+          adapterId,
           prosodyAnalyzerId: prosodyResult.analyzerId,
           prosodyMode: prosodyResult.promptVersion ? "expressive" : "neutral",
           prosodyPromptVersion: prosodyResult.promptVersion,
@@ -451,6 +564,38 @@ export class TtsService {
         }
       })
 
+    for (const engine of neuralTtsEngineDefinitions) {
+      await this.db
+        .insert(ttsEngines)
+        .values({
+          id: engine.id,
+          displayName: engine.displayName,
+          version: engine.version,
+          adapterId: engine.adapterId,
+          runtime: engine.runtime,
+          modelFormat: engine.modelFormat,
+          accelerator: engine.accelerator,
+          capabilitiesJson: engine.capabilities,
+          performanceProfileJson: engine.performanceProfile,
+          installed: engine.installed,
+          updatedAt: now
+        })
+        .onConflictDoUpdate({
+          target: ttsEngines.id,
+          set: {
+            displayName: engine.displayName,
+            version: engine.version,
+            adapterId: engine.adapterId,
+            runtime: engine.runtime,
+            modelFormat: engine.modelFormat,
+            accelerator: engine.accelerator,
+            capabilitiesJson: engine.capabilities,
+            performanceProfileJson: engine.performanceProfile,
+            updatedAt: now
+          }
+        })
+    }
+
     await this.db
       .insert(voiceProfiles)
       .values({
@@ -462,8 +607,8 @@ export class TtsService {
         source: "dreamreader:pt-br-neutral",
         tags: ["pt-BR", "narrador"],
         settingsJson: {
-          compatibleEngineIds: [DEFAULT_TTS_ENGINE_ID],
-          compatibleAdapterIds: [DEFAULT_TTS_ADAPTER_ID]
+          compatibleEngineIds: [DEFAULT_TTS_ENGINE_ID, ...neuralTtsEngineDefinitions.map((engine) => engine.id)],
+          compatibleAdapterIds: [DEFAULT_TTS_ADAPTER_ID, "qwen3-tts-mlx", "f5-tts-pt-br"]
         },
         updatedAt: now
       })
@@ -471,8 +616,8 @@ export class TtsService {
         target: voiceProfiles.id,
         set: {
           settingsJson: {
-            compatibleEngineIds: [DEFAULT_TTS_ENGINE_ID],
-            compatibleAdapterIds: [DEFAULT_TTS_ADAPTER_ID]
+            compatibleEngineIds: [DEFAULT_TTS_ENGINE_ID, ...neuralTtsEngineDefinitions.map((engine) => engine.id)],
+            compatibleAdapterIds: [DEFAULT_TTS_ADAPTER_ID, "qwen3-tts-mlx", "f5-tts-pt-br"]
           },
           updatedAt: now
         }
@@ -548,6 +693,20 @@ export class TtsService {
       where: eq(ttsJobs.status, "queued"),
       orderBy: [asc(ttsJobs.createdAt)]
     })
+  }
+
+  private async assertEngineReady(engineId: string): Promise<string> {
+    const adapterId = adapterIdForEngine(engineId)
+    if (engineId === DEFAULT_TTS_ENGINE_ID) {
+      return adapterId
+    }
+
+    const engine = await this.db.query.ttsEngines.findFirst({ where: eq(ttsEngines.id, engineId) })
+    if (!engine || !engine.installed || !engine.installPath) {
+      throw new AppError("tts_engine_not_configured", "TTS engine model is not installed")
+    }
+
+    throw new AppError("tts_sidecar_not_configured", "TTS engine sidecar runtime is not configured")
   }
 
   private async getJobRow(id: string): Promise<TtsJobRow> {
@@ -647,4 +806,14 @@ function toIso(value: Date | string): string {
 
 function sanitizePathPart(value: string): string {
   return value.replace(/[^a-z0-9._-]+/gi, "_").slice(0, 96) || "chapter"
+}
+
+function adapterIdForEngine(engineId: string): string {
+  if (engineId.startsWith("qwen3-tts-")) {
+    return "qwen3-tts-mlx"
+  }
+  if (engineId === "f5-tts-pt-br") {
+    return "f5-tts-pt-br"
+  }
+  return DEFAULT_TTS_ADAPTER_ID
 }

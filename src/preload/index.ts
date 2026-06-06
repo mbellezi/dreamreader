@@ -152,7 +152,8 @@ const api = {
   models: {
     list: () => invoke("models.list"),
     diagnostics: () => invoke("models.diagnostics"),
-    installFromPath: (modelPath: string) => invoke("models.installFromPath", { path: modelPath })
+    installFromPath: (modelPath: string) => invoke("models.installFromPath", { path: modelPath }),
+    download: (modelId: string) => invoke("models.download", { modelId })
   },
   tts: {
     enqueueChapter: (input: Record<string, unknown>) => invoke("tts.enqueueChapter", input),

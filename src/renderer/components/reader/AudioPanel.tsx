@@ -1,9 +1,9 @@
-import { RefreshCw, RotateCcw, Square, Volume2, Wand2 } from "lucide-react"
+import { Cpu, Download, HardDrive, RefreshCw, RotateCcw, Square, Volume2, Wand2 } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { SelectField } from "@renderer/components/common/Controls"
 import type { TranslationFn } from "@renderer/app/types"
 import { cn } from "@renderer/lib/utils"
-import type { AudiobookExport, BookDetails, RuntimeDiagnostic, TtsJob, VoiceProfile } from "@renderer/types"
+import type { AudiobookExport, BookDetails, RuntimeDiagnostic, RuntimeModel, TtsJob, VoiceProfile } from "@renderer/types"
 
 const defaultEngineId = "dreamreader-local-tts"
 
@@ -14,9 +14,11 @@ export function AudioPanel({
   diagnostics,
   jobs,
   loading,
+  models,
   t,
   voices,
   onCancelJob,
+  onDownloadModel,
   onGenerateChapter,
   onRebuildAudiobook,
   onRetryJob,
@@ -28,9 +30,11 @@ export function AudioPanel({
   diagnostics: RuntimeDiagnostic[]
   jobs: TtsJob[]
   loading: boolean
+  models: RuntimeModel[]
   t: TranslationFn
   voices: VoiceProfile[]
   onCancelJob: (jobId: string) => Promise<void> | void
+  onDownloadModel: (modelId: string) => Promise<void> | void
   onGenerateChapter: (input: {
     engineId: string
     quality: "draft" | "standard" | "high"
@@ -42,6 +46,7 @@ export function AudioPanel({
   onToggleAutoBuild: (enabled: boolean) => Promise<void> | void
 }) {
   const [quality, setQuality] = useState<"draft" | "standard" | "high">("standard")
+  const [selectedEngineId, setSelectedEngineId] = useState(defaultEngineId)
   const [selectedVoiceId, setSelectedVoiceId] = useState("")
   const [useExpressiveNarration, setUseExpressiveNarration] = useState(false)
   const chapter = book?.chapters[chapterIndex] ?? null
@@ -60,12 +65,28 @@ export function AudioPanel({
   const canRetry = currentJob?.status === "failed" || currentJob?.status === "cancelled"
   const neutralComparisonJob = comparisonJobFor(jobs, chapter?.id, false)
   const expressiveComparisonJob = comparisonJobFor(jobs, chapter?.id, true)
+  const engineOptions = useMemo(() => {
+    const installedTtsModels = models.filter((model) => model.kind === "tts" && model.installStatus === "available" && model.engineId)
+    return [
+      { label: t("audio.engine.local"), value: defaultEngineId },
+      ...installedTtsModels.map((model) => ({
+        label: model.name,
+        value: model.engineId ?? model.id
+      }))
+    ]
+  }, [models, t])
 
   useEffect(() => {
     if (!selectedVoiceId && voices[0]) {
       setSelectedVoiceId(voices[0].id)
     }
   }, [selectedVoiceId, voices])
+
+  useEffect(() => {
+    if (!engineOptions.some((option) => option.value === selectedEngineId)) {
+      setSelectedEngineId(defaultEngineId)
+    }
+  }, [engineOptions, selectedEngineId])
 
   if (!book || !chapter) {
     return <p className="rounded-md border bg-card p-3 text-sm text-muted-foreground">{t("audio.noChapter")}</p>
@@ -116,6 +137,12 @@ export function AudioPanel({
 
       <section className="space-y-3">
         <SelectField
+          label={t("audio.engine")}
+          options={engineOptions}
+          value={selectedEngineId}
+          onChange={setSelectedEngineId}
+        />
+        <SelectField
           label={t("audio.voice")}
           options={(voices.length ? voices : [{ id: "", name: t("audio.voiceDefault"), language: "pt-BR", kind: "built_in" }]).map((voice) => ({
             label: voice.name,
@@ -148,7 +175,7 @@ export function AudioPanel({
             disabled={Boolean(activeJob) || loading}
             onClick={() =>
               onGenerateChapter({
-                engineId: defaultEngineId,
+                engineId: selectedEngineId,
                 quality,
                 useExpressiveNarration,
                 voiceProfileId: selectedVoiceId || undefined
@@ -170,6 +197,19 @@ export function AudioPanel({
             </button>
           )}
         </div>
+      </section>
+
+      <section className="space-y-2">
+        <h3 className="text-sm font-semibold">{t("audio.models")}</h3>
+        {models.length ? (
+          <div className="space-y-2">
+            {models.map((model) => (
+              <ModelCard key={model.id} model={model} t={t} onDownloadModel={onDownloadModel} />
+            ))}
+          </div>
+        ) : (
+          <p className="rounded-md border bg-card p-3 text-sm text-muted-foreground">{t("audio.models.empty")}</p>
+        )}
       </section>
 
       <section className="space-y-2">
@@ -235,6 +275,76 @@ export function AudioPanel({
           </div>
         ))}
       </section>
+    </div>
+  )
+}
+
+function ModelCard({
+  model,
+  t,
+  onDownloadModel
+}: {
+  model: RuntimeModel
+  t: TranslationFn
+  onDownloadModel: (modelId: string) => Promise<void> | void
+}) {
+  const isDownloading = model.installStatus === "queued" || model.installStatus === "downloading"
+  const canDownload = model.canDownload && !isDownloading && model.installStatus !== "available"
+  const progress = Math.round(model.downloadProgress * 100)
+
+  return (
+    <div className="rounded-md border bg-card p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-2">
+            {model.kind === "tts" ? (
+              <Volume2 className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            ) : (
+              <Cpu className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            )}
+            <p className="truncate text-sm font-medium">{model.name}</p>
+          </div>
+          <p className="mt-1 truncate text-xs text-muted-foreground">
+            {t(`audio.modelKind.${model.kind}`)} · {model.runtime} · {model.format}
+          </p>
+        </div>
+        <span className={cn("shrink-0 text-xs", model.installStatus === "available" ? "text-primary" : model.installStatus === "failed" ? "text-destructive" : "text-muted-foreground")}>
+          {t(`audio.modelStatus.${model.installStatus}`)}
+        </span>
+      </div>
+
+      {isDownloading ? (
+        <div className="mt-3">
+          <div className="mb-1 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+            <span>{t("audio.model.progress")}</span>
+            <span>{progress}%</span>
+          </div>
+          <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+            <div className="h-full bg-primary transition-[width]" style={{ width: `${progress}%` }} />
+          </div>
+        </div>
+      ) : null}
+
+      {model.installStatus === "available" && model.path ? (
+        <p className="mt-2 flex items-center gap-1.5 truncate text-xs text-muted-foreground">
+          <HardDrive className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          <span className="truncate">{model.path}</span>
+        </p>
+      ) : null}
+
+      {model.installStatus !== "available" && !model.canDownload ? (
+        <p className="mt-2 text-xs text-muted-foreground">{t("audio.model.localInstallHint")}</p>
+      ) : null}
+
+      {canDownload ? (
+        <button
+          className="mt-3 inline-flex h-9 w-full items-center justify-center gap-2 rounded-md border bg-background px-3 text-sm"
+          onClick={() => onDownloadModel(model.id)}
+        >
+          <Download className="h-4 w-4" aria-hidden="true" />
+          {t(model.installStatus === "failed" ? "audio.model.retryDownload" : "audio.model.download")}
+        </button>
+      ) : null}
     </div>
   )
 }

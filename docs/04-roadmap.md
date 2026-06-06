@@ -91,16 +91,28 @@ Implementado:
 
 Limites conhecidos da fase 3:
 
-- O analisador atual e local, estruturado e deterministico; ele exercita o contrato e o cache sem carregar um modelo GGUF/MLX real.
-- Integracao real com `node-llama-cpp`, MLX ou sidecar de LLM permanece para fases futuras de runtime/modelos.
+- O analisador deterministico continua disponivel como fallback quando o runtime real nao esta instalado.
 - A qualidade expressiva ainda e conservadora e serve para validar fluxo, persistencia e comparacao na UI.
 
 ## Fase 4: Multi-engine TTS e Vozes
 
+Implementado nesta etapa inicial da fase 4:
+
+- Catalogo persistente de modelos em `model_assets`.
+- Jobs persistentes de download em `model_download_jobs`, com progresso salvo e exibido no painel de audio.
+- UI de modelos locais com estado visual `na fila`, `baixando`, `disponivel` e `falhou`.
+- Download direto do `Qwen3-4B-Instruct-2507 GGUF Q4_K_M` recomendado para prosodia.
+- Provider real de prosodia GGUF via `node-llama-cpp`, ativado quando o arquivo local e o runtime opcional estao disponiveis.
+- Fallback automatico para o analisador local estruturado quando o Qwen GGUF ou `node-llama-cpp` nao estao instalados.
+- Registro dos motores `qwen3-tts-06b-mlx`, `qwen3-tts-17b-mlx` e `f5-tts-pt-br` em `tts_engines`.
+- Registro de manifests de runtime em `runtime_manifests` para futuros sidecars Python/Swift/MLX/PyTorch.
+
+Pendencias ainda dentro da fase 4:
+
 - Adapter Qwen3-TTS 0.6B.
 - Adapter Qwen3-TTS 1.7B.
 - Adapter F5-TTS-pt-br.
-- Tabela de capacidades por adapter e runtime: MLX, PyTorch MPS, CPU fallback.
+- Sidecars reais de sintese para MLX/PyTorch.
 - Seletor de motor por livro/capitulo.
 - Persistencia completa de perfis de voz, samples e bindings.
 - Gerenciador de vozes clonadas com consentimento, samples, previews e bindings por engine.

@@ -31,7 +31,7 @@ async function createWindow() {
   const tts = new TtsService(db, paths, audiobook)
   registerIpc({
     library: new LibraryService(db, paths),
-    runtime: new RuntimeService(),
+    runtime: new RuntimeService(db, paths),
     tts,
     voices: new VoiceService(),
     audiobook

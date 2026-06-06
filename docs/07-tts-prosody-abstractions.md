@@ -200,6 +200,13 @@ Cada adapter deve ter um manifesto:
 
 O app registra adapters por manifesto e healthcheck. Isso permite trocar implementacao Python por Swift/MLX sem mudar a UI.
 
+Estado atual da fase 4:
+
+- `qwen3-tts-06b-mlx`, `qwen3-tts-17b-mlx` e `f5-tts-pt-br` ja sao registrados como engines reais.
+- A sintese neural permanece bloqueada ate existir sidecar/healthcheck configurado.
+- A prosodia expressiva tenta usar `Qwen3-4B-Instruct-2507 GGUF Q4_K_M` via `node-llama-cpp`; se nao houver runtime ou arquivo local, o app volta ao analisador estruturado local.
+- O painel de audio exibe progresso de download de modelos em tempo real.
+
 ## Testes de Contrato
 
 Todo adapter precisa passar por fixtures:
