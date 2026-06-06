@@ -4,7 +4,7 @@ Este documento descreve o schema Drizzle/PGlite e tambem registra entidades plan
 
 ## Estado Atual do Schema
 
-A migration atual (`drizzle/0000_fearless_swordsman.sql`) implementa estas tabelas:
+As migrations atuais (`drizzle/0000_fearless_swordsman.sql` e `drizzle/0001_lying_molten_man.sql`) implementam estas tabelas:
 
 - `books`
 - `assets`
@@ -15,25 +15,25 @@ A migration atual (`drizzle/0000_fearless_swordsman.sql`) implementa estas tabel
 - `collection_books`
 - `settings`
 - `tts_engines`
+- `tts_jobs`
+- `tts_segments`
 - `voice_profiles`
 - `audiobook_exports`
+- `audiobook_chapters`
+- `audiobook_build_jobs`
 
-Essas tabelas cobrem as fases 0 e 1: biblioteca local, assets de capa, posicao de leitura, anotacoes, bookmarks, settings e bases contratuais para TTS/vozes/audiobook.
+Essas tabelas cobrem as fases 0, 1 e 2: biblioteca local, assets de capa, posicao de leitura, anotacoes, bookmarks, settings, fila TTS persistente, cache de audio por capitulo e manifestos parciais de audiobook.
 
 Ainda nao existem no schema atual:
 
 - `voice_samples`
 - `voice_engine_bindings`
 - `voice_clone_jobs`
-- `tts_jobs`
-- `tts_segments`
-- `audiobook_chapters`
-- `audiobook_build_jobs`
 - `pronunciation_entries`
 - `model_assets`
 - `runtime_manifests`
 
-Essas entidades permanecem planejadas para as fases de audio local, prosodia, multi-engine TTS, voice cloning e empacotamento.
+Essas entidades permanecem planejadas para as fases de prosodia, multi-engine TTS, voice cloning e empacotamento.
 
 ## Entidades
 
@@ -425,7 +425,7 @@ Usos:
 
 ## Indices
 
-Indices implementados na migration atual:
+Indices implementados nas migrations atuais:
 
 - `books.content_hash`
 - `books.title`
@@ -440,21 +440,25 @@ Indices implementados na migration atual:
 - `audiobook_exports.status`
 - `assets.content_hash`
 - `assets.book_id`
+- `tts_jobs.status`
+- `tts_jobs.book_id`
+- `tts_jobs.chapter_href`
+- `tts_segments.job_id`
+- `tts_segments.segment_hash`
+- `tts_segments.book_id + chapter_href`
+- `audiobook_build_jobs.status`
+- `audiobook_build_jobs.book_id`
+- `audiobook_chapters.audiobook_export_id`
+- `audiobook_chapters.chapter_href`
+- `audiobook_chapters.book_id + chapter_href`
 
 Indices planejados para fases futuras:
 
 - `annotations.tags`
-- `tts_jobs.status`
-- `tts_jobs.book_id`
 - `voice_engine_bindings.voice_profile_id`
 - `voice_engine_bindings.engine_id`
 - `voice_engine_bindings.status`
 - `voice_clone_jobs.status`
-- `tts_segments.job_id`
-- `tts_segments.segment_hash`
-- `audiobook_build_jobs.status`
-- `audiobook_chapters.audiobook_export_id`
-- `audiobook_chapters.chapter_href`
 - `model_assets.kind`
 - `model_assets.runtime`
 

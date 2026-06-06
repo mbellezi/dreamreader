@@ -286,9 +286,10 @@ export type TtsJob = z.infer<typeof TtsJobSchema>;
 export const EnqueueChapterTtsRequestSchema = z.object({
   bookId: IdSchema,
   chapterHref: NonEmptyStringSchema,
-  engineId: IdSchema,
+  engineId: IdSchema.default("dreamreader-local-tts"),
   voiceProfileId: IdSchema.optional(),
   voiceBindingId: IdSchema.optional(),
+  quality: z.enum(["draft", "standard", "high"]).default("standard"),
   useExpressiveNarration: z.boolean().default(false),
 });
 export type EnqueueChapterTtsRequest = z.infer<

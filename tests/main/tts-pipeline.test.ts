@@ -1,0 +1,36 @@
+import { describe, expect, it } from "vitest"
+import { buildNarrationPlan, normalizePtBr, segmentTextForTts } from "../../src/main/services/tts-pipeline"
+
+describe("TTS pipeline", () => {
+  it("normalizes common PT-BR speech forms", () => {
+    const normalized = normalizePtBr("Sr. João chegou em 06/06/2026 às 14h30. Custou R$ 25,90 e rendeu 12%.")
+
+    expect(normalized).toContain("senhor João")
+    expect(normalized).toContain("seis de junho de dois mil e vinte e seis")
+    expect(normalized).toContain("quatorze horas e trinta minutos")
+    expect(normalized).toContain("vinte e cinco reais e noventa centavos")
+    expect(normalized).toContain("doze por cento")
+  })
+
+  it("segments readable chapter text into deterministic narration plan segments", () => {
+    const plan = buildNarrationPlan({
+      bookId: "book-1",
+      chapterHref: "chapter-1",
+      contentHash: "hash-1",
+      html: "<article><h1>CAPÍTULO 1</h1><p>— Vamos sair? perguntou ela.</p><p>Ele respondeu com calma.</p></article>",
+      language: "pt-BR"
+    })
+
+    expect(plan.schemaVersion).toBe("narration-plan/v1")
+    expect(plan.segments.length).toBeGreaterThanOrEqual(3)
+    expect(plan.segments[0].voiceRole).toBe("heading")
+    expect(plan.segments.some((segment) => segment.voiceRole === "dialogue")).toBe(true)
+  })
+
+  it("keeps abbreviations together during sentence splitting", () => {
+    expect(segmentTextForTts("O Dr. Silva chegou cedo. Depois saiu.")).toEqual([
+      "O Dr. Silva chegou cedo.",
+      "Depois saiu."
+    ])
+  })
+})

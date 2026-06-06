@@ -6,7 +6,7 @@ export type AppView = "library" | "reader" | "settings"
 
 export type LibraryMode = "grid" | "list"
 
-export type InspectorTab = "summary" | "annotations" | "preferences"
+export type InspectorTab = "summary" | "annotations" | "preferences" | "audio"
 
 export type LibraryStatusTone = "info" | "success" | "warning" | "error"
 

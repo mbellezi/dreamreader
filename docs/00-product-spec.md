@@ -28,7 +28,7 @@ O produto deve funcionar bem como leitor tradicional antes de tentar ser uma fer
 
 ## Estado Atual
 
-As fases 0 e 1 estao implementadas. O produto atual e um MVP leitor desktop local-first:
+As fases 0, 1 e 2 estao implementadas. O produto atual e um MVP leitor desktop local-first com audio local basico:
 
 - App Electron com preload seguro, IPC validado por Zod, PGlite/Drizzle e biblioteca interna em `userData`.
 - Importacao de EPUB, TXT, Markdown e HTML por seletor nativo.
@@ -39,12 +39,12 @@ As fases 0 e 1 estao implementadas. O produto atual e um MVP leitor desktop loca
 - Exportacao de anotacoes em Markdown/JSON no main process; a UI atual expoe Markdown.
 - Configuracoes iniciais de idioma, aparencia e preferencias do leitor.
 - Fallback renderer com dados de exemplo quando o app roda sem bridge Electron.
+- Fila TTS persistente por capitulo, segmentacao/normalizacao PT-BR basica, adapter local WAV, cache de audio, player por capitulo e manifesto parcial de audiobook.
 
 Ainda planejado:
 
 - Busca no texto completo, filtros avancados, tags/colecoes completas e monitoramento de pastas.
-- Player de audio, fila persistente de TTS, normalizacao PT-BR para audio, cache de audio e retomada de jobs.
-- Execucao real de LLM/TTS local, adapters de engines, voice cloning persistente e montagem M4B.
+- Execucao real de LLM/TTS neural local, adapters Qwen/F5, voice cloning persistente e encoder M4B real.
 
 ## Nao-objetivos iniciais
 

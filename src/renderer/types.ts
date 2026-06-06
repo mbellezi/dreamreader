@@ -121,6 +121,79 @@ export type ImportBooksResult = {
 
 export type AnnotationDraft = Omit<Annotation, "id" | "createdAt">
 
+export type TtsJobStatus =
+  | "queued"
+  | "preparing"
+  | "analyzing"
+  | "synthesizing"
+  | "assembling"
+  | "updating_m4b"
+  | "building"
+  | "validating"
+  | "completed"
+  | "failed"
+  | "cancelled"
+
+export type TtsJob = {
+  id: string
+  bookId: string
+  chapterHref: string
+  engineId: string
+  voiceProfileId?: string
+  status: TtsJobStatus
+  progress: number
+  errorMessage?: string
+  createdAt: string
+  updatedAt: string
+  finishedAt?: string
+}
+
+export type AudiobookChapter = {
+  bookId: string
+  chapterHref: string
+  chapterIndex: number
+  title: string
+  audioAssetId: string
+  engineId: string
+  voiceProfileId?: string
+  durationMs: number
+  startMs: number
+  endMs: number
+  contentHash: string
+  audioHash: string
+}
+
+export type AudiobookExport = {
+  id: string
+  bookId: string
+  status: "none" | "partial" | "stale" | "complete" | "error"
+  autoBuildEnabled: boolean
+  draftAssetId?: string
+  manifest?: {
+    chapters: AudiobookChapter[]
+    durationMs: number
+  }
+  chaptersReady: number
+  chaptersTotal: number
+  durationMs?: number
+  stale: boolean
+  errorMessage?: string
+}
+
+export type RuntimeDiagnostic = {
+  id: string
+  label: string
+  status: "available" | "not_configured"
+  detail: string
+}
+
+export type VoiceProfile = {
+  id: string
+  name: string
+  language: string
+  kind: string
+}
+
 export type DreamReaderBridge = {
   library?: {
     listBooks?: (query?: LibraryQuery) => Promise<BookSummary[]>
@@ -148,6 +221,7 @@ export type DreamReaderBridge = {
   tts?: {
     enqueueChapter?: (input: Record<string, unknown>) => Promise<unknown>
     cancelJob?: (id: string) => Promise<unknown>
+    retryJob?: (id: string) => Promise<unknown>
     getJob?: (id: string) => Promise<unknown>
     listJobs?: (filter?: { bookId?: string; engineId?: string }) => Promise<unknown[]>
   }

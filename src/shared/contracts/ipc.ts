@@ -71,6 +71,7 @@ export {
   SaveReadingPositionInputSchema,
   TtsAdapterManifestSchema,
   TtsEngineCapabilitiesSchema,
+  TtsJobSchema,
   UpdateAnnotationInputSchema,
   VoiceCloneInputSchema,
   VoiceProfileSchema,
@@ -82,7 +83,7 @@ export type {
   ExportAnnotationsInput,
   UpdateAnnotationInput,
 } from "./annotations";
-export type { AudiobookExport, NarrationPlan, TtsEngineCapabilities, VoiceProfile } from "./ai";
+export type { AudiobookExport, NarrationPlan, TtsEngineCapabilities, TtsJob, VoiceProfile } from "./ai";
 export type { Book, ImportBooksInput, LibraryBook } from "./library";
 export type {
   ReaderChapter,
@@ -107,6 +108,7 @@ export const IpcChannelSchema = z.enum([
   "bookmarks.create",
   "tts.enqueueChapter",
   "tts.cancelJob",
+  "tts.retryJob",
   "tts.getJob",
   "tts.listJobs",
   "voices.list",
@@ -185,6 +187,10 @@ export const IpcContractSchemas = {
     response: createIpcResponseSchema(TtsJobSchema),
   },
   "tts.cancelJob": {
+    request: IdRequestSchema,
+    response: createIpcResponseSchema(TtsJobSchema),
+  },
+  "tts.retryJob": {
     request: IdRequestSchema,
     response: createIpcResponseSchema(TtsJobSchema),
   },

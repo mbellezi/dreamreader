@@ -10,13 +10,15 @@ import {
   TextAlignJustify,
   TextAlignStart,
   Trash2,
-  Type
+  Type,
+  Volume2
 } from "lucide-react"
 import { IconToggle, SegmentButton, SliderField } from "@renderer/components/common/Controls"
+import { AudioPanel } from "@renderer/components/reader/AudioPanel"
 import type { InspectorTab, ReaderPreferenceChangeHandler, TranslationFn } from "@renderer/app/types"
 import { fontFamilyOptions, swatchClasses, themeOptions, themePreviewClasses } from "@renderer/lib/readerOptions"
 import { cn } from "@renderer/lib/utils"
-import type { Annotation, BookDetails, ReaderPreferences } from "@renderer/types"
+import type { Annotation, AudiobookExport, BookDetails, ReaderPreferences, RuntimeDiagnostic, TtsJob, VoiceProfile } from "@renderer/types"
 
 export function InspectorPane({
   activeTab,
@@ -24,37 +26,63 @@ export function InspectorPane({
   annotations,
   book,
   chapterIndex,
+  diagnostics,
   exportContent,
+  audiobook,
+  audioJobs,
+  audioLoading,
   preferences,
   t,
+  voices,
+  onCancelTtsJob,
   onChangePreference,
   onChangeTab,
   onDeleteAnnotation,
   onExportNotes,
+  onGenerateChapterAudio,
   onJumpToAnnotation,
   onJumpToChapter,
+  onRebuildAudiobook,
+  onRetryTtsJob,
+  onToggleAudiobookAutoBuild,
 }: {
   activeTab: InspectorTab
   activeAnnotationId: string | null
   annotations: Annotation[]
+  audiobook: AudiobookExport | null
+  audioJobs: TtsJob[]
+  audioLoading: boolean
   book: BookDetails | null
   chapterIndex: number
+  diagnostics: RuntimeDiagnostic[]
   exportContent: string
   preferences: ReaderPreferences
   t: TranslationFn
+  voices: VoiceProfile[]
+  onCancelTtsJob: (jobId: string) => void
   onChangePreference: ReaderPreferenceChangeHandler
   onChangeTab: (tab: InspectorTab) => void
   onDeleteAnnotation: (annotationId: string) => void
   onExportNotes: () => void
+  onGenerateChapterAudio: (input: {
+    engineId: string
+    quality: "draft" | "standard" | "high"
+    useExpressiveNarration: boolean
+    voiceProfileId?: string
+  }) => void
   onJumpToAnnotation: (annotation: Annotation) => void
   onJumpToChapter: (index: number) => void
+  onRebuildAudiobook: () => void
+  onRetryTtsJob: (jobId: string) => void
+  onToggleAudiobookAutoBuild: (enabled: boolean) => void
 }) {
   return (
     <aside className="flex h-full min-h-0 flex-col overflow-hidden border-l bg-sidebar">
-      <div className="grid shrink-0 grid-cols-3 border-b p-2">
+      <div className="grid shrink-0 grid-cols-4 border-b p-2">
         <IconToggle active={activeTab === "summary"} icon={PanelRight} label={t("reader.summary")} onClick={() => onChangeTab("summary")} />
         <IconToggle active={activeTab === "annotations"} icon={Highlighter} label={t("reader.annotations")} onClick={() => onChangeTab("annotations")} />
         <IconToggle active={activeTab === "preferences"} icon={SlidersHorizontal} label={t("reader.preferences")} onClick={() => onChangeTab("preferences")} />
+        <IconToggle active={activeTab === "audio"} icon={Volume2} label={t("audio.tab")} onClick={() => onChangeTab("audio")} />
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden p-4">
@@ -240,6 +268,24 @@ export function InspectorPane({
               />
             </label>
           </div>
+        ) : null}
+
+        {activeTab === "audio" ? (
+          <AudioPanel
+            audiobook={audiobook}
+            book={book}
+            chapterIndex={chapterIndex}
+            diagnostics={diagnostics}
+            jobs={audioJobs}
+            loading={audioLoading}
+            t={t}
+            voices={voices}
+            onCancelJob={onCancelTtsJob}
+            onGenerateChapter={onGenerateChapterAudio}
+            onRebuildAudiobook={onRebuildAudiobook}
+            onRetryJob={onRetryTtsJob}
+            onToggleAutoBuild={onToggleAudiobookAutoBuild}
+          />
         ) : null}
       </div>
     </aside>

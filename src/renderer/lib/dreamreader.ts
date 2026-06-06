@@ -3,11 +3,15 @@ import type {
   AnnotationDraft,
   AnnotationUpdateDraft,
   AppSettings,
+  AudiobookExport,
   BookDetails,
   BookSummary,
   ImportBooksResult,
   LibraryQuery,
-  ReaderLocator
+  ReaderLocator,
+  RuntimeDiagnostic,
+  TtsJob,
+  VoiceProfile
 } from "@renderer/types"
 import { defaultSettings, sampleAnnotations, sampleBooks } from "@renderer/lib/sampleData"
 import { normalizeSearch } from "@renderer/lib/utils"
@@ -285,5 +289,261 @@ export const dreamreaderClient = {
     state.settings = settings
     writeFallbackState(state)
     return settings
+  },
+
+  async enqueueChapterAudio(input: {
+    bookId: string
+    chapterHref: string
+    engineId?: string
+    quality?: "draft" | "standard" | "high"
+    voiceProfileId?: string
+    useExpressiveNarration?: boolean
+  }): Promise<TtsJob> {
+    const bridgeEnqueue = window.dreamreader?.tts?.enqueueChapter
+
+    if (bridgeEnqueue) {
+      return toTtsJob(await bridgeEnqueue(input))
+    }
+
+    return fallbackTtsJob(input.bookId, input.chapterHref, "completed")
+  },
+
+  async cancelTtsJob(id: string): Promise<TtsJob> {
+    const bridgeCancel = window.dreamreader?.tts?.cancelJob
+
+    if (bridgeCancel) {
+      return toTtsJob(await bridgeCancel(id))
+    }
+
+    return fallbackTtsJob("fallback-book", "chapter-1", "cancelled", id)
+  },
+
+  async retryTtsJob(id: string): Promise<TtsJob> {
+    const bridgeRetry = window.dreamreader?.tts?.retryJob
+
+    if (bridgeRetry) {
+      return toTtsJob(await bridgeRetry(id))
+    }
+
+    return fallbackTtsJob("fallback-book", "chapter-1", "queued", id)
+  },
+
+  async listTtsJobs(filter?: { bookId?: string; engineId?: string }): Promise<TtsJob[]> {
+    const bridgeList = window.dreamreader?.tts?.listJobs
+
+    if (bridgeList) {
+      return (await bridgeList(filter)).map(toTtsJob)
+    }
+
+    return []
+  },
+
+  async getAudiobookExport(bookId: string): Promise<AudiobookExport | null> {
+    const bridgeGet = window.dreamreader?.audiobook?.getExport
+
+    if (bridgeGet) {
+      return toAudiobookExport(await bridgeGet(bookId))
+    }
+
+    return null
+  },
+
+  async setAudiobookAutoBuild(bookId: string, enabled: boolean): Promise<AudiobookExport | null> {
+    const bridgeSet = window.dreamreader?.audiobook?.enableAutoBuild
+
+    if (bridgeSet) {
+      return toAudiobookExport(await bridgeSet(bookId, enabled))
+    }
+
+    return {
+      id: `fallback-audiobook-${bookId}`,
+      bookId,
+      status: "none",
+      autoBuildEnabled: enabled,
+      chaptersReady: 0,
+      chaptersTotal: 0,
+      stale: false
+    }
+  },
+
+  async rebuildAudiobook(bookId: string): Promise<AudiobookExport | null> {
+    const bridgeRebuild = window.dreamreader?.audiobook?.rebuild
+
+    if (bridgeRebuild) {
+      return toAudiobookExport(await bridgeRebuild(bookId))
+    }
+
+    return null
+  },
+
+  async listModelDiagnostics(): Promise<RuntimeDiagnostic[]> {
+    const bridgeDiagnostics = window.dreamreader?.models?.diagnostics
+
+    if (bridgeDiagnostics) {
+      return (await bridgeDiagnostics()).map(toRuntimeDiagnostic)
+    }
+
+    return [
+      {
+        id: "fallback",
+        label: "Renderer",
+        status: "not_configured",
+        detail: "Electron bridge unavailable"
+      }
+    ]
+  },
+
+  async listCompatibleVoices(engineId?: string): Promise<VoiceProfile[]> {
+    const bridgeList = window.dreamreader?.voices?.listCompatible
+
+    if (bridgeList) {
+      return (await bridgeList(engineId)).map(toVoiceProfile)
+    }
+
+    return [
+      {
+        id: "voice_builtin_ptbr_neutral",
+        name: "Narrador PT-BR neutro",
+        language: "pt-BR",
+        kind: "built_in"
+      }
+    ]
   }
+}
+
+function fallbackTtsJob(bookId: string, chapterHref: string, status: TtsJob["status"], id: string = crypto.randomUUID()): TtsJob {
+  const now = new Date().toISOString()
+  return {
+    id,
+    bookId,
+    chapterHref,
+    engineId: "dreamreader-local-tts",
+    voiceProfileId: "voice_builtin_ptbr_neutral",
+    status,
+    progress: status === "completed" ? 1 : 0,
+    createdAt: now,
+    updatedAt: now,
+    finishedAt: status === "completed" || status === "cancelled" ? now : undefined
+  }
+}
+
+function toTtsJob(input: unknown): TtsJob {
+  const job = (input ?? {}) as Record<string, unknown>
+  return {
+    id: String(job.id ?? ""),
+    bookId: String(job.bookId ?? ""),
+    chapterHref: String(job.chapterHref ?? ""),
+    engineId: String(job.engineId ?? "dreamreader-local-tts"),
+    voiceProfileId: optionalString(job.voiceProfileId),
+    status: toTtsJobStatus(job.status),
+    progress: Number(job.progress ?? 0),
+    errorMessage: optionalString(job.errorMessage),
+    createdAt: String(job.createdAt ?? new Date().toISOString()),
+    updatedAt: String(job.updatedAt ?? new Date().toISOString()),
+    finishedAt: optionalString(job.finishedAt)
+  }
+}
+
+function toAudiobookExport(input: unknown): AudiobookExport | null {
+  if (!input) {
+    return null
+  }
+  const item = input as Record<string, unknown>
+  const manifest = item.manifest as Record<string, unknown> | undefined
+  return {
+    id: String(item.id ?? ""),
+    bookId: String(item.bookId ?? ""),
+    status: toAudiobookStatus(item.status),
+    autoBuildEnabled: Boolean(item.autoBuildEnabled),
+    draftAssetId: optionalString(item.draftAssetId),
+    manifest: manifest
+      ? {
+          chapters: toArray(manifest.chapters).map((chapter) => {
+            const row = chapter as Record<string, unknown>
+            return {
+              bookId: String(row.bookId ?? ""),
+              chapterHref: String(row.chapterHref ?? ""),
+              chapterIndex: Number(row.chapterIndex ?? 0),
+              title: String(row.title ?? ""),
+              audioAssetId: String(row.audioAssetId ?? ""),
+              engineId: String(row.engineId ?? "dreamreader-local-tts"),
+              voiceProfileId: optionalString(row.voiceProfileId),
+              durationMs: Number(row.durationMs ?? 0),
+              startMs: Number(row.startMs ?? 0),
+              endMs: Number(row.endMs ?? 0),
+              contentHash: String(row.contentHash ?? ""),
+              audioHash: String(row.audioHash ?? "")
+            }
+          }),
+          durationMs: Number(manifest.durationMs ?? 0)
+        }
+      : undefined,
+    chaptersReady: Number(item.chaptersReady ?? 0),
+    chaptersTotal: Number(item.chaptersTotal ?? 0),
+    durationMs: optionalNumber(item.durationMs),
+    stale: Boolean(item.stale),
+    errorMessage: optionalString(item.errorMessage)
+  }
+}
+
+function toRuntimeDiagnostic(input: unknown): RuntimeDiagnostic {
+  const item = (input ?? {}) as Record<string, unknown>
+  return {
+    id: String(item.id ?? ""),
+    label: String(item.label ?? item.id ?? ""),
+    status: item.status === "available" ? "available" : "not_configured",
+    detail: String(item.detail ?? "")
+  }
+}
+
+function toVoiceProfile(input: unknown): VoiceProfile {
+  const voice = (input ?? {}) as Record<string, unknown>
+  return {
+    id: String(voice.id ?? ""),
+    name: String(voice.name ?? ""),
+    language: String(voice.language ?? "pt-BR"),
+    kind: String(voice.kind ?? "built_in")
+  }
+}
+
+function toTtsJobStatus(value: unknown): TtsJob["status"] {
+  const status = String(value ?? "queued")
+  if (
+    status === "queued" ||
+    status === "preparing" ||
+    status === "analyzing" ||
+    status === "synthesizing" ||
+    status === "assembling" ||
+    status === "updating_m4b" ||
+    status === "building" ||
+    status === "validating" ||
+    status === "completed" ||
+    status === "failed" ||
+    status === "cancelled"
+  ) {
+    return status
+  }
+  return "queued"
+}
+
+function toAudiobookStatus(value: unknown): AudiobookExport["status"] {
+  const status = String(value ?? "none")
+  if (status === "partial" || status === "stale" || status === "complete" || status === "error") {
+    return status
+  }
+  return "none"
+}
+
+function toArray(value: unknown): unknown[] {
+  if (!value) return []
+  return Array.isArray(value) ? value : [value]
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined
+}
+
+function optionalNumber(value: unknown): number | undefined {
+  const numberValue = Number(value)
+  return Number.isFinite(numberValue) ? numberValue : undefined
 }

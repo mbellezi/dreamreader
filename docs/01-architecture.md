@@ -15,7 +15,7 @@
 
 ## Estado Atual Implementado
 
-As fases 0 e 1 estao implementadas com esta arquitetura:
+As fases 0, 1 e 2 estao implementadas com esta arquitetura:
 
 - `src/main/index.ts` cria a janela Electron com `sandbox`, `contextIsolation` e `nodeIntegration: false`.
 - `src/preload/index.ts` expoe `window.dreamreader` via `contextBridge` e traduz respostas IPC tipadas para a UI.
@@ -25,7 +25,9 @@ As fases 0 e 1 estao implementadas com esta arquitetura:
 - `src/main/protocol/asset-protocol.ts` serve assets registrados via `dreamreader://asset/:assetId`.
 - `src/renderer/App.tsx` orquestra estado e navegacao; componentes ficam em `src/renderer/components/`, tipos de UI em `src/renderer/app/` e helpers puros em `src/renderer/lib/`.
 - `src/renderer/lib/dreamreader.ts` atua como cliente usado pelo renderer; quando a bridge Electron nao existe, usa fallback local com dados de exemplo em `localStorage`.
-- Servicos de TTS, vozes, modelos e audiobook existem como stubs/contratos para fases futuras; eles nao executam inferencia local, processamento real de voz nem montagem M4B ainda.
+- `src/main/services/tts-service.ts` implementa fila TTS persistente por capitulo, segmentacao/normalizacao basica, adapter local WAV e cache de audio por capitulo.
+- `src/main/services/audiobook-service.ts` persiste capitulos prontos, manifestos parciais e build jobs de audiobook. O rebuild atual gera manifesto JSON manifest-only enquanto o encoder M4B real nao existe.
+- Servicos de vozes e modelos ainda mantem parte do comportamento como stub/diagnostico para fases futuras; engines neurais, voice cloning e montagem M4B real ainda nao executam inferencia/processamento externo.
 
 ## Limites Entre Processos
 

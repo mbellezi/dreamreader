@@ -8,6 +8,13 @@
       "when": 1780711055782,
       "tag": "0000_fearless_swordsman",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1780764896494,
+      "tag": "0001_lying_molten_man",
+      "breakpoints": true
     }
   ]
 }

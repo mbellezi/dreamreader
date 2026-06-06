@@ -55,6 +55,7 @@ export function registerIpc(services: Services): void {
   handle("bookmarks.create", contract["bookmarks.create"].request, (input) => services.library.createBookmark(input))
   handle("tts.enqueueChapter", contract["tts.enqueueChapter"].request, (input) => services.tts.enqueueChapter(input))
   handle("tts.cancelJob", contract["tts.cancelJob"].request, (input) => services.tts.cancelJob(input.id))
+  handle("tts.retryJob", contract["tts.retryJob"].request, (input) => services.tts.retryJob(input.id))
   handle("tts.getJob", contract["tts.getJob"].request, (input) => services.tts.getJob(input.id))
   handle("tts.listJobs", contract["tts.listJobs"].request, (input) => services.tts.listJobs(input))
   handle("settings.get", contract["settings.get"].request, () => services.library.getSettings())

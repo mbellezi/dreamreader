@@ -202,7 +202,7 @@ export const audiobookExports = pgTable(
     bookId: text("book_id")
       .notNull()
       .references(() => books.id, { onDelete: "cascade" }),
-    status: text("status").notNull().default("idle"),
+    status: text("status").notNull().default("none"),
     autoBuildEnabled: boolean("auto_build_enabled").notNull().default(false),
     format: text("format").notNull().default("m4b"),
     assetId: text("asset_id"),
@@ -225,3 +225,131 @@ export const audiobookExports = pgTable(
   })
 )
 
+export const ttsJobs = pgTable(
+  "tts_jobs",
+  {
+    id: text("id").primaryKey(),
+    bookId: text("book_id")
+      .notNull()
+      .references(() => books.id, { onDelete: "cascade" }),
+    chapterHref: text("chapter_href").notNull(),
+    engineId: text("engine_id")
+      .notNull()
+      .references(() => ttsEngines.id, { onDelete: "restrict" }),
+    voiceProfileId: text("voice_profile_id").references(() => voiceProfiles.id, { onDelete: "set null" }),
+    voiceBindingId: text("voice_binding_id"),
+    status: text("status").notNull().default("queued"),
+    progress: real("progress").notNull().default(0),
+    settingsJson: jsonb("settings_json").$type<Record<string, unknown>>().notNull().default({}),
+    narrationPlanVersion: text("narration_plan_version"),
+    resourcePolicyJson: jsonb("resource_policy_json").$type<Record<string, unknown>>().notNull().default({}),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => ({
+    ttsJobsStatusIdx: index("tts_jobs_status_idx").on(table.status),
+    ttsJobsBookIdx: index("tts_jobs_book_id_idx").on(table.bookId),
+    ttsJobsChapterIdx: index("tts_jobs_chapter_href_idx").on(table.chapterHref)
+  })
+)
+
+export const ttsSegments = pgTable(
+  "tts_segments",
+  {
+    id: text("id").primaryKey(),
+    jobId: text("job_id")
+      .notNull()
+      .references(() => ttsJobs.id, { onDelete: "cascade" }),
+    bookId: text("book_id")
+      .notNull()
+      .references(() => books.id, { onDelete: "cascade" }),
+    chapterHref: text("chapter_href").notNull(),
+    segmentIndex: integer("segment_index").notNull(),
+    segmentHash: text("segment_hash").notNull(),
+    locatorJson: jsonb("locator_json").$type<Record<string, unknown>>().notNull(),
+    originalText: text("original_text").notNull(),
+    normalizedText: text("normalized_text").notNull(),
+    prosodyJson: jsonb("prosody_json").$type<Record<string, unknown>>().notNull().default({}),
+    adapterPayloadJson: jsonb("adapter_payload_json").$type<Record<string, unknown>>().notNull().default({}),
+    audioAssetId: text("audio_asset_id").references(() => assets.id, { onDelete: "set null" }),
+    durationMs: integer("duration_ms"),
+    status: text("status").notNull().default("queued"),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => ({
+    ttsSegmentsJobIdx: index("tts_segments_job_id_idx").on(table.jobId),
+    ttsSegmentsHashIdx: index("tts_segments_segment_hash_idx").on(table.segmentHash),
+    ttsSegmentsBookChapterIdx: index("tts_segments_book_chapter_idx").on(table.bookId, table.chapterHref)
+  })
+)
+
+export const audiobookChapters = pgTable(
+  "audiobook_chapters",
+  {
+    id: text("id").primaryKey(),
+    audiobookExportId: text("audiobook_export_id")
+      .notNull()
+      .references(() => audiobookExports.id, { onDelete: "cascade" }),
+    bookId: text("book_id")
+      .notNull()
+      .references(() => books.id, { onDelete: "cascade" }),
+    chapterHref: text("chapter_href").notNull(),
+    chapterIndex: integer("chapter_index").notNull(),
+    title: text("title").notNull(),
+    audioAssetId: text("audio_asset_id")
+      .notNull()
+      .references(() => assets.id, { onDelete: "restrict" }),
+    voiceProfileId: text("voice_profile_id").references(() => voiceProfiles.id, { onDelete: "set null" }),
+    voiceBindingId: text("voice_binding_id"),
+    engineId: text("engine_id")
+      .notNull()
+      .references(() => ttsEngines.id, { onDelete: "restrict" }),
+    durationMs: integer("duration_ms").notNull(),
+    startMs: integer("start_ms").notNull().default(0),
+    endMs: integer("end_ms").notNull(),
+    contentHash: text("content_hash").notNull(),
+    audioHash: text("audio_hash").notNull(),
+    status: text("status").notNull().default("ready"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => ({
+    audiobookChaptersExportIdx: index("audiobook_chapters_export_idx").on(table.audiobookExportId),
+    audiobookChaptersHrefIdx: index("audiobook_chapters_href_idx").on(table.chapterHref),
+    audiobookChaptersUniqueIdx: uniqueIndex("audiobook_chapters_book_chapter_idx").on(table.bookId, table.chapterHref)
+  })
+)
+
+export const audiobookBuildJobs = pgTable(
+  "audiobook_build_jobs",
+  {
+    id: text("id").primaryKey(),
+    audiobookExportId: text("audiobook_export_id")
+      .notNull()
+      .references(() => audiobookExports.id, { onDelete: "cascade" }),
+    bookId: text("book_id")
+      .notNull()
+      .references(() => books.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("queued"),
+    progress: real("progress").notNull().default(0),
+    reason: text("reason").notNull(),
+    tempAssetId: text("temp_asset_id").references(() => assets.id, { onDelete: "set null" }),
+    resultAssetId: text("result_asset_id").references(() => assets.id, { onDelete: "set null" }),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => ({
+    audiobookBuildJobsStatusIdx: index("audiobook_build_jobs_status_idx").on(table.status),
+    audiobookBuildJobsBookIdx: index("audiobook_build_jobs_book_id_idx").on(table.bookId)
+  })
+)

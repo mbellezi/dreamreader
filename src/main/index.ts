@@ -27,13 +27,16 @@ async function createWindow() {
   const paths = getAppPaths()
   const db = await getDatabase({ rootDir: app.getAppPath(), dbDir: paths.dbDir })
   registerAssetProtocol(db)
+  const audiobook = new AudiobookService(db, paths)
+  const tts = new TtsService(db, paths, audiobook)
   registerIpc({
     library: new LibraryService(db, paths),
     runtime: new RuntimeService(),
-    tts: new TtsService(),
+    tts,
     voices: new VoiceService(),
-    audiobook: new AudiobookService()
+    audiobook
   })
+  void tts.resumePendingJobs()
 
   mainWindow = new BrowserWindow({
     width: 1280,

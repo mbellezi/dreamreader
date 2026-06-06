@@ -157,6 +157,7 @@ const api = {
   tts: {
     enqueueChapter: (input: Record<string, unknown>) => invoke("tts.enqueueChapter", input),
     cancelJob: (id: string) => invoke("tts.cancelJob", { id }),
+    retryJob: (id: string) => invoke("tts.retryJob", { id }),
     getJob: (id: string) => invoke("tts.getJob", { id }),
     listJobs: (filter?: { bookId?: string; engineId?: string }) => invoke("tts.listJobs", filter ?? {})
   },

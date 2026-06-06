@@ -14,6 +14,13 @@ export class RuntimeService {
   listModels() {
     return [
       {
+        id: "dreamreader-local-tts",
+        kind: "tts",
+        runtime: "node-wav-adapter",
+        status: "available",
+        accelerator: "cpu"
+      },
+      {
         id: "llm-prosody-gguf",
         kind: "llm",
         runtime: "node-llama-cpp",
@@ -40,6 +47,12 @@ export class RuntimeService {
   diagnostics(): RuntimeDiagnostic[] {
     const appleSilicon = process.platform === "darwin" && process.arch === "arm64"
     return [
+      {
+        id: "local-tts-adapter",
+        label: "DreamReader Local TTS",
+        status: "available",
+        detail: "Deterministic local WAV adapter is installed for queue, cache, and player workflows"
+      },
       {
         id: "device",
         label: "Device",
