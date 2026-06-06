@@ -43,6 +43,20 @@ Se houver conflito entre este arquivo e uma etapa de algum comando dado ao agent
 - Vozes clonadas devem ser tratadas como `VoiceProfile` + bindings por engine/adapter. Uma voz so aparece como disponivel quando houver binding compativel e consentimento confirmado.
 - M4B e artefato derivado. Capitulos de audio, manifestos e metadados sao a fonte canonica. Atualize M4B por rebuild atomico a partir de manifesto, nao por append in-place.
 
+## Isolamento, Modularidade e Testabilidade
+
+- Mantenha arquivos de entrada/orquestracao pequenos. No renderer, `src/renderer/App.tsx` deve coordenar estado, dados, navegacao e callbacks de alto nivel; nao deve acumular panes, controles reutilizaveis, helpers DOM ou regras puras de negocio/UI.
+- Ao adicionar ou alterar uma tela, separe responsabilidades por modulo:
+  - componentes de UI em `src/renderer/components/`;
+  - tipos e contratos internos da camada em `src/renderer/app/` quando forem compartilhados pela UI;
+  - regras puras e helpers sem React/DOM em `src/renderer/lib/`;
+  - helpers DOM especificos de um componente perto do componente que os usa.
+- Componentes grandes devem ser quebrados por responsabilidade visivel do usuario ou por fronteira tecnica clara. Exemplo: biblioteca, leitor, inspetor, dialogos, toolbars e controles comuns devem viver em arquivos proprios quando crescerem.
+- Nao misture JSX extenso com regras puras testaveis. Extraia calculos, decisoes de status, selecao de item inicial, normalizacao, mapeamento de estado e geometria sem DOM para funcoes puras.
+- Regras extraidas devem receber dados por parametros e retornar dados simples sempre que possivel. Evite depender de estado global, `window`, `document` ou IPC quando a decisao puder ser pura.
+- Ao refatorar para reduzir complexidade, preserve comportamento publicamente observavel e cubra a extracao com testes de regressao proporcionais ao risco.
+- Toda nova regra pura relevante deve ter teste unitario em `tests/`. Para componentes, prefira testes de composicao ou fluxos sem GUI manual quando houver comportamento alem de renderizacao estatica.
+- Antes de concluir um refactor de modularidade, rode ao menos `npm test` e `npm run lint` quando aplicavel; para mudancas no renderer, rode tambem `npm run build` quando a alteracao mexer em imports, bundling ou fronteiras entre arquivos.
 
 ## i18n
 
