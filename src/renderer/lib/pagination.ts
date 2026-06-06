@@ -38,6 +38,21 @@ export function pageIndexForColumn(column: number, columnsPerPage: number): numb
   return Math.floor(Math.max(column, 0) / Math.max(columnsPerPage, 1))
 }
 
+export function columnIndexForOffset(offset: number, columnWidth: number, columnGap: number): number {
+  const step = columnStep(columnWidth, columnGap)
+  const safeOffset = Math.max(offset, 0)
+  const column = Math.floor(safeOffset / step)
+  const offsetInColumnTrack = safeOffset - column * step
+  const gap = Math.max(columnGap, 0)
+  const tolerance = Math.min(1, gap)
+
+  if (gap > 0 && offsetInColumnTrack >= columnWidth && step - offsetInColumnTrack <= tolerance) {
+    return column + 1
+  }
+
+  return column
+}
+
 // translateX magnitude (px) that brings the given page's first column to the
 // left edge of the viewport. Always an exact multiple of the column step, which
 // is what keeps paging gapless and free of overlap.

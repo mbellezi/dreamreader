@@ -31,7 +31,7 @@ import { translate } from "@renderer/i18n"
 import { dreamreaderClient } from "@renderer/lib/dreamreader"
 import {
   clampPageIndex,
-  columnStep,
+  columnIndexForOffset,
   pageClipWidth,
   pageCountForColumns,
   pageIndexForColumn,
@@ -159,6 +159,7 @@ export function App(): ReactElement {
   const [settingsSaved, setSettingsSaved] = useState(false)
   const [cleanReading, setCleanReading] = useState(false)
   const [activeAnnotationId, setActiveAnnotationId] = useState<string | null>(null)
+  const [annotationFocusTick, setAnnotationFocusTick] = useState(0)
   const [returnChapterIndex, setReturnChapterIndex] = useState<number | null>(null)
   const stableChapterIndexRef = useRef<number | null>(null)
   const pendingSettingsSignatureRef = useRef("")
@@ -317,6 +318,7 @@ export function App(): ReactElement {
 
     const nextIndex = selectedBook.chapters.findIndex((chapter) => chapter.id === annotation.chapterId)
     navigateToChapter(nextIndex >= 0 ? nextIndex : chapterIndex, annotation.id)
+    setAnnotationFocusTick((current) => current + 1)
     setInspectorTab("annotations")
   }
 
@@ -539,6 +541,7 @@ export function App(): ReactElement {
           <div className={cn("grid min-h-0 flex-1 grid-cols-1 overflow-hidden", !cleanReading && "lg:grid-cols-[minmax(0,1fr)_340px]")}>
             <ReaderPane
               activeAnnotationId={activeAnnotationId}
+              annotationFocusTick={annotationFocusTick}
               annotations={annotations}
               book={selectedBook}
               chapter={currentChapter}
@@ -820,6 +823,7 @@ function BookCard({
 
 function ReaderPane({
   activeAnnotationId,
+  annotationFocusTick,
   annotations,
   book,
   canReturn,
@@ -840,6 +844,7 @@ function ReaderPane({
   onUpdateAnnotationColor
 }: {
   activeAnnotationId: string | null
+  annotationFocusTick: number
   annotations: Annotation[]
   book: BookDetails | null
   canReturn: boolean
@@ -1214,7 +1219,7 @@ function ReaderPane({
         inline: "nearest"
       })
     })
-  }, [activeAnnotationId, applyPage, chapter?.id, computeLayout, isPaginated])
+  }, [activeAnnotationId, annotationFocusTick, applyPage, chapter?.id, computeLayout, isPaginated])
 
   const updateSelection = useCallback(() => {
     const selected = window.getSelection()
@@ -1925,8 +1930,7 @@ function columnIndexOfElement(content: HTMLElement, element: HTMLElement, layout
   for (const rect of rects) {
     leftMost = Math.min(leftMost, rect.left)
   }
-  const step = columnStep(layout.columnWidth, layout.columnGap)
-  return Math.max(0, Math.round((leftMost - contentRect.left) / step))
+  return columnIndexForOffset(leftMost - contentRect.left, layout.columnWidth, layout.columnGap)
 }
 
 // The paragraph anchor for the column at the left edge of the given page. Used

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import {
   clampPageIndex,
+  columnIndexForOffset,
   columnStep,
   pageClipWidth,
   pageCountForColumns,
@@ -82,6 +83,18 @@ describe("pageIndexForColumn", () => {
 
   it("is the identity for single-column pages", () => {
     expect(pageIndexForColumn(7, 1)).toBe(7)
+  })
+})
+
+describe("columnIndexForOffset", () => {
+  it("keeps inline fragments in their column even when they start past the halfway point", () => {
+    expect(columnIndexForOffset(COLUMN_WIDTH - 12, COLUMN_WIDTH, COLUMN_GAP)).toBe(0)
+    expect(columnIndexForOffset(STEP + COLUMN_WIDTH - 12, COLUMN_WIDTH, COLUMN_GAP)).toBe(1)
+    expect(pageIndexForColumn(columnIndexForOffset(STEP + COLUMN_WIDTH - 12, COLUMN_WIDTH, COLUMN_GAP), 2)).toBe(0)
+  })
+
+  it("tolerates a sub-pixel measurement just before the next column starts", () => {
+    expect(columnIndexForOffset(STEP - 0.25, COLUMN_WIDTH, COLUMN_GAP)).toBe(1)
   })
 })
 
