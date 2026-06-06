@@ -1,0 +1,361 @@
+import { z } from "zod";
+import {
+  AcceleratorSchema,
+  IdSchema,
+  IsoDateTimeStringSchema,
+  JobStatusSchema,
+  JsonObjectSchema,
+  LocaleSchema,
+  ModelFormatSchema,
+  NonEmptyStringSchema,
+  ProgressSchema,
+  RuntimeSchema,
+} from "./common";
+import { ReaderLocatorSchema } from "./reader";
+
+export const ProsodyEmotionSchema = z.enum([
+  "neutral",
+  "warm",
+  "tense",
+  "sad",
+  "joyful",
+  "angry",
+  "suspense",
+  "formal",
+]);
+export type ProsodyEmotion = z.infer<typeof ProsodyEmotionSchema>;
+
+export const ProsodyPaceSchema = z.enum(["slow", "normal", "fast"]);
+export type ProsodyPace = z.infer<typeof ProsodyPaceSchema>;
+
+export const ProsodyPitchSchema = z.enum(["low", "neutral", "high"]);
+export type ProsodyPitch = z.infer<typeof ProsodyPitchSchema>;
+
+export const VoiceRoleSchema = z.enum([
+  "narrator",
+  "dialogue",
+  "quote",
+  "heading",
+]);
+export type VoiceRole = z.infer<typeof VoiceRoleSchema>;
+
+export const NarrationProsodySchema = z.object({
+  emotion: ProsodyEmotionSchema.default("neutral"),
+  intensity: z.number().min(0).max(1).default(0.2),
+  pace: ProsodyPaceSchema.default("normal"),
+  pitch: ProsodyPitchSchema.default("neutral"),
+  pauseBeforeMs: z.number().int().min(0).max(1500).default(0),
+  pauseAfterMs: z.number().int().min(0).max(1500).default(350),
+  instructionPtBr: z.string().trim().max(240).default(""),
+});
+export type NarrationProsody = z.infer<typeof NarrationProsodySchema>;
+
+export const NarrationSegmentSchema = z.object({
+  segmentId: NonEmptyStringSchema,
+  locator: ReaderLocatorSchema,
+  originalText: NonEmptyStringSchema,
+  normalizedText: NonEmptyStringSchema,
+  voiceRole: VoiceRoleSchema.optional(),
+  prosody: NarrationProsodySchema,
+});
+export type NarrationSegment = z.infer<typeof NarrationSegmentSchema>;
+
+export const NarrationPlanSchema = z.object({
+  schemaVersion: z.literal("narration-plan/v1"),
+  source: z.object({
+    bookId: IdSchema,
+    chapterHref: NonEmptyStringSchema,
+    contentHash: NonEmptyStringSchema,
+    language: LocaleSchema.or(NonEmptyStringSchema),
+  }),
+  normalization: z.object({
+    normalizerId: NonEmptyStringSchema,
+    version: NonEmptyStringSchema,
+    dictionaryVersion: NonEmptyStringSchema,
+  }),
+  prosody: z.object({
+    analyzerId: NonEmptyStringSchema,
+    version: NonEmptyStringSchema,
+    promptVersion: NonEmptyStringSchema.optional(),
+  }),
+  segments: z.array(NarrationSegmentSchema).min(1),
+});
+export type NarrationPlan = z.infer<typeof NarrationPlanSchema>;
+
+export const TtsEngineCapabilitiesSchema = z.object({
+  id: IdSchema,
+  displayName: NonEmptyStringSchema,
+  runtime: RuntimeSchema,
+  modelFormat: ModelFormatSchema,
+  languages: z.array(LocaleSchema.or(NonEmptyStringSchema)).min(1),
+  supportsVoiceClone: z.boolean(),
+  supportsNaturalLanguageInstruction: z.boolean(),
+  supportsDiscreteEmotion: z.boolean(),
+  supportsBatch: z.boolean(),
+  supportsStreaming: z.boolean(),
+  supportsSegmentTimestamps: z.boolean(),
+  supportsSsmlLikeMarkup: z.boolean(),
+  preferredInputCase: z.enum(["lowercase", "preserve"]).optional(),
+  estimatedMemoryMb: z.number().int().positive().optional(),
+});
+export type TtsEngineCapabilities = z.infer<
+  typeof TtsEngineCapabilitiesSchema
+>;
+
+export const TtsAdapterManifestSchema = z.object({
+  adapterId: IdSchema,
+  displayName: NonEmptyStringSchema,
+  runtime: RuntimeSchema,
+  modelFormats: z.array(ModelFormatSchema).min(1),
+  languages: z.array(LocaleSchema.or(NonEmptyStringSchema)).min(1),
+  capabilities: z.object({
+    voiceClone: z.boolean(),
+    naturalLanguageInstruction: z.boolean(),
+    discreteEmotion: z.boolean(),
+    batch: z.boolean(),
+    streaming: z.boolean(),
+    segmentTimestamps: z.boolean(),
+    ssmlLikeMarkup: z.boolean().default(false),
+  }),
+});
+export type TtsAdapterManifest = z.infer<typeof TtsAdapterManifestSchema>;
+
+export const TtsEngineSchema = z.object({
+  id: IdSchema,
+  displayName: NonEmptyStringSchema,
+  version: NonEmptyStringSchema.optional(),
+  adapterId: IdSchema,
+  runtime: RuntimeSchema,
+  modelFormat: ModelFormatSchema,
+  accelerator: AcceleratorSchema,
+  capabilities: TtsEngineCapabilitiesSchema,
+  performanceProfile: JsonObjectSchema.default({}),
+  installed: z.boolean(),
+  installPath: z.string().trim().optional(),
+  createdAt: IsoDateTimeStringSchema,
+  updatedAt: IsoDateTimeStringSchema,
+});
+export type TtsEngine = z.infer<typeof TtsEngineSchema>;
+
+export const VoiceKindSchema = z.enum([
+  "built_in",
+  "cloned",
+  "imported",
+  "generated",
+]);
+export type VoiceKind = z.infer<typeof VoiceKindSchema>;
+
+export const VoiceProfileSchema = z.object({
+  id: IdSchema,
+  name: NonEmptyStringSchema,
+  description: z.string().trim().optional(),
+  language: LocaleSchema.or(NonEmptyStringSchema),
+  kind: VoiceKindSchema,
+  source: JsonObjectSchema.default({}),
+  tags: z.array(NonEmptyStringSchema).default([]),
+  settings: JsonObjectSchema.default({}),
+  consentConfirmedAt: IsoDateTimeStringSchema.optional(),
+  consentNote: z.string().trim().optional(),
+  previewAssetId: IdSchema.optional(),
+  createdFromEngineId: IdSchema.optional(),
+  createdAt: IsoDateTimeStringSchema,
+  updatedAt: IsoDateTimeStringSchema,
+});
+export type VoiceProfile = z.infer<typeof VoiceProfileSchema>;
+
+export const VoiceSampleSchema = z.object({
+  id: IdSchema,
+  voiceProfileId: IdSchema,
+  assetId: IdSchema,
+  transcript: z.string().trim().optional(),
+  language: LocaleSchema.or(NonEmptyStringSchema).optional(),
+  durationMs: z.number().int().positive(),
+  quality: JsonObjectSchema.default({}),
+  consentConfirmedAt: IsoDateTimeStringSchema.optional(),
+  createdAt: IsoDateTimeStringSchema,
+});
+export type VoiceSample = z.infer<typeof VoiceSampleSchema>;
+
+export const VoiceBindingStatusSchema = z.enum([
+  "pending",
+  "ready",
+  "failed",
+  "disabled",
+]);
+export type VoiceBindingStatus = z.infer<typeof VoiceBindingStatusSchema>;
+
+export const VoiceBindingKindSchema = z.enum([
+  "reference_audio",
+  "speaker_embedding",
+  "preset",
+  "voice_design_prompt",
+]);
+export type VoiceBindingKind = z.infer<typeof VoiceBindingKindSchema>;
+
+export const VoiceEngineBindingSchema = z.object({
+  id: IdSchema,
+  voiceProfileId: IdSchema,
+  engineId: IdSchema,
+  adapterId: IdSchema,
+  status: VoiceBindingStatusSchema,
+  bindingKind: VoiceBindingKindSchema,
+  bindingAssetId: IdSchema.optional(),
+  settings: JsonObjectSchema.default({}),
+  compatibility: JsonObjectSchema.default({}),
+  createdAt: IsoDateTimeStringSchema,
+  updatedAt: IsoDateTimeStringSchema,
+});
+export type VoiceEngineBinding = z.infer<typeof VoiceEngineBindingSchema>;
+
+export const VoiceFilterSchema = z.object({
+  language: LocaleSchema.or(NonEmptyStringSchema).optional(),
+  kind: VoiceKindSchema.optional(),
+  engineId: IdSchema.optional(),
+  adapterId: IdSchema.optional(),
+  includeUnavailable: z.boolean().default(false),
+});
+export type VoiceFilter = z.infer<typeof VoiceFilterSchema>;
+
+export const VoiceCloneInputSchema = z.object({
+  engineId: IdSchema,
+  name: NonEmptyStringSchema,
+  referenceAudioPath: NonEmptyStringSchema,
+  transcript: z.string().trim().optional(),
+  language: LocaleSchema.or(NonEmptyStringSchema).default("pt-BR"),
+  consentConfirmed: z.literal(true),
+  consentNote: NonEmptyStringSchema,
+});
+export type VoiceCloneInput = z.infer<typeof VoiceCloneInputSchema>;
+
+export const TtsSynthesisInputSchema = z.object({
+  jobId: IdSchema,
+  engineId: IdSchema,
+  voiceProfileId: IdSchema.optional(),
+  voiceBindingId: IdSchema.optional(),
+  plan: NarrationPlanSchema,
+  outputDirectory: NonEmptyStringSchema,
+  quality: z.enum(["draft", "standard", "high"]).default("standard"),
+});
+export type TtsSynthesisInput = z.infer<typeof TtsSynthesisInputSchema>;
+
+export const TtsProgressEventSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("job_progress"),
+    jobId: IdSchema,
+    status: JobStatusSchema,
+    progress: ProgressSchema,
+  }),
+  z.object({
+    type: z.literal("segment_completed"),
+    jobId: IdSchema,
+    segmentId: IdSchema,
+    audioAssetId: IdSchema,
+    durationMs: z.number().int().positive(),
+  }),
+  z.object({
+    type: z.literal("log"),
+    jobId: IdSchema,
+    level: z.enum(["debug", "info", "warn", "error"]),
+    code: NonEmptyStringSchema,
+    details: JsonObjectSchema.default({}),
+  }),
+]);
+export type TtsProgressEvent = z.infer<typeof TtsProgressEventSchema>;
+
+export const TtsJobSchema = z.object({
+  id: IdSchema,
+  bookId: IdSchema,
+  chapterHref: NonEmptyStringSchema,
+  engineId: IdSchema,
+  voiceProfileId: IdSchema.optional(),
+  voiceBindingId: IdSchema.optional(),
+  status: JobStatusSchema,
+  progress: ProgressSchema,
+  settings: JsonObjectSchema.default({}),
+  narrationPlanVersion: NonEmptyStringSchema.optional(),
+  resourcePolicy: JsonObjectSchema.default({}),
+  errorCode: z.string().trim().optional(),
+  errorMessage: z.string().trim().optional(),
+  createdAt: IsoDateTimeStringSchema,
+  startedAt: IsoDateTimeStringSchema.optional(),
+  finishedAt: IsoDateTimeStringSchema.optional(),
+  updatedAt: IsoDateTimeStringSchema,
+});
+export type TtsJob = z.infer<typeof TtsJobSchema>;
+
+export const EnqueueChapterTtsRequestSchema = z.object({
+  bookId: IdSchema,
+  chapterHref: NonEmptyStringSchema,
+  engineId: IdSchema,
+  voiceProfileId: IdSchema.optional(),
+  voiceBindingId: IdSchema.optional(),
+  useExpressiveNarration: z.boolean().default(false),
+});
+export type EnqueueChapterTtsRequest = z.infer<
+  typeof EnqueueChapterTtsRequestSchema
+>;
+
+export const AudiobookExportStatusSchema = z.enum([
+  "none",
+  "partial",
+  "stale",
+  "complete",
+  "error",
+]);
+export type AudiobookExportStatus = z.infer<typeof AudiobookExportStatusSchema>;
+
+export const AudiobookChapterManifestSchema = z.object({
+  bookId: IdSchema,
+  chapterHref: NonEmptyStringSchema,
+  chapterIndex: z.number().int().min(0),
+  title: NonEmptyStringSchema,
+  audioAssetId: IdSchema,
+  voiceProfileId: IdSchema.optional(),
+  voiceBindingId: IdSchema.optional(),
+  engineId: IdSchema,
+  durationMs: z.number().int().positive(),
+  startMs: z.number().int().min(0),
+  endMs: z.number().int().positive(),
+  contentHash: NonEmptyStringSchema,
+  audioHash: NonEmptyStringSchema,
+});
+export type AudiobookChapterManifest = z.infer<
+  typeof AudiobookChapterManifestSchema
+>;
+
+export const AudiobookManifestSchema = z.object({
+  schemaVersion: z.literal("audiobook-manifest/v1"),
+  bookId: IdSchema,
+  title: NonEmptyStringSchema,
+  authors: z.array(NonEmptyStringSchema).default([]),
+  language: LocaleSchema.or(NonEmptyStringSchema).optional(),
+  coverAssetId: IdSchema.optional(),
+  generatedAt: IsoDateTimeStringSchema,
+  engineId: IdSchema.optional(),
+  voiceProfileId: IdSchema.optional(),
+  chapters: z.array(AudiobookChapterManifestSchema),
+  durationMs: z.number().int().min(0),
+});
+export type AudiobookManifest = z.infer<typeof AudiobookManifestSchema>;
+
+export const AudiobookExportSchema = z.object({
+  id: IdSchema,
+  bookId: IdSchema,
+  status: AudiobookExportStatusSchema,
+  autoBuildEnabled: z.boolean(),
+  format: z.literal("m4b"),
+  assetId: IdSchema.optional(),
+  draftAssetId: IdSchema.optional(),
+  manifest: AudiobookManifestSchema.optional(),
+  metadata: JsonObjectSchema.default({}),
+  chaptersReady: z.number().int().min(0),
+  chaptersTotal: z.number().int().min(0),
+  durationMs: z.number().int().min(0).optional(),
+  stale: z.boolean(),
+  errorCode: z.string().trim().optional(),
+  errorMessage: z.string().trim().optional(),
+  createdAt: IsoDateTimeStringSchema,
+  updatedAt: IsoDateTimeStringSchema,
+  lastBuiltAt: IsoDateTimeStringSchema.optional(),
+});
+export type AudiobookExport = z.infer<typeof AudiobookExportSchema>;

@@ -1,0 +1,98 @@
+import { dialog, ipcMain } from "electron"
+import { z } from "zod"
+import { IpcContractSchemas, type IpcChannel } from "@shared/contracts/ipc"
+import { AudiobookService } from "@main/services/audiobook-service"
+import { LibraryService } from "@main/services/library-service"
+import { RuntimeService } from "@main/services/runtime-service"
+import { TtsService } from "@main/services/tts-service"
+import { VoiceService } from "@main/services/voice-service"
+import { toIpcError } from "@main/lib/errors"
+
+type Services = {
+  library: LibraryService
+  runtime: RuntimeService
+  tts: TtsService
+  voices: VoiceService
+  audiobook: AudiobookService
+}
+
+const contract = IpcContractSchemas
+
+export function registerIpc(services: Services): void {
+  handle("library.importFiles", contract["library.importFiles"].request, async (input) => {
+    const candidatePaths = input.filePaths.length ? input.filePaths : input.files.map((file) => file.path)
+    const filePaths = candidatePaths.length
+      ? candidatePaths
+      : (
+        await dialog.showOpenDialog({
+          properties: ["openFile", "multiSelections"],
+          filters: [
+            { name: "Books", extensions: ["epub", "txt", "md", "markdown", "html", "htm"] }
+          ]
+        })
+      ).filePaths
+    return services.library.importFiles(filePaths)
+  })
+
+  handle("library.listBooks", contract["library.listBooks"].request, (input) => services.library.listBooks(input.query))
+  handle("library.updateBookMetadata", contract["library.updateBookMetadata"].request, (input) =>
+    services.library.updateBookMetadata(input)
+  )
+  handle("reader.openBook", contract["reader.openBook"].request, (input) => services.library.openBook(input.bookId))
+  handle("reader.getResource", contract["reader.getResource"].request, (input) => services.library.getResource(input))
+  handle("reader.saveLocator", contract["reader.saveLocator"].request, (input) =>
+    services.library.saveReadingPosition({
+      bookId: input.bookId,
+      locator: input.locator,
+      chapterHref: input.chapterHref,
+      progression: input.progression ?? 0
+    })
+  )
+  handle("annotations.create", contract["annotations.create"].request, (input) => services.library.createAnnotation(input))
+  handle("annotations.update", contract["annotations.update"].request, (input) => services.library.updateAnnotation(input))
+  handle("annotations.delete", contract["annotations.delete"].request, (input) => services.library.deleteAnnotation(input.id))
+  handle("annotations.export", contract["annotations.export"].request, (input) => services.library.exportAnnotations(input))
+  handle("bookmarks.create", contract["bookmarks.create"].request, (input) => services.library.createBookmark(input))
+  handle("tts.enqueueChapter", contract["tts.enqueueChapter"].request, (input) => services.tts.enqueueChapter(input))
+  handle("tts.cancelJob", contract["tts.cancelJob"].request, (input) => services.tts.cancelJob(input.id))
+  handle("tts.getJob", contract["tts.getJob"].request, (input) => services.tts.getJob(input.id))
+  handle("tts.listJobs", contract["tts.listJobs"].request, (input) => services.tts.listJobs(input))
+  handle("settings.get", contract["settings.get"].request, () => services.library.getSettings())
+  handle("settings.update", contract["settings.update"].request, (input) => services.library.updateSettings(input))
+  handle("models.list", contract["models.list"].request, () => services.runtime.listModels())
+  handle("models.diagnostics", contract["models.diagnostics"].request, () => services.runtime.diagnostics())
+  handle("models.installFromPath", contract["models.installFromPath"].request, (input) =>
+    services.runtime.installFromPath(input.path)
+  )
+  handle("voices.list", contract["voices.list"].request, (input) => services.voices.list(input))
+  handle("voices.createFromReference", contract["voices.createFromReference"].request, (input) =>
+    services.voices.createFromReference(input)
+  )
+  handle("voices.preview", contract["voices.preview"].request, (input) => services.voices.preview(input))
+  handle("voices.update", contract["voices.update"].request, (input) => services.voices.update(input))
+  handle("voices.delete", contract["voices.delete"].request, (input) => services.voices.delete(input))
+  handle("voices.listCompatible", contract["voices.listCompatible"].request, (input) =>
+    services.voices.listCompatible(input.engineId)
+  )
+  handle("audiobook.getExport", contract["audiobook.getExport"].request, (input) => services.audiobook.getExport(input.bookId))
+  handle("audiobook.enableAutoBuild", contract["audiobook.enableAutoBuild"].request, (input) =>
+    services.audiobook.setAutoBuild(input.bookId, input.enabled)
+  )
+  handle("audiobook.rebuild", contract["audiobook.rebuild"].request, (input) => services.audiobook.rebuild(input.bookId))
+  handle("audiobook.reveal", contract["audiobook.reveal"].request, (input) => services.audiobook.reveal(input.bookId))
+}
+
+function handle<TSchema extends z.ZodType, TResult>(
+  channel: IpcChannel,
+  schema: TSchema,
+  callback: (input: z.infer<TSchema>) => Promise<TResult> | TResult
+) {
+  ipcMain.handle(channel, async (_event, payload) => {
+    try {
+      const input = schema.parse(payload ?? {})
+      return { ok: true, data: await callback(input) }
+    } catch (error) {
+      return { ok: false, error: toIpcError(error) }
+    }
+  })
+}
