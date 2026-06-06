@@ -1,6 +1,6 @@
 # Roadmap
 
-Este roadmap descreve o estado atual do repositorio e o escopo planejado. As fases 0, 1 e 2 estao implementadas no codigo atual; as fases seguintes continuam planejadas.
+Este roadmap descreve o estado atual do repositorio e o escopo planejado. As fases 0, 1, 2 e 3 estao implementadas no codigo atual; as fases seguintes continuam planejadas.
 
 ## Fase 0: Fundacao Tecnica - Implementada
 
@@ -24,7 +24,7 @@ Escopo preparado, mas sem execucao real ainda:
 
 - Contratos de `NarrationPlan`, adapters TTS, voice cloning, jobs TTS, diagnosticos de runtime e M4B.
 - Stubs de TTS, vozes, modelos e audiobook para validar fronteiras IPC e UI futura.
-- A inferencia real de LLM/TTS, processamento de voz e montagem M4B ficam nas fases 2 a 4.
+- A inferencia real de TTS neural, processamento de voz e montagem M4B ficam nas fases 4 e 5.
 
 ## Fase 1: MVP Leitor - Implementada
 
@@ -75,16 +75,25 @@ Limites conhecidos da fase 2:
 
 - O adapter atual gera WAV local deterministico para validar fila/cache/player; nao e uma engine neural Qwen/F5 nem sintetiza voz natural.
 - O export M4B ainda e manifest-only; encoder AAC/M4B real fica para empacotamento/engines futuras.
-- Narração expressiva existe como flag de job, mas a analise por LLM permanece na fase 3.
 
-## Fase 3: Prosodia com LLM
+## Fase 3: Prosodia com LLM - Implementada
 
-- LLM local para gerar instrucoes estruturadas por segmento.
-- Schema Zod para `NarrationPlan` e prosodia ja existe; implementar geracao e cache.
-- Fallback neutro quando o LLM falhar.
-- UI para ligar/desligar "narracao expressiva".
-- Comparacao de qualidade entre audio neutro e audio com instrucoes.
-- Cache da analise de prosodia por segmento.
+Implementado:
+
+- `ProsodyService` no main process para aplicar prosodia neutra ou expressiva sobre `NarrationPlan`.
+- Analisador local estruturado `llm-prosody-local`, validado por Zod, para gerar instrucoes de emocao, ritmo, pitch, intensidade, pausas e papel de voz por segmento.
+- Cache persistente de analise em `prosody_analyses`, com chave por hash de segmento, analyzer, versao e prompt/schema.
+- Fallback neutro por segmento quando a analise falha, retorna JSON invalido ou nao cobre todos os segmentos.
+- UI para ligar/desligar narracao expressiva no painel de audio.
+- Comparacao entre audio neutro e audio expressivo quando ambos existem para o capitulo.
+- Metadados de job com modo de prosodia, cache hits, analises geradas e fallbacks.
+- Adapter WAV local usando a prosodia do plano para produzir diferenca audivel deterministica entre neutro e expressivo.
+
+Limites conhecidos da fase 3:
+
+- O analisador atual e local, estruturado e deterministico; ele exercita o contrato e o cache sem carregar um modelo GGUF/MLX real.
+- Integracao real com `node-llama-cpp`, MLX ou sidecar de LLM permanece para fases futuras de runtime/modelos.
+- A qualidade expressiva ainda e conservadora e serve para validar fluxo, persistencia e comparacao na UI.
 
 ## Fase 4: Multi-engine TTS e Vozes
 

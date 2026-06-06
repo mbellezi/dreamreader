@@ -142,6 +142,7 @@ export type TtsJob = {
   voiceProfileId?: string
   status: TtsJobStatus
   progress: number
+  settings: Record<string, unknown>
   errorMessage?: string
   createdAt: string
   updatedAt: string

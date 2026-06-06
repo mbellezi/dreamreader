@@ -3,7 +3,7 @@ import path from "node:path"
 import { and, asc, eq, inArray } from "drizzle-orm"
 import type { EnqueueChapterTtsRequest, NarrationPlan, TtsJob } from "@shared/contracts/ai"
 import type { AppDatabase } from "@main/db/client"
-import { assets, audiobookChapters, books, ttsEngines, ttsJobs, ttsSegments, voiceProfiles } from "@main/db/schema"
+import { assets, books, ttsEngines, ttsJobs, ttsSegments, voiceProfiles } from "@main/db/schema"
 import { AppError } from "@main/lib/errors"
 import { hashBuffer } from "@main/lib/hash"
 import { createId } from "@main/lib/ids"
@@ -11,6 +11,7 @@ import type { AppPaths } from "@main/lib/paths"
 import { LocalTtsAdapter } from "@main/services/local-tts-adapter"
 import type { AudiobookService } from "@main/services/audiobook-service"
 import { buildNarrationPlan, NARRATION_PLAN_VERSION } from "@main/services/tts-pipeline"
+import { ProsodyService, type ProsodyPlanResult } from "@main/services/prosody-service"
 
 export const DEFAULT_TTS_ENGINE_ID = "dreamreader-local-tts"
 export const DEFAULT_TTS_ADAPTER_ID = "dreamreader-local-wav"
@@ -32,6 +33,7 @@ type TtsJobRow = typeof ttsJobs.$inferSelect
 
 export class TtsService {
   private readonly adapter = new LocalTtsAdapter()
+  private readonly prosody: ProsodyService
   private processing = false
   private queueTimer: NodeJS.Timeout | undefined
   private readyPromise: Promise<void> | undefined
@@ -40,19 +42,22 @@ export class TtsService {
     private readonly db: AppDatabase,
     private readonly paths: AppPaths,
     private readonly audiobook: AudiobookService
-  ) {}
+  ) {
+    this.prosody = new ProsodyService(db)
+  }
 
   async enqueueChapter(input: EnqueueChapterTtsRequest): Promise<TtsJob> {
     await this.ensureReady()
     const engineId = input.engineId || DEFAULT_TTS_ENGINE_ID
     const voiceProfileId = input.voiceProfileId || DEFAULT_VOICE_PROFILE_ID
     const source = await this.getChapterSource(input.bookId, input.chapterHref)
-    const cached = await this.findCachedChapter({
+    const cached = await this.findCachedJob({
       bookId: input.bookId,
       chapterHref: input.chapterHref,
       contentHash: source.contentHash,
       engineId,
-      voiceProfileId
+      voiceProfileId,
+      useExpressiveNarration: input.useExpressiveNarration
     })
     const now = new Date()
     const [job] = await this.db
@@ -66,11 +71,16 @@ export class TtsService {
         voiceBindingId: input.voiceBindingId,
         status: cached ? "completed" : "queued",
         progress: cached ? 1 : 0,
-        settingsJson: {
+        settingsJson: compactJson({
           cached: Boolean(cached),
+          cachedFromJobId: cached?.id,
+          chapterAudioAssetId: cached?.chapterAudioAssetId,
+          chapterDurationMs: cached?.chapterDurationMs,
+          prosodyMode: input.useExpressiveNarration ? "expressive" : "neutral",
           quality: input.quality,
+          sourceContentHash: source.contentHash,
           useExpressiveNarration: input.useExpressiveNarration
-        },
+        }),
         narrationPlanVersion: cached ? NARRATION_PLAN_VERSION : undefined,
         resourcePolicyJson: {
           acceleratorPreference: "portable_local_first",
@@ -199,18 +209,29 @@ export class TtsService {
       await this.updateJob(job.id, { status: "preparing", startedAt: job.startedAt ?? new Date(), progress: 0.04 })
       await this.throwIfCancelled(job.id)
       const source = await this.getChapterSource(job.bookId, job.chapterHref)
-      const cached = await this.findCachedChapter({
+      const jobSettings = jsonObject(job.settingsJson)
+      const useExpressiveNarration = Boolean(jobSettings.useExpressiveNarration)
+      const cached = await this.findCachedJob({
         bookId: job.bookId,
         chapterHref: job.chapterHref,
         contentHash: source.contentHash,
         engineId: job.engineId,
-        voiceProfileId: job.voiceProfileId ?? undefined
+        excludeJobId: job.id,
+        voiceProfileId: job.voiceProfileId ?? undefined,
+        useExpressiveNarration
       })
       if (cached) {
         await this.updateJob(job.id, {
           status: "completed",
           progress: 1,
-          settingsJson: { ...jsonObject(job.settingsJson), cached: true },
+          settingsJson: compactJson({
+            ...jobSettings,
+            cached: true,
+            cachedFromJobId: cached.id,
+            chapterAudioAssetId: cached.chapterAudioAssetId,
+            chapterDurationMs: cached.chapterDurationMs,
+            sourceContentHash: source.contentHash
+          }),
           narrationPlanVersion: NARRATION_PLAN_VERSION,
           finishedAt: new Date()
         })
@@ -218,16 +239,28 @@ export class TtsService {
       }
 
       await this.updateJob(job.id, { status: "analyzing", progress: 0.12 })
-      const plan = buildNarrationPlan({
+      const neutralPlan = buildNarrationPlan({
         bookId: job.bookId,
         chapterHref: job.chapterHref,
         contentHash: source.contentHash,
         html: source.html,
         language: source.language
       })
-      await this.persistSegments(job.id, plan)
+      const prosodyResult = await this.prosody.applyProsody(neutralPlan, useExpressiveNarration)
+      const plan = prosodyResult.plan
+      await this.persistSegments(job.id, plan, prosodyResult)
       await this.updateJob(job.id, {
         narrationPlanVersion: plan.schemaVersion,
+        settingsJson: compactJson({
+          ...jobSettings,
+          prosodyAnalyzerId: prosodyResult.analyzerId,
+          prosodyCacheHits: prosodyResult.cacheHits,
+          prosodyFallbackCount: prosodyResult.fallbackCount,
+          prosodyGeneratedCount: prosodyResult.generatedCount,
+          prosodyMode: useExpressiveNarration ? "expressive" : "neutral",
+          prosodyPromptVersion: prosodyResult.promptVersion,
+          sourceContentHash: source.contentHash
+        }),
         status: "synthesizing",
         progress: 0.18
       })
@@ -270,7 +303,8 @@ export class TtsService {
       await this.throwIfCancelled(job.id)
       await this.updateJob(job.id, { status: "assembling", progress: 0.86 })
       const chapterAudio = this.adapter.synthesizeChapter(plan)
-      const chapterFileName = `${source.contentHash.slice(0, 16)}-${job.engineId}-${job.voiceProfileId ?? "default"}.wav`
+      const chapterCacheHash = chapterCacheHashFor(source.contentHash, job, plan, useExpressiveNarration)
+      const chapterFileName = `${chapterCacheHash.slice(0, 16)}-${job.engineId}-${job.voiceProfileId ?? "default"}.wav`
       const chapterPath = path.join(this.paths.audioCacheDir, job.bookId, chapterFileName)
       await mkdir(path.dirname(chapterPath), { recursive: true })
       await writeFile(chapterPath, chapterAudio.buffer)
@@ -294,7 +328,7 @@ export class TtsService {
         bookId: job.bookId,
         chapterHref: job.chapterHref,
         chapterIndex: source.chapterIndex,
-        contentHash: source.contentHash,
+        contentHash: chapterCacheHash,
         durationMs: chapterAudio.durationMs,
         engineId: job.engineId,
         title: source.title,
@@ -305,6 +339,13 @@ export class TtsService {
       await this.updateJob(job.id, {
         status: "completed",
         progress: 1,
+        settingsJson: compactJson({
+          ...jsonObject((await this.getJobRow(job.id)).settingsJson),
+          chapterAudioAssetId: chapterAsset.id,
+          chapterDurationMs: chapterAudio.durationMs,
+          chapterAudioHash: chapterAudio.contentHash,
+          chapterCacheHash
+        }),
         finishedAt: new Date()
       })
     } catch (error) {
@@ -326,7 +367,7 @@ export class TtsService {
     }
   }
 
-  private async persistSegments(jobId: string, plan: NarrationPlan): Promise<void> {
+  private async persistSegments(jobId: string, plan: NarrationPlan, prosodyResult: ProsodyPlanResult): Promise<void> {
     await this.db.delete(ttsSegments).where(eq(ttsSegments.jobId, jobId))
     for (const [index, segment] of plan.segments.entries()) {
       await this.db.insert(ttsSegments).values({
@@ -342,6 +383,9 @@ export class TtsService {
         prosodyJson: segment.prosody,
         adapterPayloadJson: {
           adapterId: DEFAULT_TTS_ADAPTER_ID,
+          prosodyAnalyzerId: prosodyResult.analyzerId,
+          prosodyMode: prosodyResult.promptVersion ? "expressive" : "neutral",
+          prosodyPromptVersion: prosodyResult.promptVersion,
           unsupportedProsodyFields: []
         },
         status: "queued"
@@ -460,26 +504,43 @@ export class TtsService {
     }
   }
 
-  private async findCachedChapter(input: {
+  private async findCachedJob(input: {
     bookId: string
     chapterHref: string
     contentHash: string
     engineId: string
+    excludeJobId?: string
     voiceProfileId?: string
+    useExpressiveNarration: boolean
   }) {
-    const cached = await this.db.query.audiobookChapters.findFirst({
-      where: and(eq(audiobookChapters.bookId, input.bookId), eq(audiobookChapters.chapterHref, input.chapterHref))
+    const candidates = await this.db.query.ttsJobs.findMany({
+      where: and(eq(ttsJobs.bookId, input.bookId), eq(ttsJobs.chapterHref, input.chapterHref), eq(ttsJobs.status, "completed")),
+      orderBy: [asc(ttsJobs.createdAt)]
     })
+    const cached = candidates.reverse().find((job) => {
+      if (job.id === input.excludeJobId || job.engineId !== input.engineId) {
+        return false
+      }
+      if ((job.voiceProfileId ?? DEFAULT_VOICE_PROFILE_ID) !== (input.voiceProfileId ?? DEFAULT_VOICE_PROFILE_ID)) {
+        return false
+      }
+      const settings = jsonObject(job.settingsJson)
+      return (
+        settings.sourceContentHash === input.contentHash &&
+        settings.useExpressiveNarration === input.useExpressiveNarration &&
+        typeof settings.chapterAudioAssetId === "string"
+      )
+    })
+
     if (!cached) {
       return undefined
     }
-    if (cached.contentHash !== input.contentHash || cached.engineId !== input.engineId) {
-      return undefined
+    const settings = jsonObject(cached.settingsJson)
+    return {
+      id: cached.id,
+      chapterAudioAssetId: String(settings.chapterAudioAssetId),
+      chapterDurationMs: typeof settings.chapterDurationMs === "number" ? settings.chapterDurationMs : undefined
     }
-    if ((cached.voiceProfileId ?? DEFAULT_VOICE_PROFILE_ID) !== (input.voiceProfileId ?? DEFAULT_VOICE_PROFILE_ID)) {
-      return undefined
-    }
-    return cached
   }
 
   private async nextQueuedJob(): Promise<TtsJobRow | undefined> {
@@ -548,6 +609,28 @@ function normalizeJobStatus(status: string): TtsJob["status"] {
 
 function jsonObject(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
+}
+
+function compactJson<T extends Record<string, unknown>>(value: T): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined))
+}
+
+function chapterCacheHashFor(sourceContentHash: string, job: TtsJobRow, plan: NarrationPlan, expressive: boolean): string {
+  return hashBuffer(
+    [
+      sourceContentHash,
+      job.engineId,
+      job.voiceProfileId ?? DEFAULT_VOICE_PROFILE_ID,
+      job.voiceBindingId ?? "",
+      expressive ? "expressive" : "neutral",
+      plan.prosody.analyzerId,
+      plan.prosody.version,
+      plan.prosody.promptVersion ?? "",
+      plan.normalization.normalizerId,
+      plan.normalization.version,
+      plan.normalization.dictionaryVersion
+    ].join("\n")
+  )
 }
 
 function optional(value: string | null | undefined): string | undefined {

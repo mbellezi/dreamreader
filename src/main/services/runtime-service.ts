@@ -21,6 +21,13 @@ export class RuntimeService {
         accelerator: "cpu"
       },
       {
+        id: "llm-prosody-local",
+        kind: "llm",
+        runtime: "structured-local-analyzer",
+        status: "available",
+        accelerator: "cpu"
+      },
+      {
         id: "llm-prosody-gguf",
         kind: "llm",
         runtime: "node-llama-cpp",
@@ -52,6 +59,12 @@ export class RuntimeService {
         label: "DreamReader Local TTS",
         status: "available",
         detail: "Deterministic local WAV adapter is installed for queue, cache, and player workflows"
+      },
+      {
+        id: "local-prosody-analyzer",
+        label: "Local Prosody Analyzer",
+        status: "available",
+        detail: "Structured local prosody analyzer validates JSON output and caches segment analysis"
       },
       {
         id: "device",

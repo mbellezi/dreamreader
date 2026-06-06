@@ -71,6 +71,28 @@ describe("TtsService", () => {
         useExpressiveNarration: false
       })
       expect(cached.status).toBe("completed")
+
+      const expressive = await tts.enqueueChapter({
+        bookId: "book-audio",
+        chapterHref: "chapter-1",
+        engineId: DEFAULT_TTS_ENGINE_ID,
+        voiceProfileId: DEFAULT_VOICE_PROFILE_ID,
+        quality: "draft",
+        useExpressiveNarration: true
+      })
+      expect(expressive.status).toBe("queued")
+
+      await tts.drainQueue()
+
+      const allJobs = await tts.listJobs({ bookId: "book-audio" })
+      const expressiveJob = allJobs.find((job) => job.id === expressive.id)
+      expect(expressiveJob?.status).toBe("completed")
+      expect(expressiveJob?.settings.prosodyAnalyzerId).toBe("llm-prosody-local")
+      expect(expressiveJob?.settings.useExpressiveNarration).toBe(true)
+      expect(expressiveJob?.settings.chapterAudioAssetId).not.toBe(completed.settings.chapterAudioAssetId)
+
+      const prosodyRows = await db.query.prosodyAnalyses.findMany()
+      expect(prosodyRows.length).toBeGreaterThan(0)
     } finally {
       await client.close()
     }

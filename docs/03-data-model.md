@@ -4,7 +4,7 @@ Este documento descreve o schema Drizzle/PGlite e tambem registra entidades plan
 
 ## Estado Atual do Schema
 
-As migrations atuais (`drizzle/0000_fearless_swordsman.sql` e `drizzle/0001_lying_molten_man.sql`) implementam estas tabelas:
+As migrations atuais (`drizzle/0000_fearless_swordsman.sql`, `drizzle/0001_lying_molten_man.sql` e `drizzle/0002_greedy_miek.sql`) implementam estas tabelas:
 
 - `books`
 - `assets`
@@ -17,12 +17,13 @@ As migrations atuais (`drizzle/0000_fearless_swordsman.sql` e `drizzle/0001_lyin
 - `tts_engines`
 - `tts_jobs`
 - `tts_segments`
+- `prosody_analyses`
 - `voice_profiles`
 - `audiobook_exports`
 - `audiobook_chapters`
 - `audiobook_build_jobs`
 
-Essas tabelas cobrem as fases 0, 1 e 2: biblioteca local, assets de capa, posicao de leitura, anotacoes, bookmarks, settings, fila TTS persistente, cache de audio por capitulo e manifestos parciais de audiobook.
+Essas tabelas cobrem as fases 0, 1, 2 e 3: biblioteca local, assets de capa, posicao de leitura, anotacoes, bookmarks, settings, fila TTS persistente, cache de audio por capitulo, cache de prosodia por segmento e manifestos parciais de audiobook.
 
 Ainda nao existem no schema atual:
 
@@ -33,7 +34,7 @@ Ainda nao existem no schema atual:
 - `model_assets`
 - `runtime_manifests`
 
-Essas entidades permanecem planejadas para as fases de prosodia, multi-engine TTS, voice cloning e empacotamento.
+Essas entidades permanecem planejadas para as fases de multi-engine TTS, voice cloning e empacotamento.
 
 ## Entidades
 
@@ -277,6 +278,31 @@ Notas:
 - `created_at`
 - `updated_at`
 
+### `prosody_analyses`
+
+- `id`
+- `book_id`
+- `chapter_href`
+- `segment_id`
+- `segment_hash`
+- `analyzer_id`
+- `analyzer_version`
+- `prompt_version`
+- `status`
+- `voice_role`
+- `prosody_json`
+- `raw_response_json`
+- `fallback_reason`
+- `created_at`
+- `updated_at`
+
+Notas:
+
+- A chave de cache usa `segment_hash`, `analyzer_id`, `analyzer_version` e `prompt_version`.
+- `prosody_json` armazena a prosodia canonica validada por Zod antes de chegar ao TTS.
+- Linhas com fallback tambem sao persistidas, para evitar repetir analises que ja falharam de forma recuperavel.
+- `raw_response_json` guarda a resposta estruturada local sem incluir texto completo do livro quando isso puder ser evitado.
+
 ### `audiobook_exports`
 
 - `id`
@@ -446,6 +472,9 @@ Indices implementados nas migrations atuais:
 - `tts_segments.job_id`
 - `tts_segments.segment_hash`
 - `tts_segments.book_id + chapter_href`
+- `prosody_analyses.segment_hash`
+- `prosody_analyses.book_id + chapter_href`
+- `prosody_analyses.segment_hash + analyzer_id + analyzer_version + prompt_version`
 - `audiobook_build_jobs.status`
 - `audiobook_build_jobs.book_id`
 - `audiobook_chapters.audiobook_export_id`

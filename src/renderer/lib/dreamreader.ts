@@ -421,6 +421,9 @@ function fallbackTtsJob(bookId: string, chapterHref: string, status: TtsJob["sta
     voiceProfileId: "voice_builtin_ptbr_neutral",
     status,
     progress: status === "completed" ? 1 : 0,
+    settings: {
+      useExpressiveNarration: false
+    },
     createdAt: now,
     updatedAt: now,
     finishedAt: status === "completed" || status === "cancelled" ? now : undefined
@@ -437,6 +440,7 @@ function toTtsJob(input: unknown): TtsJob {
     voiceProfileId: optionalString(job.voiceProfileId),
     status: toTtsJobStatus(job.status),
     progress: Number(job.progress ?? 0),
+    settings: jsonObject(job.settings),
     errorMessage: optionalString(job.errorMessage),
     createdAt: String(job.createdAt ?? new Date().toISOString()),
     updatedAt: String(job.updatedAt ?? new Date().toISOString()),
@@ -546,4 +550,8 @@ function optionalString(value: unknown): string | undefined {
 function optionalNumber(value: unknown): number | undefined {
   const numberValue = Number(value)
   return Number.isFinite(numberValue) ? numberValue : undefined
+}
+
+function jsonObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
 }

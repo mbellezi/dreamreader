@@ -4,13 +4,14 @@ DreamReader e um leitor de ebooks desktop, offline-first, feito em Electron, Rea
 
 ## Estado atual
 
-As fases 0, 1 e 2 do roadmap estao implementadas:
+As fases 0, 1, 2 e 3 do roadmap estao implementadas:
 
 - Fase 0: scaffold Electron/React/Tailwind, IPC validado por Zod, preload seguro, PGlite/Drizzle com migration inicial, protocolo local `dreamreader://asset/...`, contratos compartilhados e testes de base.
 - Fase 1: MVP leitor com biblioteca local, importacao de EPUB/TXT/Markdown/HTML, lista/grid com busca, leitura com sumario e preferencias, retomada de posicao, marcacoes/notas/favoritos, exportacao de notas em Markdown e configuracoes iniciais.
 - Fase 2: audio local basico com jobs TTS persistidos em PGlite, fila por capitulo, segmentacao/normalizacao PT-BR, adapter local WAV, cache de audio por capitulo, player no leitor, cancelamento/retry/retomada, diagnostico de modelos e manifesto parcial de audiobook.
+- Fase 3: prosodia expressiva com analisador local estruturado, cache por segmento em PGlite, fallback neutro validado por Zod e comparacao entre audio neutro e expressivo na UI.
 
-LLM de prosodia, voice cloning persistente, engines neurais Qwen/F5 e encoder M4B real ainda pertencem as proximas fases. A fase 2 gera audio WAV local deterministico para exercitar fila, cache, player e manifestos sem baixar modelos externos.
+Runtime GGUF/MLX real para prosodia, voice cloning persistente, engines neurais Qwen/F5 e encoder M4B real ainda pertencem as proximas fases. As fases 2 e 3 geram audio WAV local deterministico para exercitar fila, cache, player, prosodia e manifestos sem baixar modelos externos.
 
 ## Documentacao
 

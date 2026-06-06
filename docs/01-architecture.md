@@ -15,7 +15,7 @@
 
 ## Estado Atual Implementado
 
-As fases 0, 1 e 2 estao implementadas com esta arquitetura:
+As fases 0, 1, 2 e 3 estao implementadas com esta arquitetura:
 
 - `src/main/index.ts` cria a janela Electron com `sandbox`, `contextIsolation` e `nodeIntegration: false`.
 - `src/preload/index.ts` expoe `window.dreamreader` via `contextBridge` e traduz respostas IPC tipadas para a UI.
@@ -26,8 +26,9 @@ As fases 0, 1 e 2 estao implementadas com esta arquitetura:
 - `src/renderer/App.tsx` orquestra estado e navegacao; componentes ficam em `src/renderer/components/`, tipos de UI em `src/renderer/app/` e helpers puros em `src/renderer/lib/`.
 - `src/renderer/lib/dreamreader.ts` atua como cliente usado pelo renderer; quando a bridge Electron nao existe, usa fallback local com dados de exemplo em `localStorage`.
 - `src/main/services/tts-service.ts` implementa fila TTS persistente por capitulo, segmentacao/normalizacao basica, adapter local WAV e cache de audio por capitulo.
+- `src/main/services/prosody-service.ts` aplica prosodia neutra ou expressiva sobre `NarrationPlan`, valida a resposta estruturada por Zod e persiste cache por segmento em `prosody_analyses`.
 - `src/main/services/audiobook-service.ts` persiste capitulos prontos, manifestos parciais e build jobs de audiobook. O rebuild atual gera manifesto JSON manifest-only enquanto o encoder M4B real nao existe.
-- Servicos de vozes e modelos ainda mantem parte do comportamento como stub/diagnostico para fases futuras; engines neurais, voice cloning e montagem M4B real ainda nao executam inferencia/processamento externo.
+- Servicos de vozes e modelos ainda mantem parte do comportamento como stub/diagnostico para fases futuras; runtime GGUF/MLX real de prosodia, engines neurais, voice cloning e montagem M4B real ainda nao executam inferencia/processamento externo.
 
 ## Limites Entre Processos
 
@@ -63,8 +64,8 @@ Responsavel por:
 - Importacao, extracao e armazenamento de livros.
 - Protocolo local seguro para recursos de livros.
 - Persistencia de posicao, anotacoes, bookmarks e settings.
-- Gerenciamento inicial/stub de modelos locais, jobs TTS, perfis de voz e export M4B.
-- Futuramente: fila persistente de jobs, supervisao de workers Node e subprocessos Python, execucao real de runtimes LLM/TTS, governador de recursos, voice cloning completo e montagem incremental de audiobooks M4B.
+- Gerenciamento inicial/stub de modelos locais, jobs TTS, prosodia estruturada, perfis de voz e export M4B.
+- Futuramente: supervisao de workers Node e subprocessos Python, execucao real de runtimes LLM/TTS neurais, governador de recursos, voice cloning completo e montagem incremental de audiobooks M4B reais.
 
 ### Workers
 
@@ -256,6 +257,11 @@ Modelos candidatos iniciais:
 - Caminho de performance Apple Silicon: modelo equivalente em MLX, rodando em sidecar Python/Swift quando os benchmarks mostrarem ganho real.
 
 O output do LLM deve ser validado e normalizado. Se falhar, usar prosodia neutra.
+
+Estado atual:
+
+- A fase 3 implementa o contrato com um analisador local estruturado `llm-prosody-local`, cache persistente e fallback neutro.
+- A integracao com modelo GGUF via `node-llama-cpp` ou MLX permanece planejada para a etapa de runtime/modelos.
 
 ## Empacotamento
 

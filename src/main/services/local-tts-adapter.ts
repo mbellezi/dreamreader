@@ -1,4 +1,4 @@
-import type { NarrationPlan, NarrationSegment } from "@shared/contracts/ai"
+import type { NarrationPlan, NarrationProsody, NarrationSegment } from "@shared/contracts/ai"
 import { hashBuffer } from "@main/lib/hash"
 
 const sampleRate = 22_050
@@ -28,9 +28,9 @@ export class LocalTtsAdapter {
 
   synthesizeSegment(segment: NarrationSegment): LocalTtsAudio {
     this.assertWarm()
-    const durationMs = durationForText(segment.normalizedText, segment.prosody.pauseAfterMs)
-    const frequency = frequencyFor(segment.segmentId)
-    const buffer = createToneWav(durationMs, frequency)
+    const durationMs = durationForText(segment.normalizedText, segment.prosody)
+    const frequency = frequencyFor(segment.segmentId, segment.prosody)
+    const buffer = createToneWav(durationMs, frequency, amplitudeFor(segment.prosody))
     return {
       buffer,
       contentHash: hashBuffer(buffer),
@@ -42,11 +42,12 @@ export class LocalTtsAdapter {
   synthesizeChapter(plan: NarrationPlan): LocalTtsAudio {
     this.assertWarm()
     const durationMs = plan.segments.reduce(
-      (total, segment) => total + durationForText(segment.normalizedText, segment.prosody.pauseAfterMs),
+      (total, segment) => total + durationForText(segment.normalizedText, segment.prosody),
       0
     )
-    const frequency = frequencyFor(`${plan.source.bookId}:${plan.source.chapterHref}`)
-    const buffer = createToneWav(Math.max(durationMs, 750), frequency)
+    const averageProsody = averageProsodyFor(plan.segments)
+    const frequency = frequencyFor(`${plan.source.bookId}:${plan.source.chapterHref}:${plan.prosody.analyzerId}`, averageProsody)
+    const buffer = createToneWav(Math.max(durationMs, 750), frequency, amplitudeFor(averageProsody))
     return {
       buffer,
       contentHash: hashBuffer(buffer),
@@ -73,19 +74,54 @@ export class LocalTtsAdapter {
   }
 }
 
-export function durationForText(text: string, pauseAfterMs = 350): number {
+export function durationForText(text: string, prosodyOrPause: NarrationProsody | number = 350): number {
+  const prosody = typeof prosodyOrPause === "number" ? undefined : prosodyOrPause
+  const pauseAfterMs = typeof prosodyOrPause === "number" ? prosodyOrPause : prosodyOrPause.pauseAfterMs
   const words = text.split(/\s+/).filter(Boolean).length
-  const estimatedSpeechMs = Math.max(500, words * 310)
+  const paceFactor = prosody?.pace === "slow" ? 1.16 : prosody?.pace === "fast" ? 0.88 : 1
+  const estimatedSpeechMs = Math.max(500, words * 310 * paceFactor)
   return Math.min(12_000, estimatedSpeechMs + pauseAfterMs)
 }
 
-function frequencyFor(seed: string): number {
+function frequencyFor(seed: string, prosody?: NarrationProsody): number {
   const digest = hashBuffer(seed)
   const offset = Number.parseInt(digest.slice(0, 2), 16) % 90
-  return 180 + offset
+  const pitchOffset = prosody?.pitch === "low" ? -34 : prosody?.pitch === "high" ? 42 : 0
+  const emotionOffset = prosody?.emotion === "suspense" || prosody?.emotion === "sad" ? -18 : prosody?.emotion === "joyful" ? 24 : 0
+  return Math.max(120, 180 + offset + pitchOffset + emotionOffset)
 }
 
-function createToneWav(durationMs: number, frequency: number): Buffer {
+function amplitudeFor(prosody?: NarrationProsody): number {
+  return 2200 + Math.round((prosody?.intensity ?? 0.2) * 1400)
+}
+
+function averageProsodyFor(segments: NarrationSegment[]): NarrationProsody {
+  const first = segments[0]?.prosody
+  if (!first) {
+    return {
+      emotion: "neutral",
+      intensity: 0.2,
+      pace: "normal",
+      pitch: "neutral",
+      pauseBeforeMs: 0,
+      pauseAfterMs: 350,
+      instructionPtBr: ""
+    }
+  }
+  const intensity = segments.reduce((total, segment) => total + segment.prosody.intensity, 0) / Math.max(segments.length, 1)
+  const slowCount = segments.filter((segment) => segment.prosody.pace === "slow").length
+  const fastCount = segments.filter((segment) => segment.prosody.pace === "fast").length
+  const highCount = segments.filter((segment) => segment.prosody.pitch === "high").length
+  const lowCount = segments.filter((segment) => segment.prosody.pitch === "low").length
+  return {
+    ...first,
+    intensity,
+    pace: slowCount > fastCount ? "slow" : fastCount > slowCount ? "fast" : "normal",
+    pitch: lowCount > highCount ? "low" : highCount > lowCount ? "high" : "neutral"
+  }
+}
+
+function createToneWav(durationMs: number, frequency: number, amplitude: number): Buffer {
   const frameCount = Math.max(1, Math.round((durationMs / 1000) * sampleRate))
   const dataSize = frameCount * channelCount * bytesPerSample
   const buffer = Buffer.alloc(44 + dataSize)
@@ -110,7 +146,7 @@ function createToneWav(durationMs: number, frequency: number): Buffer {
     const envelope = Math.min(1, frame / Math.max(attackFrames, 1), (frameCount - frame) / Math.max(releaseFrames, 1))
     const carrier = Math.sin(2 * Math.PI * frequency * t)
     const tremolo = 0.68 + Math.sin(2 * Math.PI * 4.5 * t) * 0.12
-    const sample = Math.round(carrier * tremolo * envelope * 2400)
+    const sample = Math.round(carrier * tremolo * envelope * amplitude)
     buffer.writeInt16LE(sample, 44 + frame * bytesPerSample)
   }
 

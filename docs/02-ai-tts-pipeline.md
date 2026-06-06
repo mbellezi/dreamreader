@@ -58,6 +58,8 @@ As regras devem ser configuraveis e versionadas. Mudancas de normalizacao invali
 
 O LLM recebe pequenos lotes de segmentos e retorna JSON validado.
 
+Estado atual da fase 3: o app usa `ProsodyService` com o analisador local estruturado `llm-prosody-local` para exercitar o mesmo contrato, cache e fallback sem depender ainda de um modelo GGUF/MLX real. A troca para runtime de LLM deve preservar este formato canonico.
+
 Schema conceitual:
 
 ```json

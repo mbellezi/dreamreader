@@ -61,7 +61,7 @@ export function buildNarrationPlan(input: ChapterNarrationInput): NarrationPlan 
       originalText: chunk,
       normalizedText,
       voiceRole: voiceRoleFor(chunk),
-      prosody: prosodyFor(chunk)
+      prosody: neutralProsodyFor(chunk)
     }
   })
 
@@ -195,7 +195,7 @@ function splitSentences(paragraph: string): string[] {
     .filter(Boolean)
 }
 
-function prosodyFor(text: string): NarrationProsody {
+export function neutralProsodyFor(text: string): NarrationProsody {
   const trimmed = text.trim()
   if (trimmed.endsWith("?")) {
     return {
@@ -230,7 +230,7 @@ function prosodyFor(text: string): NarrationProsody {
   }
 }
 
-function voiceRoleFor(text: string): VoiceRole {
+export function voiceRoleFor(text: string): VoiceRole {
   const trimmed = text.trim()
   if (trimmed.startsWith("—") || trimmed.startsWith("- ")) {
     return "dialogue"

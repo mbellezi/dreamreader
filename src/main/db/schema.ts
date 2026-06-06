@@ -289,6 +289,39 @@ export const ttsSegments = pgTable(
   })
 )
 
+export const prosodyAnalyses = pgTable(
+  "prosody_analyses",
+  {
+    id: text("id").primaryKey(),
+    bookId: text("book_id")
+      .notNull()
+      .references(() => books.id, { onDelete: "cascade" }),
+    chapterHref: text("chapter_href").notNull(),
+    segmentId: text("segment_id").notNull(),
+    segmentHash: text("segment_hash").notNull(),
+    analyzerId: text("analyzer_id").notNull(),
+    analyzerVersion: text("analyzer_version").notNull(),
+    promptVersion: text("prompt_version").notNull(),
+    status: text("status").notNull().default("completed"),
+    voiceRole: text("voice_role"),
+    prosodyJson: jsonb("prosody_json").$type<Record<string, unknown>>().notNull(),
+    rawResponseJson: jsonb("raw_response_json").$type<Record<string, unknown>>().notNull().default({}),
+    fallbackReason: text("fallback_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => ({
+    prosodyAnalysesSegmentIdx: index("prosody_analyses_segment_hash_idx").on(table.segmentHash),
+    prosodyAnalysesBookChapterIdx: index("prosody_analyses_book_chapter_idx").on(table.bookId, table.chapterHref),
+    prosodyAnalysesCacheIdx: uniqueIndex("prosody_analyses_cache_idx").on(
+      table.segmentHash,
+      table.analyzerId,
+      table.analyzerVersion,
+      table.promptVersion
+    )
+  })
+)
+
 export const audiobookChapters = pgTable(
   "audiobook_chapters",
   {

@@ -58,6 +58,8 @@ export function AudioPanel({
   )
   const activeJob = currentJob && !["completed", "failed", "cancelled"].includes(currentJob.status) ? currentJob : null
   const canRetry = currentJob?.status === "failed" || currentJob?.status === "cancelled"
+  const neutralComparisonJob = comparisonJobFor(jobs, chapter?.id, false)
+  const expressiveComparisonJob = comparisonJobFor(jobs, chapter?.id, true)
 
   useEffect(() => {
     if (!selectedVoiceId && voices[0]) {
@@ -170,6 +172,14 @@ export function AudioPanel({
         </div>
       </section>
 
+      <section className="space-y-2">
+        <h3 className="text-sm font-semibold">{t("audio.comparison")}</h3>
+        <div className="grid grid-cols-1 gap-2">
+          <ComparisonCard job={neutralComparisonJob} label={t("audio.comparison.neutral")} t={t} />
+          <ComparisonCard job={expressiveComparisonJob} label={t("audio.comparison.expressive")} t={t} />
+        </div>
+      </section>
+
       <section className="space-y-3">
         <label className="flex items-center justify-between rounded-md border bg-card p-3 text-sm">
           <span>{t("audio.autoBuild")}</span>
@@ -216,17 +226,82 @@ export function AudioPanel({
         {diagnostics.map((diagnostic) => (
           <div key={diagnostic.id} className="rounded-md border bg-card p-3">
             <div className="flex items-center justify-between gap-3 text-xs">
-              <span className="font-medium">{diagnostic.label}</span>
+              <span className="font-medium">{diagnosticLabel(diagnostic, t)}</span>
               <span className={diagnostic.status === "available" ? "text-primary" : "text-muted-foreground"}>
                 {t(`audio.diagnosticStatus.${diagnostic.status}`)}
               </span>
             </div>
-            <p className="mt-1 text-xs text-muted-foreground">{diagnostic.detail}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{diagnosticDetail(diagnostic, t)}</p>
           </div>
         ))}
       </section>
     </div>
   )
+}
+
+function ComparisonCard({ job, label, t }: { job?: TtsJob; label: string; t: TranslationFn }) {
+  const audioAssetId = jobAudioAssetId(job)
+  const durationMs = jobDurationMs(job)
+  return (
+    <div className="rounded-md border bg-card p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-medium">{label}</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {audioAssetId ? t("audio.comparison.ready", { duration: formatDuration(durationMs ?? 0) }) : t("audio.comparison.empty")}
+          </p>
+        </div>
+        {Number(job?.settings.prosodyFallbackCount ?? 0) > 0 ? (
+          <span className="shrink-0 rounded-sm bg-muted px-2 py-1 text-[11px] text-muted-foreground">{t("audio.comparison.fallback")}</span>
+        ) : null}
+      </div>
+      {audioAssetId ? (
+        <audio className="mt-3 w-full" controls preload="metadata" src={`dreamreader://asset/${encodeURIComponent(audioAssetId)}`} />
+      ) : null}
+    </div>
+  )
+}
+
+function comparisonJobFor(jobs: TtsJob[], chapterHref: string | undefined, expressive: boolean): TtsJob | undefined {
+  return jobs
+    .filter((job) => {
+      return (
+        job.chapterHref === chapterHref &&
+        job.status === "completed" &&
+        Boolean(job.settings.useExpressiveNarration) === expressive &&
+        Boolean(jobAudioAssetId(job))
+      )
+    })
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
+}
+
+function jobAudioAssetId(job: TtsJob | undefined): string | undefined {
+  return typeof job?.settings.chapterAudioAssetId === "string" ? job.settings.chapterAudioAssetId : undefined
+}
+
+function jobDurationMs(job: TtsJob | undefined): number | undefined {
+  return typeof job?.settings.chapterDurationMs === "number" ? job.settings.chapterDurationMs : undefined
+}
+
+function diagnosticLabel(diagnostic: RuntimeDiagnostic, t: TranslationFn): string {
+  return translatedOrFallback(t, `audio.diagnostic.${diagnostic.id}.label`, diagnostic.label)
+}
+
+function diagnosticDetail(diagnostic: RuntimeDiagnostic, t: TranslationFn): string {
+  if (diagnostic.id === "apple-silicon") {
+    return t(`audio.diagnostic.apple-silicon.detail.${diagnostic.status === "available" ? "available" : "fallback"}`)
+  }
+  return translatedOrFallback(t, `audio.diagnostic.${diagnostic.id}.detail`, diagnostic.detail, { detail: diagnostic.detail })
+}
+
+function translatedOrFallback(
+  t: TranslationFn,
+  key: string,
+  fallback: string,
+  values?: Record<string, string | number>
+): string {
+  const value = t(key, values)
+  return value === key ? fallback : value
 }
 
 function chapterTitleFor(book: BookDetails, chapterHref: string): string {
