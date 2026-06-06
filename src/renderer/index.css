@@ -82,6 +82,17 @@
   border-color: hsl(var(--border));
 }
 
+html,
+body,
+#root {
+  height: 100%;
+}
+
+html,
+body {
+  overflow: hidden;
+}
+
 body {
   margin: 0;
   min-width: 320px;

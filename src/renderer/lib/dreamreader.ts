@@ -4,6 +4,7 @@ import type {
   AppSettings,
   BookDetails,
   BookSummary,
+  ImportBooksResult,
   LibraryQuery,
   ReaderLocator
 } from "@renderer/types"
@@ -117,14 +118,16 @@ export const dreamreaderClient = {
     return readFallbackState().books.find((book) => book.id === bookId) ?? null
   },
 
-  async importBooks(): Promise<BookSummary[]> {
+  async importBooks(): Promise<ImportBooksResult> {
     const bridgeImport = window.dreamreader?.library?.importBooks
 
     if (bridgeImport) {
       return bridgeImport()
     }
 
-    return filterBooks(readFallbackState().books)
+    throw Object.assign(new Error("Import requires the Electron bridge"), {
+      code: "library_import_requires_app_bridge"
+    })
   },
 
   async saveProgress(locator: ReaderLocator): Promise<void> {

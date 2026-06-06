@@ -20,9 +20,13 @@ const api = {
     importFiles: (filePaths?: string[]) => invoke("library.importFiles", { filePaths }),
     updateBookMetadata: (input: Record<string, unknown>) => invoke("library.updateBookMetadata", input),
     importBooks: async () => {
-      await invoke("library.importFiles", {})
+      const imported = await invoke<{ imported: unknown[]; skipped: unknown[] }>("library.importFiles", {})
       const result = await invoke<{ books: unknown[]; total: number }>("library.listBooks", {})
-      return result.books.map(toRendererBookSummary)
+      return {
+        books: result.books.map(toRendererBookSummary),
+        importedCount: imported.imported.length,
+        skipped: imported.skipped
+      }
     },
     listBooks: async (query?: { search?: string } | string) => {
       const search = typeof query === "string" ? query : query?.search
@@ -188,7 +192,8 @@ function toRendererBookSummary(input: unknown) {
     progress,
     tags: [],
     updatedAt: String(book.updatedAt ?? new Date().toISOString()),
-    coverColor: colorFromId(String(book.id ?? book.title ?? "book"))
+    coverColor: colorFromId(String(book.id ?? book.title ?? "book")),
+    coverImageUrl: optionalString(book.coverImageUrl)
   }
 }
 
@@ -243,6 +248,7 @@ function rendererSettingsToCanonical(input: { locale: string; appearance: string
 
 function htmlToPlainText(html: string): string {
   return html
+    .replace(/<head[\s\S]*?<\/head>/gi, "")
     .replace(/<script[\s\S]*?<\/script>/gi, "")
     .replace(/<style[\s\S]*?<\/style>/gi, "")
     .replace(/<\/(p|div|section|article|h1|h2|h3|li)>/gi, "\n\n")

@@ -25,6 +25,14 @@ export default defineConfig({
         "@preload": resolve("src/preload"),
         "@shared": resolve("src/shared")
       }
+    },
+    build: {
+      rollupOptions: {
+        output: {
+          entryFileNames: "[name].cjs",
+          format: "cjs"
+        }
+      }
     }
   },
   renderer: {
@@ -37,4 +45,3 @@ export default defineConfig({
     }
   }
 })
-

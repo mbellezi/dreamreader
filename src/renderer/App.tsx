@@ -23,7 +23,7 @@ import {
   Sun,
   Trash2
 } from "lucide-react"
-import { useCallback, useEffect, useMemo, useState, type ReactElement } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react"
 import { translate } from "@renderer/i18n"
 import { dreamreaderClient } from "@renderer/lib/dreamreader"
 import { clamp, cn, formatAuthors } from "@renderer/lib/utils"
@@ -42,6 +42,10 @@ import type {
 type AppView = "library" | "reader" | "settings"
 type LibraryMode = "grid" | "list"
 type InspectorTab = "summary" | "annotations" | "preferences"
+type LibraryStatus = {
+  tone: "info" | "success" | "warning" | "error"
+  message: string
+}
 
 const themeOptions: AppearanceTheme[] = ["light", "dark", "sepia", "contrast"]
 const colorOptions: HighlightColor[] = ["yellow", "green", "blue", "rose"]
@@ -66,6 +70,8 @@ export function App(): ReactElement {
   const [search, setSearch] = useState("")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const [libraryStatus, setLibraryStatus] = useState<LibraryStatus | null>(null)
   const [annotationDraft, setAnnotationDraft] = useState(emptyAnnotation)
   const [exportContent, setExportContent] = useState("")
   const [settingsSaved, setSettingsSaved] = useState(false)
@@ -151,8 +157,50 @@ export function App(): ReactElement {
   }
 
   const importBooks = async () => {
-    const importedBooks = await dreamreaderClient.importBooks()
-    setBooks(importedBooks)
+    setImporting(true)
+    setLibraryStatus({ tone: "info", message: t("library.importing") })
+
+    try {
+      const result = await dreamreaderClient.importBooks()
+      setBooks(result.books)
+
+      if (result.importedCount > 0 && result.skipped.length === 0) {
+        setLibraryStatus({
+          tone: "success",
+          message: t("library.importSuccess", { count: result.importedCount })
+        })
+        return
+      }
+
+      if (result.importedCount > 0 && result.skipped.length > 0) {
+        setLibraryStatus({
+          tone: "warning",
+          message: t("library.importPartial", {
+            imported: result.importedCount,
+            skipped: result.skipped.length
+          })
+        })
+        return
+      }
+
+      if (result.skipped.length > 0) {
+        setLibraryStatus({
+          tone: result.skipped.every((item) => item.reason === "duplicate") ? "info" : "error",
+          message: t(`library.importSkipped.${result.skipped[0].reason}`, { count: result.skipped.length })
+        })
+        return
+      }
+
+      setLibraryStatus({ tone: "info", message: t("library.importNoSelection") })
+    } catch (caught) {
+      const code = errorCode(caught)
+      setLibraryStatus({
+        tone: "error",
+        message: code === "library_import_requires_app_bridge" ? t("library.importUnavailable") : t("library.importFailed")
+      })
+    } finally {
+      setImporting(false)
+    }
   }
 
   const changeChapter = (direction: -1 | 1) => {
@@ -231,12 +279,12 @@ export function App(): ReactElement {
     setSettingsSaved(true)
   }
 
-  const shellClass = cn("min-h-screen bg-background text-foreground", settings?.appearance && `theme-${settings.appearance}`)
+  const shellClass = cn("h-screen overflow-hidden bg-background text-foreground", settings?.appearance && `theme-${settings.appearance}`)
 
   if (loading || !settings) {
     return (
       <main className={shellClass}>
-        <div className="flex min-h-screen items-center justify-center">
+        <div className="flex h-full items-center justify-center">
           <div className="flex items-center gap-3 rounded-md border bg-card px-4 py-3 text-sm text-muted-foreground shadow-sm">
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
             <span>{t("common.loading")}</span>
@@ -249,7 +297,7 @@ export function App(): ReactElement {
   if (error) {
     return (
       <main className={shellClass}>
-        <div className="flex min-h-screen items-center justify-center px-6">
+        <div className="flex h-full items-center justify-center px-6">
           <div className="w-full max-w-md rounded-md border bg-card p-5 shadow-sm">
             <h1 className="text-lg font-semibold">{t("common.error")}</h1>
             <button className="mt-4 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground" onClick={loadInitialData}>
@@ -263,7 +311,7 @@ export function App(): ReactElement {
 
   return (
     <main className={shellClass}>
-      <div className="flex min-h-screen flex-col">
+      <div className="flex h-full min-h-0 flex-col overflow-hidden">
         <header className="flex h-14 shrink-0 items-center justify-between border-b bg-background/95 px-4">
           <div className="flex items-center gap-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary text-primary-foreground">
@@ -287,9 +335,11 @@ export function App(): ReactElement {
               expanded
               books={books}
               count={filteredCount}
+              importing={importing}
               mode={libraryMode}
               search={search}
               selectedBookId={selectedBook?.id}
+              status={libraryStatus}
               t={t}
               onImport={importBooks}
               onModeChange={setLibraryMode}
@@ -298,7 +348,7 @@ export function App(): ReactElement {
             />
           </div>
         ) : (
-          <div className="grid flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[minmax(0,1fr)_340px]">
+          <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[minmax(0,1fr)_340px]">
             <ReaderPane
               book={selectedBook}
               chapter={currentChapter}
@@ -388,9 +438,11 @@ function LibraryPane({
   expanded = false,
   books,
   count,
+  importing,
   mode,
   search,
   selectedBookId,
+  status,
   t,
   onImport,
   onModeChange,
@@ -400,9 +452,11 @@ function LibraryPane({
   expanded?: boolean
   books: BookSummary[]
   count: number
+  importing: boolean
   mode: LibraryMode
   search: string
   selectedBookId?: string
+  status: LibraryStatus | null
   t: (key: string, values?: Record<string, string | number>) => string
   onImport: () => void
   onModeChange: (mode: LibraryMode) => void
@@ -410,8 +464,8 @@ function LibraryPane({
   onSelectBook: (bookId: string) => void
 }) {
   return (
-    <aside className={cn("flex min-h-[420px] flex-col bg-sidebar", expanded ? "h-full" : "border-r")}>
-      <div className="border-b p-4">
+    <aside className={cn("flex h-full min-h-0 flex-col overflow-hidden bg-sidebar", expanded ? "" : "border-r")}>
+      <div className="shrink-0 border-b p-4">
         <div className="flex items-start justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold">{t("library.title")}</h2>
@@ -419,12 +473,27 @@ function LibraryPane({
           </div>
           <button
             className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground"
+            disabled={importing}
             onClick={onImport}
           >
-            <Plus className="h-4 w-4" aria-hidden="true" />
-            {t("library.import")}
+            {importing ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Plus className="h-4 w-4" aria-hidden="true" />}
+            {importing ? t("library.importingShort") : t("library.import")}
           </button>
         </div>
+
+        {status ? (
+          <div
+            className={cn(
+              "mt-3 rounded-md border px-3 py-2 text-sm",
+              status.tone === "success" && "border-emerald-200 bg-emerald-50 text-emerald-900",
+              status.tone === "warning" && "border-amber-200 bg-amber-50 text-amber-900",
+              status.tone === "error" && "border-rose-200 bg-rose-50 text-rose-900",
+              status.tone === "info" && "border-border bg-background text-muted-foreground"
+            )}
+          >
+            {status.message}
+          </div>
+        ) : null}
 
         <label className="mt-4 block text-xs font-medium text-muted-foreground" htmlFor="library-search">
           {t("library.searchLabel")}
@@ -495,10 +564,18 @@ function BookCard({
       onClick={onSelect}
     >
       <div
-        className={cn("flex shrink-0 items-end rounded-sm p-2 text-primary-foreground shadow-inner", mode === "grid" ? "mb-3 h-28 w-full" : "h-20 w-14")}
+        className={cn(
+          "flex shrink-0 items-end overflow-hidden rounded-sm text-primary-foreground shadow-inner",
+          mode === "grid" ? "mb-3 h-36 w-full" : "h-24 w-16",
+          !book.coverImageUrl && "p-2"
+        )}
         style={{ backgroundColor: book.coverColor }}
       >
-        <FileText className="h-5 w-5" aria-hidden="true" />
+        {book.coverImageUrl ? (
+          <img className="h-full w-full object-contain" src={book.coverImageUrl} alt="" />
+        ) : (
+          <FileText className="h-5 w-5" aria-hidden="true" />
+        )}
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-start justify-between gap-2">
@@ -541,11 +618,19 @@ function ReaderPane({
   onNext: () => void
   onPrevious: () => void
 }) {
+  const articleRef = useRef<HTMLElement | null>(null)
   const progress = book?.chapters.length ? Math.round(((chapterIndex + 1) / book.chapters.length) * 100) : 0
-  const paragraphs = useMemo(() => chapter?.text.split("\n\n") ?? [], [chapter])
+  const paragraphs = useMemo(
+    () => chapter?.text.split(/\n{2,}/).map((paragraph) => paragraph.trim()).filter(Boolean) ?? [],
+    [chapter]
+  )
+
+  useEffect(() => {
+    articleRef.current?.scrollTo({ top: 0, left: 0 })
+  }, [book?.id, chapter?.id])
 
   return (
-    <section className={cn("min-h-[520px] overflow-hidden bg-reader", `reader-${preferences.theme}`)}>
+    <section className={cn("h-full min-h-0 overflow-hidden bg-reader", `reader-${preferences.theme}`)}>
       {book && chapter ? (
         <div className="flex h-full flex-col">
           <div className="flex h-14 shrink-0 items-center justify-between gap-3 border-b bg-background/85 px-4">
@@ -571,7 +656,7 @@ function ReaderPane({
             <div className="h-full bg-primary" style={{ width: `${progress}%` }} />
           </div>
 
-          <article className="min-h-0 flex-1 overflow-auto px-5 py-8">
+          <article ref={articleRef} className="min-h-0 flex-1 overflow-auto px-5 py-8">
             <div
               className="mx-auto"
               style={{
@@ -605,7 +690,7 @@ function ReaderPane({
           </div>
         </div>
       ) : (
-        <div className="flex h-full min-h-[520px] items-center justify-center p-6">
+        <div className="flex h-full min-h-0 items-center justify-center p-6">
           <div className="max-w-sm text-center">
             <BookOpen className="mx-auto h-10 w-10 text-muted-foreground" aria-hidden="true" />
             <h2 className="mt-4 text-lg font-semibold">{t("reader.noBook")}</h2>
@@ -651,105 +736,109 @@ function InspectorPane({
   onSaveAnnotation: () => void
 }) {
   return (
-    <aside className="flex min-h-[420px] flex-col border-l bg-sidebar">
-      <div className="grid grid-cols-3 border-b p-2">
+    <aside className="flex h-full min-h-0 flex-col overflow-hidden border-l bg-sidebar">
+      <div className="grid shrink-0 grid-cols-3 border-b p-2">
         <IconToggle active={activeTab === "summary"} icon={PanelRight} label={t("reader.summary")} onClick={() => onChangeTab("summary")} />
         <IconToggle active={activeTab === "annotations"} icon={Highlighter} label={t("reader.annotations")} onClick={() => onChangeTab("annotations")} />
         <IconToggle active={activeTab === "preferences"} icon={SlidersHorizontal} label={t("reader.preferences")} onClick={() => onChangeTab("preferences")} />
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto p-4">
+      <div className="min-h-0 flex-1 overflow-hidden p-4">
         {activeTab === "summary" ? (
-          <div className="space-y-2">
-            <h2 className="text-sm font-semibold">{t("reader.summary")}</h2>
-            {book?.chapters.map((chapter, index) => (
-              <button
-                key={chapter.id}
-                className={cn(
-                  "flex w-full items-center justify-between rounded-md border bg-card px-3 py-2 text-left text-sm",
-                  index === chapterIndex && "border-primary text-primary"
-                )}
-                onClick={() => onJumpToChapter(index)}
-              >
-                <span className="truncate">{chapter.title}</span>
-                {index === chapterIndex ? <Check className="h-4 w-4" aria-hidden="true" /> : null}
-              </button>
-            ))}
+          <div className="flex h-full min-h-0 flex-col">
+            <h2 className="shrink-0 text-sm font-semibold">{t("reader.summary")}</h2>
+            <div className="mt-2 min-h-0 flex-1 space-y-2 overflow-auto pr-1">
+              {book?.chapters.map((chapter, index) => (
+                <button
+                  key={chapter.id}
+                  className={cn(
+                    "flex w-full items-center justify-between rounded-md border bg-card px-3 py-2 text-left text-sm",
+                    index === chapterIndex && "border-primary text-primary"
+                  )}
+                  onClick={() => onJumpToChapter(index)}
+                >
+                  <span className="truncate">{chapter.title}</span>
+                  {index === chapterIndex ? <Check className="h-4 w-4" aria-hidden="true" /> : null}
+                </button>
+              ))}
+            </div>
           </div>
         ) : null}
 
         {activeTab === "annotations" ? (
-          <div className="space-y-4">
-            <div className="space-y-3 rounded-md border bg-card p-3">
-              <h2 className="text-sm font-semibold">{t("reader.note")}</h2>
-              <div className="grid grid-cols-2 gap-2">
-                <SelectField
-                  label={t("reader.annotations")}
-                  value={annotationDraft.kind}
-                  onChange={(value) => onChangeDraft({ ...annotationDraft, kind: value as AnnotationKind })}
-                  options={kindOptions.map((kind) => ({ value: kind, label: t(`reader.kind.${kind}`) }))}
+          <div className="h-full min-h-0 overflow-auto pr-1">
+            <div className="space-y-4">
+              <div className="space-y-3 rounded-md border bg-card p-3">
+                <h2 className="text-sm font-semibold">{t("reader.note")}</h2>
+                <div className="grid grid-cols-2 gap-2">
+                  <SelectField
+                    label={t("reader.annotations")}
+                    value={annotationDraft.kind}
+                    onChange={(value) => onChangeDraft({ ...annotationDraft, kind: value as AnnotationKind })}
+                    options={kindOptions.map((kind) => ({ value: kind, label: t(`reader.kind.${kind}`) }))}
+                  />
+                  <SelectField
+                    label={t("reader.theme")}
+                    value={annotationDraft.color}
+                    onChange={(value) => onChangeDraft({ ...annotationDraft, color: value as HighlightColor })}
+                    options={colorOptions.map((color) => ({ value: color, label: t(`reader.color.${color}`) }))}
+                  />
+                </div>
+                <TextAreaField
+                  label={t("reader.annotationExcerpt")}
+                  placeholder={t("reader.annotationExcerptPlaceholder")}
+                  value={annotationDraft.excerpt}
+                  onChange={(value) => onChangeDraft({ ...annotationDraft, excerpt: value })}
                 />
-                <SelectField
-                  label={t("reader.theme")}
-                  value={annotationDraft.color}
-                  onChange={(value) => onChangeDraft({ ...annotationDraft, color: value as HighlightColor })}
-                  options={colorOptions.map((color) => ({ value: color, label: t(`reader.color.${color}`) }))}
+                <TextAreaField
+                  label={t("reader.annotationNote")}
+                  placeholder={t("reader.annotationNotePlaceholder")}
+                  value={annotationDraft.note}
+                  onChange={(value) => onChangeDraft({ ...annotationDraft, note: value })}
                 />
+                <button className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground" onClick={onSaveAnnotation}>
+                  <Star className="h-4 w-4" aria-hidden="true" />
+                  {t("reader.saveAnnotation")}
+                </button>
               </div>
-              <TextAreaField
-                label={t("reader.annotationExcerpt")}
-                placeholder={t("reader.annotationExcerptPlaceholder")}
-                value={annotationDraft.excerpt}
-                onChange={(value) => onChangeDraft({ ...annotationDraft, excerpt: value })}
-              />
-              <TextAreaField
-                label={t("reader.annotationNote")}
-                placeholder={t("reader.annotationNotePlaceholder")}
-                value={annotationDraft.note}
-                onChange={(value) => onChangeDraft({ ...annotationDraft, note: value })}
-              />
-              <button className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground" onClick={onSaveAnnotation}>
-                <Star className="h-4 w-4" aria-hidden="true" />
-                {t("reader.saveAnnotation")}
+
+              <button className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-md border bg-card px-3 text-sm" onClick={onExportNotes} disabled={!book}>
+                <Download className="h-4 w-4" aria-hidden="true" />
+                {t("reader.export")}
               </button>
-            </div>
 
-            <button className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-md border bg-card px-3 text-sm" onClick={onExportNotes} disabled={!book}>
-              <Download className="h-4 w-4" aria-hidden="true" />
-              {t("reader.export")}
-            </button>
+              {exportContent ? (
+                <div className="rounded-md border bg-card p-3">
+                  <h3 className="text-sm font-semibold">{t("reader.exportReady")}</h3>
+                  <p className="mt-1 text-xs text-muted-foreground">{t("reader.exportDescription")}</p>
+                  <textarea className="mt-3 h-36 w-full resize-none rounded-md border bg-background p-2 text-xs outline-none" readOnly value={exportContent} />
+                </div>
+              ) : null}
 
-            {exportContent ? (
-              <div className="rounded-md border bg-card p-3">
-                <h3 className="text-sm font-semibold">{t("reader.exportReady")}</h3>
-                <p className="mt-1 text-xs text-muted-foreground">{t("reader.exportDescription")}</p>
-                <textarea className="mt-3 h-36 w-full resize-none rounded-md border bg-background p-2 text-xs outline-none" readOnly value={exportContent} />
-              </div>
-            ) : null}
-
-            <div className="space-y-2">
-              {annotations.length ? (
-                annotations.map((annotation) => (
-                  <div key={annotation.id} className={cn("rounded-md border bg-card p-3", `annotation-${annotation.color}`)}>
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-xs font-medium">{t(`reader.kind.${annotation.kind}`)}</span>
-                      <button className="rounded-sm p-1 text-muted-foreground hover:text-destructive" title={t("reader.deleteAnnotation")} onClick={() => onDeleteAnnotation(annotation.id)}>
-                        <Trash2 className="h-4 w-4" aria-hidden="true" />
-                      </button>
+              <div className="space-y-2">
+                {annotations.length ? (
+                  annotations.map((annotation) => (
+                    <div key={annotation.id} className={cn("rounded-md border bg-card p-3", `annotation-${annotation.color}`)}>
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-xs font-medium">{t(`reader.kind.${annotation.kind}`)}</span>
+                        <button className="rounded-sm p-1 text-muted-foreground hover:text-destructive" title={t("reader.deleteAnnotation")} onClick={() => onDeleteAnnotation(annotation.id)}>
+                          <Trash2 className="h-4 w-4" aria-hidden="true" />
+                        </button>
+                      </div>
+                      <p className="mt-2 text-sm">{annotation.excerpt}</p>
+                      {annotation.note ? <p className="mt-2 text-xs text-muted-foreground">{annotation.note}</p> : null}
                     </div>
-                    <p className="mt-2 text-sm">{annotation.excerpt}</p>
-                    {annotation.note ? <p className="mt-2 text-xs text-muted-foreground">{annotation.note}</p> : null}
-                  </div>
-                ))
-              ) : (
-                <p className="rounded-md border bg-card p-3 text-sm text-muted-foreground">{t("reader.emptyAnnotations")}</p>
-              )}
+                  ))
+                ) : (
+                  <p className="rounded-md border bg-card p-3 text-sm text-muted-foreground">{t("reader.emptyAnnotations")}</p>
+                )}
+              </div>
             </div>
           </div>
         ) : null}
 
         {activeTab === "preferences" ? (
-          <div className="space-y-5">
+          <div className="h-full min-h-0 space-y-5 overflow-auto pr-1">
             <h2 className="text-sm font-semibold">{t("reader.preferences")}</h2>
             <SelectField
               label={t("reader.theme")}
@@ -960,4 +1049,10 @@ function SliderField({
       <input className="w-full accent-primary" type="range" min={min} max={max} value={value} onChange={(event) => onChange(Number(event.target.value))} />
     </label>
   )
+}
+
+function errorCode(error: unknown): string | undefined {
+  return typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
+    ? error.code
+    : undefined
 }

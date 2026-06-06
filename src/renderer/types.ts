@@ -22,6 +22,7 @@ export type BookSummary = {
   collection?: string
   updatedAt: string
   coverColor: string
+  coverImageUrl?: string
 }
 
 export type Chapter = {
@@ -73,13 +74,25 @@ export type LibraryQuery = {
   search: string
 }
 
+export type ImportSkippedItem = {
+  path: string
+  reason: "duplicate" | "unsupported_type" | "invalid_file" | "failed"
+  existingBookId?: string
+}
+
+export type ImportBooksResult = {
+  books: BookSummary[]
+  importedCount: number
+  skipped: ImportSkippedItem[]
+}
+
 export type AnnotationDraft = Omit<Annotation, "id" | "createdAt">
 
 export type DreamReaderBridge = {
   library?: {
     listBooks?: (query?: LibraryQuery) => Promise<BookSummary[]>
     getBook?: (bookId: string) => Promise<BookDetails | null>
-    importBooks?: () => Promise<BookSummary[]>
+    importBooks?: () => Promise<ImportBooksResult>
     updateBookMetadata?: (input: Record<string, unknown>) => Promise<unknown>
   }
   reader?: {

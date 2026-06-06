@@ -3,6 +3,7 @@ import path from "node:path"
 import { getDatabase } from "@main/db/client"
 import { registerIpc } from "@main/ipc/register"
 import { getAppPaths } from "@main/lib/paths"
+import { registerAssetProtocol } from "@main/protocol/asset-protocol"
 import { AudiobookService } from "@main/services/audiobook-service"
 import { LibraryService } from "@main/services/library-service"
 import { RuntimeService } from "@main/services/runtime-service"
@@ -25,6 +26,7 @@ let mainWindow: BrowserWindow | undefined
 async function createWindow() {
   const paths = getAppPaths()
   const db = await getDatabase({ rootDir: app.getAppPath(), dbDir: paths.dbDir })
+  registerAssetProtocol(db)
   registerIpc({
     library: new LibraryService(db, paths),
     runtime: new RuntimeService(),
@@ -41,7 +43,7 @@ async function createWindow() {
     show: false,
     title: "DreamReader",
     webPreferences: {
-      preload: path.join(__dirname, "../preload/index.js"),
+      preload: path.join(__dirname, "../preload/index.cjs"),
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false

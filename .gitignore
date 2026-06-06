@@ -8,3 +8,4 @@ release/
 .env
 .env.*
 coverage/
+*.epub

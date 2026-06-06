@@ -5,7 +5,7 @@ import { XMLParser } from "fast-xml-parser"
 import JSZip from "jszip"
 import { marked } from "marked"
 import { AppDatabase } from "@main/db/client"
-import { annotations, bookmarks, books, readingPositions, settings } from "@main/db/schema"
+import { annotations, assets, bookmarks, books, readingPositions, settings } from "@main/db/schema"
 import { AppPaths } from "@main/lib/paths"
 import { hashBuffer, hashFile } from "@main/lib/hash"
 import { createId } from "@main/lib/ids"
@@ -29,6 +29,11 @@ export type ReaderManifest = {
   language: string
   chapters: ReaderChapter[]
   tableOfContents: Array<{ href: string; title: string }>
+  cover?: {
+    href: string
+    mediaType: string
+    assetId?: string
+  }
 }
 
 export type ImportResult = {
@@ -47,6 +52,12 @@ const parser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: "",
   textNodeName: "text"
+})
+
+const navigationParser = new XMLParser({
+  ignoreAttributes: false,
+  attributeNamePrefix: "",
+  textNodeName: "#text"
 })
 
 export class LibraryService {
@@ -74,7 +85,8 @@ export class LibraryService {
           where: eq(books.contentHash, contentHash)
         })
         if (existing) {
-          skippedItems.push({ path: filePath, reason: "duplicate", existingBookId: existing.id })
+          const manifest = await this.extractManifest(filePath, fileType, parsed.name)
+          importedBooks.push(toBookContract(await this.refreshExistingBook(existing, filePath, manifest)))
           continue
         }
 
@@ -98,7 +110,28 @@ export class LibraryService {
           })
           .returning()
 
-        importedBooks.push(toBookContract(inserted))
+        const coverAsset = manifest.cover ? await this.storeEpubCover(filePath, bookId, manifest.cover) : undefined
+        const bookRow = coverAsset
+          ? (
+            await this.db
+              .update(books)
+              .set({
+                coverAssetId: coverAsset.id,
+                manifestJson: {
+                  ...manifest,
+                  cover: {
+                    ...manifest.cover,
+                    assetId: coverAsset.id
+                  }
+                },
+                updatedAt: new Date()
+              })
+              .where(eq(books.id, inserted.id))
+              .returning()
+          )[0]
+          : inserted
+
+        importedBooks.push(toBookContract(bookRow))
       } catch (error) {
         skippedItems.push({
           path: filePath,
@@ -108,6 +141,37 @@ export class LibraryService {
     }
 
     return { imported: importedBooks, skipped: skippedItems }
+  }
+
+  private async refreshExistingBook(
+    existing: typeof books.$inferSelect,
+    filePath: string,
+    manifest: ReaderManifest
+  ): Promise<typeof books.$inferSelect> {
+    const coverAsset = manifest.cover ? await this.storeEpubCover(filePath, existing.id, manifest.cover) : undefined
+    const nextManifest = coverAsset
+      ? {
+        ...manifest,
+        cover: {
+          ...manifest.cover,
+          assetId: coverAsset.id
+        }
+      }
+      : manifest
+    const [updated] = await this.db
+      .update(books)
+      .set({
+        title: manifest.title,
+        authors: manifest.authors,
+        language: manifest.language,
+        originalPath: filePath,
+        coverAssetId: coverAsset?.id ?? existing.coverAssetId,
+        manifestJson: nextManifest,
+        updatedAt: new Date()
+      })
+      .where(eq(books.id, existing.id))
+      .returning()
+    return updated
   }
 
   async listBooks(query?: string): Promise<{ books: unknown[]; total: number }> {
@@ -409,7 +473,7 @@ export class LibraryService {
 
   private async extractEpub(filePath: string, fallbackTitle: string): Promise<ReaderManifest> {
     const zip = await JSZip.loadAsync(await readFile(filePath))
-    const containerFile = zip.file("META-INF/container.xml")
+    const containerFile = findZipFile(zip, "META-INF/container.xml")
     if (!containerFile) {
       throw new AppError("invalid_epub", "EPUB container not found")
     }
@@ -420,7 +484,7 @@ export class LibraryService {
       throw new AppError("invalid_epub", "EPUB rootfile not found")
     }
 
-    const opfFile = zip.file(rootfilePath)
+    const opfFile = findZipFile(zip, rootfilePath)
     if (!opfFile) {
       throw new AppError("invalid_epub", "EPUB package not found")
     }
@@ -437,29 +501,16 @@ export class LibraryService {
     const itemById = new Map(manifestItems.map((item) => [item.id, item]))
     const spine = arrayify<Record<string, string>>(opf?.package?.spine?.itemref)
     const baseDir = path.posix.dirname(rootfilePath)
-    const chapters: ReaderChapter[] = []
+    const coverItem = findEpubCoverItem(metadata, manifestItems)
+    const tocEntries = await this.extractEpubToc(zip, baseDir, manifestItems, String(opf?.package?.spine?.toc ?? ""))
+    let chapters: ReaderChapter[] = []
 
-    for (const [index, itemref] of spine.entries()) {
-      const manifestItem = itemById.get(itemref.idref)
-      if (!manifestItem || !manifestItem.mediaType?.includes("html")) {
-        continue
-      }
-      const fullPath = path.posix.normalize(path.posix.join(baseDir, manifestItem.href))
-      const chapterFile = zip.file(fullPath)
-      if (!chapterFile) {
-        continue
-      }
-      const content = await chapterFile.async("text")
-      const title = extractTitle(content) ?? manifestItem.id ?? `Capitulo ${index + 1}`
-      chapters.push({
-        id: manifestItem.id,
-        href: manifestItem.href,
-        title,
-        content,
-        mediaType: manifestItem.mediaType,
-        progressionStart: index / Math.max(spine.length, 1),
-        progressionEnd: (index + 1) / Math.max(spine.length, 1)
-      })
+    if (tocEntries.length) {
+      chapters = await this.extractChaptersFromToc(zip, baseDir, tocEntries)
+    }
+
+    if (!chapters.length) {
+      chapters = await this.extractChaptersFromSpine(zip, baseDir, spine, itemById, manifestItems)
     }
 
     if (!chapters.length) {
@@ -475,8 +526,149 @@ export class LibraryService {
       authors: creators,
       language,
       chapters,
-      tableOfContents: chapters.map((chapter) => ({ href: chapter.href, title: chapter.title }))
+      tableOfContents: chapters.map((chapter) => ({ href: chapter.href, title: chapter.title })),
+      cover: coverItem
+        ? {
+          href: resolveEpubPath(baseDir, coverItem.href),
+          mediaType: coverItem.mediaType
+        }
+        : undefined
     }
+  }
+
+  private async extractChaptersFromSpine(
+    zip: JSZip,
+    baseDir: string,
+    spine: Array<Record<string, string>>,
+    itemById: Map<string, EpubManifestItem>,
+    manifestItems: EpubManifestItem[]
+  ): Promise<ReaderChapter[]> {
+    const chapters: ReaderChapter[] = []
+    const spineItems = spine
+      .map((itemref) => itemById.get(itemref.idref))
+      .filter((item): item is EpubManifestItem => Boolean(item && isHtmlMediaType(item.mediaType)))
+    const readableItems = spineItems.length
+      ? spineItems
+      : manifestItems.filter((item) => isHtmlMediaType(item.mediaType))
+
+    for (const [index, manifestItem] of readableItems.entries()) {
+      const fullPath = resolveEpubPath(baseDir, manifestItem.href)
+      const chapterFile = findZipFile(zip, fullPath)
+      if (!chapterFile) {
+        continue
+      }
+      const content = await chapterFile.async("text")
+      const title = extractTitle(content) ?? manifestItem.id ?? `Capitulo ${index + 1}`
+      chapters.push({
+        id: manifestItem.id,
+        href: fullPath,
+        title,
+        content,
+        mediaType: manifestItem.mediaType,
+        progressionStart: index / Math.max(readableItems.length, 1),
+        progressionEnd: (index + 1) / Math.max(readableItems.length, 1)
+      })
+    }
+    return chapters
+  }
+
+  private async extractEpubToc(
+    zip: JSZip,
+    baseDir: string,
+    manifestItems: EpubManifestItem[],
+    spineTocId: string
+  ): Promise<Array<{ title: string; href: string }>> {
+    const ncxItem =
+      manifestItems.find((item) => item.id === spineTocId) ??
+      manifestItems.find((item) => item.mediaType === "application/x-dtbncx+xml")
+    if (!ncxItem) {
+      return []
+    }
+    const ncxFile = findZipFile(zip, resolveEpubPath(baseDir, ncxItem.href))
+    if (!ncxFile) {
+      return []
+    }
+    const ncx = navigationParser.parse(await ncxFile.async("text"))
+    const navPoints = flattenNavPoints(ncx?.ncx?.navMap?.navPoint)
+    return navPoints
+      .map((point) => ({
+        title: navPointLabel(point),
+        href: navPointHref(point)
+      }))
+      .filter((item) => item.title && item.href)
+      .map((item) => ({
+        title: item.title,
+        href: normalizeEpubTocHref(baseDir, item.href)
+      }))
+  }
+
+  private async extractChaptersFromToc(
+    zip: JSZip,
+    baseDir: string,
+    tocEntries: Array<{ title: string; href: string }>
+  ): Promise<ReaderChapter[]> {
+    const chapters: ReaderChapter[] = []
+    const htmlByPath = new Map<string, string>()
+
+    for (const [index, entry] of tocEntries.entries()) {
+      const parsed = splitHref(entry.href)
+      const chapterFile = findZipFile(zip, parsed.filePath)
+      if (!chapterFile || !isHtmlPath(parsed.filePath)) {
+        continue
+      }
+
+      const html = htmlByPath.get(parsed.filePath) ?? await chapterFile.async("text")
+      htmlByPath.set(parsed.filePath, html)
+      const nextEntry = tocEntries.slice(index + 1).map((item) => splitHref(item.href)).find((item) => item.filePath === parsed.filePath)
+      const startIndex = parsed.fragment ? findAnchorIndex(html, parsed.fragment) ?? 0 : bodyStartIndex(html)
+      const endIndex = nextEntry?.fragment ? findAnchorIndex(html, nextEntry.fragment) ?? html.length : html.length
+      const content = html.slice(startIndex, Math.max(startIndex, endIndex))
+
+      if (!htmlToReadableText(content)) {
+        continue
+      }
+
+      chapters.push({
+        id: parsed.fragment ? `${parsed.filePath}#${parsed.fragment}` : parsed.filePath,
+        href: parsed.fragment ? `${parsed.filePath}#${parsed.fragment}` : parsed.filePath,
+        title: entry.title,
+        content,
+        mediaType: "application/xhtml+xml",
+        progressionStart: index / Math.max(tocEntries.length, 1),
+        progressionEnd: (index + 1) / Math.max(tocEntries.length, 1)
+      })
+    }
+    return chapters
+  }
+
+  private async storeEpubCover(
+    epubPath: string,
+    bookId: string,
+    cover: { href: string; mediaType: string }
+  ): Promise<typeof assets.$inferSelect | undefined> {
+    const zip = await JSZip.loadAsync(await readFile(epubPath))
+    const coverFile = findZipFile(zip, cover.href)
+    if (!coverFile) {
+      return undefined
+    }
+    const buffer = await coverFile.async("nodebuffer")
+    const contentHash = hashBuffer(buffer)
+    const extension = extensionForMimeType(cover.mediaType) ?? (path.extname(cover.href).replace(".", "") || "bin")
+    const coverPath = path.join(this.paths.coversDir, `${contentHash}.${extension}`)
+    await writeFile(coverPath, buffer)
+    const [asset] = await this.db
+      .insert(assets)
+      .values({
+        id: createId("asset"),
+        kind: "cover",
+        bookId,
+        path: coverPath,
+        mimeType: cover.mediaType,
+        contentHash,
+        sizeBytes: buffer.byteLength
+      })
+      .returning()
+    return asset
   }
 }
 
@@ -492,6 +684,121 @@ function toHtml(raw: string, fileType: string): string {
     .map((paragraph) => `<p>${paragraph.replaceAll("\n", "<br />")}</p>`)
     .join("\n")
   return `<article>${escaped}</article>`
+}
+
+function findEpubCoverItem(metadata: Record<string, unknown>, manifestItems: EpubManifestItem[]): EpubManifestItem | undefined {
+  const coverMeta = arrayify<Record<string, string>>(metadata.meta as Record<string, string> | Array<Record<string, string>> | undefined)
+    .find((item) => item.name === "cover" && item.content)
+  return (
+    manifestItems.find((item) => item.id === coverMeta?.content) ??
+    manifestItems.find((item) => item.properties?.split(/\s+/).includes("cover-image")) ??
+    manifestItems.find((item) => item.id.toLocaleLowerCase("en-US").includes("cover") && item.mediaType?.startsWith("image/"))
+  )
+}
+
+function findZipFile(zip: JSZip, filePath: string) {
+  const cleanPath = filePath.replace(/^\/+/, "")
+  const candidates = new Set([
+    cleanPath,
+    path.posix.normalize(cleanPath),
+    decodePathSafely(cleanPath),
+    decodePathSafely(path.posix.normalize(cleanPath))
+  ])
+
+  for (const candidate of candidates) {
+    const file = zip.file(candidate)
+    if (file) {
+      return file
+    }
+  }
+
+  return null
+}
+
+function resolveEpubPath(baseDir: string, href: string): string {
+  const decodedHref = decodePathSafely(href)
+  return path.posix.normalize(path.posix.join(baseDir, decodedHref)).replace(/^\/+/, "")
+}
+
+function normalizeEpubTocHref(baseDir: string, href: string): string {
+  const [filePath, fragment] = href.split("#")
+  const resolvedPath = resolveEpubPath(baseDir, filePath)
+  return fragment ? `${resolvedPath}#${decodePathSafely(fragment)}` : resolvedPath
+}
+
+function splitHref(href: string): { filePath: string; fragment?: string } {
+  const [filePath, fragment] = href.split("#")
+  return {
+    filePath,
+    fragment
+  }
+}
+
+function decodePathSafely(value: string): string {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
+}
+
+function isHtmlMediaType(mediaType?: string): boolean {
+  return Boolean(mediaType?.includes("html") || mediaType?.includes("xhtml"))
+}
+
+function isHtmlPath(filePath: string): boolean {
+  return /\.(?:xhtml|html?|xml)$/i.test(filePath)
+}
+
+function flattenNavPoints(value: unknown): Array<Record<string, unknown>> {
+  return arrayify(value as Record<string, unknown> | Array<Record<string, unknown>> | undefined).flatMap((point) => [
+    point,
+    ...flattenNavPoints(point.navPoint)
+  ])
+}
+
+function navPointLabel(point: Record<string, unknown>): string {
+  const navLabel = point.navLabel as Record<string, unknown> | undefined
+  return textValue(navLabel?.text)?.trim() ?? ""
+}
+
+function navPointHref(point: Record<string, unknown>): string {
+  const content = point.content as Record<string, unknown> | undefined
+  return typeof content?.src === "string" ? content.src : ""
+}
+
+function findAnchorIndex(html: string, fragment: string): number | undefined {
+  const escaped = escapeRegExp(decodePathSafely(fragment))
+  const match = html.match(new RegExp(`<[^>]+\\s(?:id|name)=["']${escaped}["'][^>]*>`, "i"))
+  return match?.index
+}
+
+function bodyStartIndex(html: string): number {
+  const match = html.match(/<body[^>]*>/i)
+  return match?.index === undefined ? 0 : match.index + match[0].length
+}
+
+function htmlToReadableText(html: string): string {
+  return html
+    .replace(/<head[\s\S]*?<\/head>/gi, "")
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+function extensionForMimeType(mimeType: string): string | undefined {
+  if (mimeType === "image/jpeg" || mimeType === "image/jpg") return "jpg"
+  if (mimeType === "image/png") return "png"
+  if (mimeType === "image/webp") return "webp"
+  if (mimeType === "image/gif") return "gif"
+  if (mimeType === "image/svg+xml") return "svg"
+  return undefined
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }
 
 function rootfiles(container: unknown): { rootfile?: unknown } | undefined {
@@ -567,6 +874,7 @@ function toBookContract(book: typeof books.$inferSelect) {
     originalPath: optional(book.originalPath),
     libraryPath: book.libraryPath,
     coverAssetId: optional(book.coverAssetId),
+    coverImageUrl: book.coverAssetId ? `dreamreader://asset/${encodeURIComponent(book.coverAssetId)}` : undefined,
     manifest: (book.manifestJson ?? {}) as Record<string, unknown>,
     addedAt: toIso(book.addedAt),
     updatedAt: toIso(book.updatedAt),
