@@ -33,7 +33,8 @@ import type {
   RuntimeModel,
   TtsJob,
   VoiceProfile,
-  AudiobookExport
+  AudiobookExport,
+  PronunciationEntry
 } from "@renderer/types"
 
 export function App(): ReactElement {
@@ -47,6 +48,7 @@ export function App(): ReactElement {
   const [diagnostics, setDiagnostics] = useState<RuntimeDiagnostic[]>([])
   const [runtimeModels, setRuntimeModels] = useState<RuntimeModel[]>([])
   const [voices, setVoices] = useState<VoiceProfile[]>([])
+  const [pronunciationEntries, setPronunciationEntries] = useState<PronunciationEntry[]>([])
   const [activeView, setActiveView] = useState<AppView>("library")
   const [libraryMode, setLibraryMode] = useState<LibraryMode>("grid")
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("summary")
@@ -85,18 +87,20 @@ export function App(): ReactElement {
   )
 
   const refreshAudioState = useCallback(async (bookId: string) => {
-    const [nextJobs, nextExport, nextDiagnostics, nextModels, nextVoices] = await Promise.all([
+    const [nextJobs, nextExport, nextDiagnostics, nextModels, nextVoices, nextPronunciationEntries] = await Promise.all([
       dreamreaderClient.listTtsJobs({ bookId }),
       dreamreaderClient.getAudiobookExport(bookId),
       dreamreaderClient.listModelDiagnostics(),
       dreamreaderClient.listModels(),
-      dreamreaderClient.listCompatibleVoices()
+      dreamreaderClient.listCompatibleVoices(),
+      dreamreaderClient.listPronunciationEntries(bookId)
     ])
     setAudioJobs(nextJobs)
     setAudiobookExport(nextExport)
     setDiagnostics(nextDiagnostics)
     setRuntimeModels(nextModels)
     setVoices(nextVoices)
+    setPronunciationEntries(nextPronunciationEntries)
   }, [])
 
   const loadInitialData = useCallback(async () => {
@@ -175,6 +179,7 @@ export function App(): ReactElement {
     if (!selectedBook) {
       setAudioJobs([])
       setAudiobookExport(null)
+      setPronunciationEntries([])
       return
     }
 
@@ -390,12 +395,66 @@ export function App(): ReactElement {
     }
   }
 
+  const clearChapterAudio = async () => {
+    if (!selectedBook || !currentChapter) {
+      return
+    }
+
+    setAudioLoading(true)
+    try {
+      await dreamreaderClient.clearChapterAudio({
+        bookId: selectedBook.id,
+        chapterHref: currentChapter.id
+      })
+      await refreshAudioState(selectedBook.id)
+    } finally {
+      setAudioLoading(false)
+    }
+  }
+
+  const createPronunciationEntry = async (input: {
+    pattern: string
+    replacement: string
+    scope: "global" | "book"
+  }) => {
+    if (!selectedBook || !input.pattern.trim() || !input.replacement.trim()) {
+      return
+    }
+
+    await dreamreaderClient.createPronunciationEntry({
+      bookId: input.scope === "book" ? selectedBook.id : undefined,
+      matchKind: "word",
+      pattern: input.pattern.trim(),
+      replacement: input.replacement.trim(),
+      scope: input.scope
+    })
+    await refreshAudioState(selectedBook.id)
+  }
+
+  const deletePronunciationEntry = async (id: string) => {
+    if (!selectedBook) {
+      return
+    }
+
+    await dreamreaderClient.deletePronunciationEntry(id)
+    await refreshAudioState(selectedBook.id)
+  }
+
   const downloadModel = async (modelId: string) => {
     if (!selectedBook) {
       return
     }
 
     await dreamreaderClient.downloadModel(modelId)
+    await refreshAudioState(selectedBook.id)
+  }
+
+  const installModelFromPath = async () => {
+    if (!selectedBook) {
+      return
+    }
+
+    await dreamreaderClient.installModelFromPath()
     await refreshAudioState(selectedBook.id)
   }
 
@@ -571,15 +630,20 @@ export function App(): ReactElement {
                 exportContent={exportContent}
                 models={runtimeModels}
                 preferences={settings.reader}
+                pronunciationEntries={pronunciationEntries}
                 t={t}
                 voices={voices}
                 onCancelTtsJob={cancelTtsJob}
                 onChangePreference={updateReaderPreference}
                 onChangeTab={setInspectorTab}
+                onClearChapterAudio={clearChapterAudio}
+                onCreatePronunciationEntry={createPronunciationEntry}
                 onDeleteAnnotation={deleteAnnotation}
+                onDeletePronunciationEntry={deletePronunciationEntry}
                 onExportNotes={exportNotes}
                 onDownloadModel={downloadModel}
                 onGenerateChapterAudio={generateChapterAudio}
+                onInstallModelFromPath={installModelFromPath}
                 onJumpToAnnotation={jumpToAnnotation}
                 onJumpToChapter={jumpToChapter}
                 onRebuildAudiobook={rebuildAudiobook}

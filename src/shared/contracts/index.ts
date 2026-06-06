@@ -1,14 +1,20 @@
 export {
   AudiobookExportSchema,
+  PronunciationEntrySchema,
   NarrationPlanSchema,
   TtsEngineCapabilitiesSchema,
+  VoiceEngineBindingSchema,
   VoiceProfileSchema,
+  VoiceSampleSchema,
 } from "./ai";
 export type {
   AudiobookExport,
+  PronunciationEntry,
   NarrationPlan,
   TtsEngineCapabilities,
+  VoiceEngineBinding,
   VoiceProfile,
+  VoiceSample,
 } from "./ai";
 
 export {

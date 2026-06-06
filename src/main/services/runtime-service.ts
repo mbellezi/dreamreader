@@ -5,7 +5,7 @@ import path from "node:path"
 import { eq } from "drizzle-orm"
 import { ModelAssetSchema, ModelDownloadJobSchema, type ModelAsset, type ModelDownloadJob } from "@shared/contracts/ai"
 import type { AppDatabase } from "@main/db/client"
-import { modelAssets, modelDownloadJobs, ttsEngines } from "@main/db/schema"
+import { modelAssets, modelDownloadJobs, runtimeManifests, ttsEngines } from "@main/db/schema"
 import { AppError } from "@main/lib/errors"
 import { createId } from "@main/lib/ids"
 import type { AppPaths } from "@main/lib/paths"
@@ -113,6 +113,31 @@ const recommendedModels: RecommendedModel[] = [
   }
 ]
 
+const recommendedRuntimeManifests = [
+  {
+    id: "runtime_qwen3_tts_mlx_sidecar",
+    adapterId: "qwen3-tts-mlx",
+    runtime: "mlx",
+    version: "sidecar-v1",
+    capabilities: {
+      protocol: "dreamreader-tts-sidecar/v1",
+      engines: ["qwen3-tts-06b-mlx", "qwen3-tts-17b-mlx"],
+      output: ["audio/wav", "audio/mp4"]
+    }
+  },
+  {
+    id: "runtime_f5_tts_pt_br_pytorch_sidecar",
+    adapterId: "f5-tts-pt-br",
+    runtime: "pytorch",
+    version: "sidecar-v1",
+    capabilities: {
+      protocol: "dreamreader-tts-sidecar/v1",
+      engines: ["f5-tts-pt-br"],
+      output: ["audio/wav", "audio/mp4"]
+    }
+  }
+]
+
 export class RuntimeService {
   private readonly activeDownloads = new Map<string, string>()
   private readyPromise: Promise<void> | undefined
@@ -134,7 +159,10 @@ export class RuntimeService {
   async diagnostics(): Promise<RuntimeDiagnostic[]> {
     const appleSilicon = process.platform === "darwin" && process.arch === "arm64"
     const models = await this.listModels()
+    const manifests = await this.db.query.runtimeManifests.findMany()
     const qwenProsody = models.find((model) => model.id === QWEN_PROSODY_MODEL_ID)
+    const qwenTtsReady = sidecarReady(models, manifests, "qwen3-tts-mlx")
+    const f5Ready = sidecarReady(models, manifests, "f5-tts-pt-br")
     return [
       {
         id: "local-tts-adapter",
@@ -156,6 +184,22 @@ export class RuntimeService {
         label: "Local Prosody Analyzer",
         status: "available",
         detail: "Structured local prosody analyzer remains available as fallback"
+      },
+      {
+        id: "qwen3-tts-sidecar",
+        label: "Qwen3-TTS Sidecar",
+        status: qwenTtsReady ? "available" : "not_configured",
+        detail: qwenTtsReady
+          ? "Qwen3-TTS model and MLX sidecar are configured for synthesis"
+          : "Install a Qwen3-TTS model and register a qwen3-tts-mlx sidecar executable"
+      },
+      {
+        id: "f5-tts-sidecar",
+        label: "F5-TTS PT-BR Sidecar",
+        status: f5Ready ? "available" : "not_configured",
+        detail: f5Ready
+          ? "F5-TTS PT-BR model and PyTorch sidecar are configured for synthesis"
+          : "Install the F5-TTS PT-BR model and register an f5-tts-pt-br sidecar executable"
       },
       {
         id: "device",
@@ -408,6 +452,32 @@ export class RuntimeService {
           }
         })
     }
+    for (const manifest of recommendedRuntimeManifests) {
+      const existing = await this.db.query.runtimeManifests.findFirst({ where: eq(runtimeManifests.id, manifest.id) })
+      await this.db
+        .insert(runtimeManifests)
+        .values({
+          id: manifest.id,
+          adapterId: manifest.adapterId,
+          runtime: manifest.runtime,
+          version: manifest.version,
+          capabilitiesJson: manifest.capabilities,
+          environmentJson: existing?.environmentJson ?? {},
+          executablePath: existing?.executablePath,
+          healthcheckCommand: existing?.healthcheckCommand,
+          updatedAt: new Date()
+        })
+        .onConflictDoUpdate({
+          target: runtimeManifests.id,
+          set: {
+            adapterId: manifest.adapterId,
+            runtime: manifest.runtime,
+            version: manifest.version,
+            capabilitiesJson: manifest.capabilities,
+            updatedAt: new Date()
+          }
+        })
+    }
   }
 
   private async updateModelDownloadState(modelId: string, status: ModelAsset["installStatus"], progress: number): Promise<void> {
@@ -447,13 +517,22 @@ export class RuntimeService {
         runtime: runtimeForModel(model),
         modelFormat: model.format,
         accelerator: acceleratorForModel(model),
-        capabilitiesJson: {
-          id: model.engineId,
-          displayName: model.name,
-          runtime: runtimeForModel(model),
-          modelFormat: model.format,
-          languages: model.engineId === "f5-tts-pt-br" ? ["pt-BR"] : ["pt-BR", "en"]
-        },
+          capabilitiesJson: {
+            id: model.engineId,
+            displayName: model.name,
+            runtime: runtimeForModel(model),
+            modelFormat: model.format,
+            languages: model.engineId === "f5-tts-pt-br" ? ["pt-BR"] : ["pt-BR", "en"],
+            supportsVoiceClone: model.engineId !== "qwen3-tts-06b-mlx",
+            supportsNaturalLanguageInstruction: true,
+            supportsDiscreteEmotion: model.engineId !== "f5-tts-pt-br",
+            supportsBatch: true,
+            supportsStreaming: false,
+            supportsSegmentTimestamps: model.engineId !== "f5-tts-pt-br",
+            supportsSsmlLikeMarkup: false,
+            preferredInputCase: "preserve",
+            estimatedMemoryMb: model.memoryEstimateMb
+          },
         performanceProfileJson: {
           mode: model.runtime,
           requiresSidecar: true
@@ -611,4 +690,14 @@ function acceleratorForModel(model: RecommendedModel): string {
     return "apple_mps"
   }
   return "cpu"
+}
+
+function sidecarReady(
+  models: ModelAsset[],
+  manifests: Array<typeof runtimeManifests.$inferSelect>,
+  adapterId: string
+): boolean {
+  const hasModel = models.some((model) => model.engineId && adapterIdForEngine(model.engineId) === adapterId && model.installStatus === "available")
+  const hasRuntime = manifests.some((manifest) => manifest.adapterId === adapterId && Boolean(manifest.executablePath))
+  return hasModel && hasRuntime
 }

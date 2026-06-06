@@ -152,7 +152,7 @@ const api = {
   models: {
     list: () => invoke("models.list"),
     diagnostics: () => invoke("models.diagnostics"),
-    installFromPath: (modelPath: string) => invoke("models.installFromPath", { path: modelPath }),
+    installFromPath: (modelPath?: string) => invoke("models.installFromPath", modelPath ? { path: modelPath } : {}),
     download: (modelId: string) => invoke("models.download", { modelId })
   },
   tts: {
@@ -160,7 +160,8 @@ const api = {
     cancelJob: (id: string) => invoke("tts.cancelJob", { id }),
     retryJob: (id: string) => invoke("tts.retryJob", { id }),
     getJob: (id: string) => invoke("tts.getJob", { id }),
-    listJobs: (filter?: { bookId?: string; engineId?: string }) => invoke("tts.listJobs", filter ?? {})
+    listJobs: (filter?: { bookId?: string; engineId?: string }) => invoke("tts.listJobs", filter ?? {}),
+    clearChapterAudio: (input: { bookId: string; chapterHref: string }) => invoke("tts.clearChapterAudio", input)
   },
   voices: {
     list: () => invoke("voices.list"),
@@ -176,6 +177,12 @@ const api = {
       invoke("audiobook.enableAutoBuild", { bookId, enabled }),
     rebuild: (bookId: string) => invoke("audiobook.rebuild", { bookId }),
     reveal: (bookId: string) => invoke("audiobook.reveal", { bookId })
+  },
+  pronunciation: {
+    list: (input?: { bookId?: string; includeGlobal?: boolean }) => invoke("pronunciation.list", input ?? {}),
+    create: (input: Record<string, unknown>) => invoke("pronunciation.create", input),
+    update: (input: Record<string, unknown>) => invoke("pronunciation.update", input),
+    delete: (id: string) => invoke("pronunciation.delete", { id })
   }
 }
 

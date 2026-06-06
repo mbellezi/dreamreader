@@ -43,17 +43,25 @@ import {
 } from "./settings";
 import {
   AudiobookExportSchema,
+  ClearChapterAudioRequestSchema,
+  CreatePronunciationEntryRequestSchema,
+  DeletePronunciationEntryRequestSchema,
   DownloadModelRequestSchema,
   EnqueueChapterTtsRequestSchema,
+  ListPronunciationEntriesRequestSchema,
   ModelAssetSchema,
   ModelDownloadJobSchema,
   NarrationPlanSchema,
+  PronunciationEntrySchema,
   TtsAdapterManifestSchema,
   TtsEngineCapabilitiesSchema,
   TtsJobSchema,
+  UpdatePronunciationEntryRequestSchema,
   VoiceCloneInputSchema,
   VoiceFilterSchema,
+  VoiceEngineBindingSchema,
   VoiceProfileSchema,
+  VoiceSampleSchema,
 } from "./ai";
 
 export {
@@ -61,14 +69,19 @@ export {
   AppSettingsSchema,
   AudiobookExportSchema,
   BookmarkSchema,
+  ClearChapterAudioRequestSchema,
   BookSchema,
+  CreatePronunciationEntryRequestSchema,
   CreateAnnotationInputSchema,
+  DeletePronunciationEntryRequestSchema,
   ExportAnnotationsInputSchema,
   ImportBooksInputSchema,
   LibraryBookSchema,
+  ListPronunciationEntriesRequestSchema,
   ModelAssetSchema,
   ModelDownloadJobSchema,
   NarrationPlanSchema,
+  PronunciationEntrySchema,
   ReaderChapterSchema,
   ReaderManifestSchema,
   ReaderOpenResultSchema,
@@ -78,8 +91,11 @@ export {
   TtsEngineCapabilitiesSchema,
   TtsJobSchema,
   UpdateAnnotationInputSchema,
+  UpdatePronunciationEntryRequestSchema,
   VoiceCloneInputSchema,
+  VoiceEngineBindingSchema,
   VoiceProfileSchema,
+  VoiceSampleSchema,
 };
 export type {
   Annotation,
@@ -88,7 +104,18 @@ export type {
   ExportAnnotationsInput,
   UpdateAnnotationInput,
 } from "./annotations";
-export type { AudiobookExport, ModelAsset, ModelDownloadJob, NarrationPlan, TtsEngineCapabilities, TtsJob, VoiceProfile } from "./ai";
+export type {
+  AudiobookExport,
+  ModelAsset,
+  ModelDownloadJob,
+  NarrationPlan,
+  PronunciationEntry,
+  TtsEngineCapabilities,
+  TtsJob,
+  VoiceEngineBinding,
+  VoiceProfile,
+  VoiceSample,
+} from "./ai";
 export type { Book, ImportBooksInput, LibraryBook } from "./library";
 export type {
   ReaderChapter,
@@ -116,6 +143,7 @@ export const IpcChannelSchema = z.enum([
   "tts.retryJob",
   "tts.getJob",
   "tts.listJobs",
+  "tts.clearChapterAudio",
   "voices.list",
   "voices.createFromReference",
   "voices.preview",
@@ -130,6 +158,10 @@ export const IpcChannelSchema = z.enum([
   "models.diagnostics",
   "models.installFromPath",
   "models.download",
+  "pronunciation.list",
+  "pronunciation.create",
+  "pronunciation.update",
+  "pronunciation.delete",
   "settings.get",
   "settings.update",
 ]);
@@ -213,6 +245,10 @@ export const IpcContractSchemas = {
       .default({}),
     response: createIpcResponseSchema(z.array(TtsJobSchema)),
   },
+  "tts.clearChapterAudio": {
+    request: ClearChapterAudioRequestSchema,
+    response: createIpcResponseSchema(z.object({ deleted: z.literal(true) })),
+  },
   "voices.list": {
     request: VoiceFilterSchema.default({ includeUnavailable: false }),
     response: createIpcResponseSchema(z.array(VoiceProfileSchema)),
@@ -277,12 +313,28 @@ export const IpcContractSchemas = {
     response: createIpcResponseSchema(z.array(JsonObjectSchema)),
   },
   "models.installFromPath": {
-    request: z.object({ path: z.string().trim().min(1) }),
-    response: createIpcResponseSchema(ModelAssetSchema),
+    request: z.object({ path: z.string().trim().min(1).optional() }).default({}),
+    response: createIpcResponseSchema(ModelAssetSchema.nullable()),
   },
   "models.download": {
     request: DownloadModelRequestSchema,
     response: createIpcResponseSchema(ModelDownloadJobSchema),
+  },
+  "pronunciation.list": {
+    request: ListPronunciationEntriesRequestSchema,
+    response: createIpcResponseSchema(z.array(PronunciationEntrySchema)),
+  },
+  "pronunciation.create": {
+    request: CreatePronunciationEntryRequestSchema,
+    response: createIpcResponseSchema(PronunciationEntrySchema),
+  },
+  "pronunciation.update": {
+    request: UpdatePronunciationEntryRequestSchema,
+    response: createIpcResponseSchema(PronunciationEntrySchema),
+  },
+  "pronunciation.delete": {
+    request: DeletePronunciationEntryRequestSchema,
+    response: createIpcResponseSchema(z.object({ deleted: z.literal(true) })),
   },
   "settings.get": {
     request: EmptyRequestSchema,

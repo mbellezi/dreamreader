@@ -1,9 +1,9 @@
-import { Cpu, Download, HardDrive, RefreshCw, RotateCcw, Square, Volume2, Wand2 } from "lucide-react"
+import { Cpu, Download, FolderOpen, HardDrive, Plus, RefreshCw, RotateCcw, Square, Trash2, Volume2, Wand2 } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { SelectField } from "@renderer/components/common/Controls"
 import type { TranslationFn } from "@renderer/app/types"
 import { cn } from "@renderer/lib/utils"
-import type { AudiobookExport, BookDetails, RuntimeDiagnostic, RuntimeModel, TtsJob, VoiceProfile } from "@renderer/types"
+import type { AudiobookExport, BookDetails, PronunciationEntry, RuntimeDiagnostic, RuntimeModel, TtsJob, VoiceProfile } from "@renderer/types"
 
 const defaultEngineId = "dreamreader-local-tts"
 
@@ -15,11 +15,16 @@ export function AudioPanel({
   jobs,
   loading,
   models,
+  pronunciationEntries,
   t,
   voices,
   onCancelJob,
+  onClearChapterAudio,
+  onCreatePronunciationEntry,
+  onDeletePronunciationEntry,
   onDownloadModel,
   onGenerateChapter,
+  onInstallModelFromPath,
   onRebuildAudiobook,
   onRetryJob,
   onToggleAutoBuild
@@ -31,9 +36,13 @@ export function AudioPanel({
   jobs: TtsJob[]
   loading: boolean
   models: RuntimeModel[]
+  pronunciationEntries: PronunciationEntry[]
   t: TranslationFn
   voices: VoiceProfile[]
   onCancelJob: (jobId: string) => Promise<void> | void
+  onClearChapterAudio: () => Promise<void> | void
+  onCreatePronunciationEntry: (input: { pattern: string; replacement: string; scope: "global" | "book" }) => Promise<void> | void
+  onDeletePronunciationEntry: (id: string) => Promise<void> | void
   onDownloadModel: (modelId: string) => Promise<void> | void
   onGenerateChapter: (input: {
     engineId: string
@@ -41,6 +50,7 @@ export function AudioPanel({
     useExpressiveNarration: boolean
     voiceProfileId?: string
   }) => Promise<void> | void
+  onInstallModelFromPath: () => Promise<void> | void
   onRebuildAudiobook: () => Promise<void> | void
   onRetryJob: (jobId: string) => Promise<void> | void
   onToggleAutoBuild: (enabled: boolean) => Promise<void> | void
@@ -48,6 +58,9 @@ export function AudioPanel({
   const [quality, setQuality] = useState<"draft" | "standard" | "high">("standard")
   const [selectedEngineId, setSelectedEngineId] = useState(defaultEngineId)
   const [selectedVoiceId, setSelectedVoiceId] = useState("")
+  const [pronunciationPattern, setPronunciationPattern] = useState("")
+  const [pronunciationReplacement, setPronunciationReplacement] = useState("")
+  const [pronunciationScope, setPronunciationScope] = useState<"global" | "book">("book")
   const [useExpressiveNarration, setUseExpressiveNarration] = useState(false)
   const chapter = book?.chapters[chapterIndex] ?? null
   const chapterAudio = useMemo(
@@ -75,12 +88,29 @@ export function AudioPanel({
       }))
     ]
   }, [models, t])
+  const voiceOptions = useMemo(() => {
+    const compatible = voices.filter((voice) => {
+      const engineIds = voice.settings?.compatibleEngineIds
+      return !Array.isArray(engineIds) || engineIds.includes(selectedEngineId)
+    })
+    const available = compatible.length ? compatible : voices
+    return (available.length ? available : [{ id: "", name: t("audio.voiceDefault"), language: "pt-BR", kind: "built_in" }]).map((voice) => ({
+      label: voice.name,
+      value: voice.id
+    }))
+  }, [selectedEngineId, t, voices])
 
   useEffect(() => {
-    if (!selectedVoiceId && voices[0]) {
-      setSelectedVoiceId(voices[0].id)
+    if (!selectedVoiceId && voiceOptions[0]) {
+      setSelectedVoiceId(voiceOptions[0].value)
     }
-  }, [selectedVoiceId, voices])
+  }, [selectedVoiceId, voiceOptions])
+
+  useEffect(() => {
+    if (selectedVoiceId && !voiceOptions.some((option) => option.value === selectedVoiceId)) {
+      setSelectedVoiceId(voiceOptions[0]?.value ?? "")
+    }
+  }, [selectedVoiceId, voiceOptions])
 
   useEffect(() => {
     if (!engineOptions.some((option) => option.value === selectedEngineId)) {
@@ -132,6 +162,17 @@ export function AudioPanel({
               {currentJob.errorMessage ? <p className="mt-2 text-xs text-destructive">{currentJob.errorMessage}</p> : null}
             </div>
           ) : null}
+
+          {chapterAudio ? (
+            <button
+              className="mt-3 inline-flex h-9 w-full items-center justify-center gap-2 rounded-md border bg-background px-3 text-sm"
+              disabled={Boolean(activeJob) || loading}
+              onClick={onClearChapterAudio}
+            >
+              <Trash2 className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span className="truncate">{t("audio.clearChapter")}</span>
+            </button>
+          ) : null}
         </div>
       </section>
 
@@ -144,10 +185,7 @@ export function AudioPanel({
         />
         <SelectField
           label={t("audio.voice")}
-          options={(voices.length ? voices : [{ id: "", name: t("audio.voiceDefault"), language: "pt-BR", kind: "built_in" }]).map((voice) => ({
-            label: voice.name,
-            value: voice.id
-          }))}
+          options={voiceOptions}
           value={selectedVoiceId}
           onChange={setSelectedVoiceId}
         />
@@ -199,12 +237,76 @@ export function AudioPanel({
         </div>
       </section>
 
+      <section className="space-y-3">
+        <h3 className="text-sm font-semibold">{t("audio.pronunciation")}</h3>
+        <div className="rounded-md border bg-card p-3">
+          <div className="grid grid-cols-1 gap-2">
+            <SelectField
+              label={t("audio.pronunciation.scope")}
+              options={[
+                { label: t("audio.pronunciation.scope.book"), value: "book" },
+                { label: t("audio.pronunciation.scope.global"), value: "global" }
+              ]}
+              value={pronunciationScope}
+              onChange={(value) => setPronunciationScope(value as "global" | "book")}
+            />
+            <input
+              className="h-9 rounded-md border bg-background px-3 text-sm outline-none"
+              placeholder={t("audio.pronunciation.pattern")}
+              value={pronunciationPattern}
+              onChange={(event) => setPronunciationPattern(event.target.value)}
+            />
+            <input
+              className="h-9 rounded-md border bg-background px-3 text-sm outline-none"
+              placeholder={t("audio.pronunciation.replacement")}
+              value={pronunciationReplacement}
+              onChange={(event) => setPronunciationReplacement(event.target.value)}
+            />
+            <button
+              className="inline-flex h-9 items-center justify-center gap-2 rounded-md border bg-background px-3 text-sm"
+              disabled={!pronunciationPattern.trim() || !pronunciationReplacement.trim()}
+              onClick={async () => {
+                await onCreatePronunciationEntry({
+                  pattern: pronunciationPattern,
+                  replacement: pronunciationReplacement,
+                  scope: pronunciationScope
+                })
+                setPronunciationPattern("")
+                setPronunciationReplacement("")
+              }}
+            >
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              {t("audio.pronunciation.add")}
+            </button>
+          </div>
+        </div>
+        {pronunciationEntries.length ? (
+          <div className="space-y-2">
+            {pronunciationEntries.map((entry) => (
+              <div key={entry.id} className="flex items-center justify-between gap-3 rounded-md border bg-card p-3">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">
+                    {entry.pattern} → {entry.replacement}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">{t(`audio.pronunciation.scope.${entry.scope}`)}</p>
+                </div>
+                <button className="shrink-0 rounded-sm p-1 text-muted-foreground hover:text-destructive" onClick={() => onDeletePronunciationEntry(entry.id)} title={t("audio.pronunciation.delete")}>
+                  <Trash2 className="h-4 w-4" aria-hidden="true" />
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="rounded-md border bg-card p-3 text-sm text-muted-foreground">{t("audio.pronunciation.empty")}</p>
+        )}
+      </section>
+
       <section className="space-y-2">
         <h3 className="text-sm font-semibold">{t("audio.models")}</h3>
         {models.length ? (
           <div className="space-y-2">
             {models.map((model) => (
-              <ModelCard key={model.id} model={model} t={t} onDownloadModel={onDownloadModel} />
+              <ModelCard key={model.id} model={model} t={t} onDownloadModel={onDownloadModel} onInstallModelFromPath={onInstallModelFromPath} />
             ))}
           </div>
         ) : (
@@ -282,14 +384,17 @@ export function AudioPanel({
 function ModelCard({
   model,
   t,
-  onDownloadModel
+  onDownloadModel,
+  onInstallModelFromPath
 }: {
   model: RuntimeModel
   t: TranslationFn
   onDownloadModel: (modelId: string) => Promise<void> | void
+  onInstallModelFromPath: () => Promise<void> | void
 }) {
   const isDownloading = model.installStatus === "queued" || model.installStatus === "downloading"
   const canDownload = model.canDownload && !isDownloading && model.installStatus !== "available"
+  const canInstallLocal = !isDownloading && model.installStatus !== "available"
   const progress = Math.round(model.downloadProgress * 100)
 
   return (
@@ -336,14 +441,27 @@ function ModelCard({
         <p className="mt-2 text-xs text-muted-foreground">{t("audio.model.localInstallHint")}</p>
       ) : null}
 
-      {canDownload ? (
-        <button
-          className="mt-3 inline-flex h-9 w-full items-center justify-center gap-2 rounded-md border bg-background px-3 text-sm"
-          onClick={() => onDownloadModel(model.id)}
-        >
-          <Download className="h-4 w-4" aria-hidden="true" />
-          {t(model.installStatus === "failed" ? "audio.model.retryDownload" : "audio.model.download")}
-        </button>
+      {canDownload || canInstallLocal ? (
+        <div className="mt-3 grid grid-cols-1 gap-2">
+          {canDownload ? (
+            <button
+              className="inline-flex h-9 min-w-0 items-center justify-center gap-2 rounded-md border bg-background px-3 text-sm"
+              onClick={() => onDownloadModel(model.id)}
+            >
+              <Download className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span className="truncate">{t(model.installStatus === "failed" ? "audio.model.retryDownload" : "audio.model.download")}</span>
+            </button>
+          ) : null}
+          {canInstallLocal ? (
+            <button
+              className="inline-flex h-9 min-w-0 items-center justify-center gap-2 rounded-md border bg-background px-3 text-sm"
+              onClick={onInstallModelFromPath}
+            >
+              <FolderOpen className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span className="truncate">{t("audio.model.installLocal")}</span>
+            </button>
+          ) : null}
+        </div>
       ) : null}
     </div>
   )

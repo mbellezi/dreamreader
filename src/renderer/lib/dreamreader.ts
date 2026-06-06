@@ -9,6 +9,7 @@ import type {
   ImportBooksResult,
   LibraryQuery,
   ModelDownloadJob,
+  PronunciationEntry,
   ReaderLocator,
   RuntimeDiagnostic,
   RuntimeModel,
@@ -340,6 +341,14 @@ export const dreamreaderClient = {
     return []
   },
 
+  async clearChapterAudio(input: { bookId: string; chapterHref: string }): Promise<void> {
+    const bridgeClear = window.dreamreader?.tts?.clearChapterAudio
+
+    if (bridgeClear) {
+      await bridgeClear(input)
+    }
+  },
+
   async getAudiobookExport(bookId: string): Promise<AudiobookExport | null> {
     const bridgeGet = window.dreamreader?.audiobook?.getExport
 
@@ -417,6 +426,19 @@ export const dreamreaderClient = {
     })
   },
 
+  async installModelFromPath(modelPath?: string): Promise<RuntimeModel | null> {
+    const bridgeInstall = window.dreamreader?.models?.installFromPath
+
+    if (bridgeInstall) {
+      const installed = await bridgeInstall(modelPath)
+      return installed ? toRuntimeModel(installed) : null
+    }
+
+    throw Object.assign(new Error("Model installation requires the Electron bridge"), {
+      code: "model_install_requires_app_bridge"
+    })
+  },
+
   async listCompatibleVoices(engineId?: string): Promise<VoiceProfile[]> {
     const bridgeList = window.dreamreader?.voices?.listCompatible
 
@@ -432,6 +454,52 @@ export const dreamreaderClient = {
         kind: "built_in"
       }
     ]
+  },
+
+  async listPronunciationEntries(bookId?: string): Promise<PronunciationEntry[]> {
+    const bridgeList = window.dreamreader?.pronunciation?.list
+
+    if (bridgeList) {
+      return (await bridgeList({ bookId, includeGlobal: true })).map(toPronunciationEntry)
+    }
+
+    return []
+  },
+
+  async createPronunciationEntry(input: {
+    bookId?: string
+    caseSensitive?: boolean
+    matchKind?: "literal" | "word" | "regex"
+    pattern: string
+    replacement: string
+    scope: "global" | "book"
+  }): Promise<PronunciationEntry> {
+    const bridgeCreate = window.dreamreader?.pronunciation?.create
+
+    if (bridgeCreate) {
+      return toPronunciationEntry(await bridgeCreate(input))
+    }
+
+    const now = new Date().toISOString()
+    return {
+      id: crypto.randomUUID(),
+      scope: input.scope,
+      bookId: input.bookId,
+      pattern: input.pattern,
+      replacement: input.replacement,
+      matchKind: input.matchKind ?? "word",
+      caseSensitive: Boolean(input.caseSensitive),
+      createdAt: now,
+      updatedAt: now
+    }
+  },
+
+  async deletePronunciationEntry(id: string): Promise<void> {
+    const bridgeDelete = window.dreamreader?.pronunciation?.delete
+
+    if (bridgeDelete) {
+      await bridgeDelete(id)
+    }
   }
 }
 
@@ -462,6 +530,7 @@ function toTtsJob(input: unknown): TtsJob {
     chapterHref: String(job.chapterHref ?? ""),
     engineId: String(job.engineId ?? "dreamreader-local-tts"),
     voiceProfileId: optionalString(job.voiceProfileId),
+    voiceBindingId: optionalString(job.voiceBindingId),
     status: toTtsJobStatus(job.status),
     progress: Number(job.progress ?? 0),
     settings: jsonObject(job.settings),
@@ -579,7 +648,23 @@ function toVoiceProfile(input: unknown): VoiceProfile {
     id: String(voice.id ?? ""),
     name: String(voice.name ?? ""),
     language: String(voice.language ?? "pt-BR"),
-    kind: String(voice.kind ?? "built_in")
+    kind: String(voice.kind ?? "built_in"),
+    settings: jsonObject(voice.settings)
+  }
+}
+
+function toPronunciationEntry(input: unknown): PronunciationEntry {
+  const entry = (input ?? {}) as Record<string, unknown>
+  return {
+    id: String(entry.id ?? ""),
+    scope: entry.scope === "book" ? "book" : "global",
+    bookId: optionalString(entry.bookId),
+    pattern: String(entry.pattern ?? ""),
+    replacement: String(entry.replacement ?? ""),
+    matchKind: entry.matchKind === "literal" || entry.matchKind === "regex" ? entry.matchKind : "word",
+    caseSensitive: Boolean(entry.caseSensitive),
+    createdAt: String(entry.createdAt ?? new Date().toISOString()),
+    updatedAt: String(entry.updatedAt ?? new Date().toISOString())
   }
 }
 

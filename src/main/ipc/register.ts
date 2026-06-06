@@ -3,6 +3,7 @@ import { z } from "zod"
 import { IpcContractSchemas, type IpcChannel } from "@shared/contracts/ipc"
 import { AudiobookService } from "@main/services/audiobook-service"
 import { LibraryService } from "@main/services/library-service"
+import { PronunciationService } from "@main/services/pronunciation-service"
 import { RuntimeService } from "@main/services/runtime-service"
 import { TtsService } from "@main/services/tts-service"
 import { VoiceService } from "@main/services/voice-service"
@@ -14,6 +15,7 @@ type Services = {
   tts: TtsService
   voices: VoiceService
   audiobook: AudiobookService
+  pronunciation: PronunciationService
 }
 
 const contract = IpcContractSchemas
@@ -58,14 +60,26 @@ export function registerIpc(services: Services): void {
   handle("tts.retryJob", contract["tts.retryJob"].request, (input) => services.tts.retryJob(input.id))
   handle("tts.getJob", contract["tts.getJob"].request, (input) => services.tts.getJob(input.id))
   handle("tts.listJobs", contract["tts.listJobs"].request, (input) => services.tts.listJobs(input))
+  handle("tts.clearChapterAudio", contract["tts.clearChapterAudio"].request, (input) => services.tts.clearChapterAudio(input))
   handle("settings.get", contract["settings.get"].request, () => services.library.getSettings())
   handle("settings.update", contract["settings.update"].request, (input) => services.library.updateSettings(input))
   handle("models.list", contract["models.list"].request, () => services.runtime.listModels())
   handle("models.diagnostics", contract["models.diagnostics"].request, () => services.runtime.diagnostics())
-  handle("models.installFromPath", contract["models.installFromPath"].request, (input) =>
-    services.runtime.installFromPath(input.path)
-  )
+  handle("models.installFromPath", contract["models.installFromPath"].request, async (input) => {
+    const selectedPath =
+      input.path ??
+      (
+        await dialog.showOpenDialog({
+          properties: ["openDirectory"]
+        })
+      ).filePaths[0]
+    return selectedPath ? services.runtime.installFromPath(selectedPath) : null
+  })
   handle("models.download", contract["models.download"].request, (input) => services.runtime.downloadModel(input.modelId))
+  handle("pronunciation.list", contract["pronunciation.list"].request, (input) => services.pronunciation.list(input))
+  handle("pronunciation.create", contract["pronunciation.create"].request, (input) => services.pronunciation.create(input))
+  handle("pronunciation.update", contract["pronunciation.update"].request, (input) => services.pronunciation.update(input))
+  handle("pronunciation.delete", contract["pronunciation.delete"].request, (input) => services.pronunciation.delete(input.id))
   handle("voices.list", contract["voices.list"].request, (input) => services.voices.list(input))
   handle("voices.createFromReference", contract["voices.createFromReference"].request, (input) =>
     services.voices.createFromReference(input)

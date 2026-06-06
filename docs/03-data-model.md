@@ -4,7 +4,7 @@ Este documento descreve o schema Drizzle/PGlite e tambem registra entidades plan
 
 ## Estado Atual do Schema
 
-As migrations atuais (`drizzle/0000_fearless_swordsman.sql`, `drizzle/0001_lying_molten_man.sql` e `drizzle/0002_greedy_miek.sql`) implementam estas tabelas:
+As migrations atuais (`drizzle/0000_*.sql` ate `drizzle/0004_*.sql`) implementam estas tabelas:
 
 - `books`
 - `assets`
@@ -19,22 +19,23 @@ As migrations atuais (`drizzle/0000_fearless_swordsman.sql`, `drizzle/0001_lying
 - `tts_segments`
 - `prosody_analyses`
 - `voice_profiles`
+- `voice_samples`
+- `voice_engine_bindings`
 - `audiobook_exports`
 - `audiobook_chapters`
 - `audiobook_build_jobs`
+- `pronunciation_entries`
+- `model_assets`
+- `model_download_jobs`
+- `runtime_manifests`
 
-Essas tabelas cobrem as fases 0, 1, 2 e 3: biblioteca local, assets de capa, posicao de leitura, anotacoes, bookmarks, settings, fila TTS persistente, cache de audio por capitulo, cache de prosodia por segmento e manifestos parciais de audiobook.
+Essas tabelas cobrem as fases 0, 1, 2, 3 e 4: biblioteca local, assets de capa, posicao de leitura, anotacoes, bookmarks, settings, fila TTS persistente, cache de audio por capitulo, cache de prosodia por segmento, manifestos parciais de audiobook, catalogo de modelos, manifests de runtime, perfis de voz persistentes, samples, bindings e dicionario de pronuncia.
 
 Ainda nao existem no schema atual:
 
-- `voice_samples`
-- `voice_engine_bindings`
 - `voice_clone_jobs`
-- `pronunciation_entries`
-- `model_assets`
-- `runtime_manifests`
 
-Essas entidades permanecem planejadas para as fases de multi-engine TTS, voice cloning e empacotamento.
+`voice_clone_jobs` permanece planejada para empacotamento/polimento de sidecars quando a criacao de embeddings deixar de ser sincrona por adapter.
 
 ## Entidades
 

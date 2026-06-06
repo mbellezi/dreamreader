@@ -196,6 +196,78 @@ export const voiceProfiles = pgTable(
   })
 )
 
+export const voiceSamples = pgTable(
+  "voice_samples",
+  {
+    id: text("id").primaryKey(),
+    voiceProfileId: text("voice_profile_id")
+      .notNull()
+      .references(() => voiceProfiles.id, { onDelete: "cascade" }),
+    assetId: text("asset_id")
+      .notNull()
+      .references(() => assets.id, { onDelete: "restrict" }),
+    transcript: text("transcript"),
+    language: text("language"),
+    durationMs: integer("duration_ms").notNull(),
+    qualityJson: jsonb("quality_json").$type<Record<string, unknown>>().notNull().default({}),
+    consentConfirmedAt: timestamp("consent_confirmed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => ({
+    voiceSamplesProfileIdx: index("voice_samples_profile_id_idx").on(table.voiceProfileId),
+    voiceSamplesAssetIdx: index("voice_samples_asset_id_idx").on(table.assetId)
+  })
+)
+
+export const voiceEngineBindings = pgTable(
+  "voice_engine_bindings",
+  {
+    id: text("id").primaryKey(),
+    voiceProfileId: text("voice_profile_id")
+      .notNull()
+      .references(() => voiceProfiles.id, { onDelete: "cascade" }),
+    engineId: text("engine_id")
+      .notNull()
+      .references(() => ttsEngines.id, { onDelete: "cascade" }),
+    adapterId: text("adapter_id").notNull(),
+    status: text("status").notNull().default("pending"),
+    bindingKind: text("binding_kind").notNull(),
+    bindingAssetId: text("binding_asset_id").references(() => assets.id, { onDelete: "set null" }),
+    settingsJson: jsonb("settings_json").$type<Record<string, unknown>>().notNull().default({}),
+    compatibilityJson: jsonb("compatibility_json").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => ({
+    voiceBindingsProfileIdx: index("voice_engine_bindings_profile_id_idx").on(table.voiceProfileId),
+    voiceBindingsEngineIdx: index("voice_engine_bindings_engine_id_idx").on(table.engineId),
+    voiceBindingsStatusIdx: index("voice_engine_bindings_status_idx").on(table.status),
+    voiceBindingsUniqueIdx: uniqueIndex("voice_engine_bindings_voice_engine_idx").on(
+      table.voiceProfileId,
+      table.engineId
+    )
+  })
+)
+
+export const pronunciationEntries = pgTable(
+  "pronunciation_entries",
+  {
+    id: text("id").primaryKey(),
+    scope: text("scope").notNull().default("global"),
+    bookId: text("book_id").references(() => books.id, { onDelete: "cascade" }),
+    pattern: text("pattern").notNull(),
+    replacement: text("replacement").notNull(),
+    matchKind: text("match_kind").notNull().default("word"),
+    caseSensitive: boolean("case_sensitive").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => ({
+    pronunciationScopeIdx: index("pronunciation_entries_scope_idx").on(table.scope),
+    pronunciationBookIdx: index("pronunciation_entries_book_id_idx").on(table.bookId)
+  })
+)
+
 export const audiobookExports = pgTable(
   "audiobook_exports",
   {

@@ -94,9 +94,7 @@ Limites conhecidos da fase 3:
 - O analisador deterministico continua disponivel como fallback quando o runtime real nao esta instalado.
 - A qualidade expressiva ainda e conservadora e serve para validar fluxo, persistencia e comparacao na UI.
 
-## Fase 4: Multi-engine TTS e Vozes
-
-Implementado nesta etapa inicial da fase 4:
+## Fase 4: Multi-engine TTS e Vozes - Implementada
 
 - Catalogo persistente de modelos em `model_assets`.
 - Jobs persistentes de download em `model_download_jobs`, com progresso salvo e exibido no painel de audio.
@@ -106,19 +104,22 @@ Implementado nesta etapa inicial da fase 4:
 - Fallback automatico para o analisador local estruturado quando o Qwen GGUF ou `node-llama-cpp` nao estao instalados.
 - Registro dos motores `qwen3-tts-06b-mlx`, `qwen3-tts-17b-mlx` e `f5-tts-pt-br` em `tts_engines`.
 - Registro de manifests de runtime em `runtime_manifests` para futuros sidecars Python/Swift/MLX/PyTorch.
+- Adapters sidecar `qwen3-tts-mlx` e `f5-tts-pt-br` por protocolo supervisionado pelo main process.
+- Sintese neural habilitada quando o modelo TTS esta instalado e o `runtime_manifest` aponta para um executavel local compativel.
+- Validacao de caminhos de saida do sidecar dentro do diretorio do job antes de importar assets.
+- Seletor de motor, voz, qualidade e narracao expressiva no painel de audio por capitulo.
+- Persistencia de perfis de voz, amostras autorizadas e bindings por engine em `voice_profiles`, `voice_samples` e `voice_engine_bindings`.
+- Gerenciador local de vozes clonadas no main process, com consentimento obrigatorio, copia da amostra para `voices/`, binding compativel e preview WAV local.
+- Dicionario de pronuncia global e por livro em `pronunciation_entries`, aplicado ao `NarrationPlan` e versionado na chave de cache.
+- Exclusao de audio/cache por capitulo, removendo jobs, segmentos, assets de audio e entrada de audiobook.
+- Rebuild/invalidacao de manifesto M4B quando audio de capitulo e regenerado, removido, ou muda voz/motor/prosodia/dicionario.
+- Falha de rebuild M4B nao invalida o audio de capitulo ja gerado.
 
-Pendencias ainda dentro da fase 4:
+Limites conhecidos da fase 4:
 
-- Adapter Qwen3-TTS 0.6B.
-- Adapter Qwen3-TTS 1.7B.
-- Adapter F5-TTS-pt-br.
-- Sidecars reais de sintese para MLX/PyTorch.
-- Seletor de motor por livro/capitulo.
-- Persistencia completa de perfis de voz, samples e bindings.
-- Gerenciador de vozes clonadas com consentimento, samples, previews e bindings por engine.
-- Dicionario de pronuncia global e por livro.
-- Exclusao e limpeza de audio/cache.
-- Reconstrucao M4B quando voz, motor ou capitulo mudarem.
+- Os sidecars Qwen3-TTS/F5-TTS sao executaveis locais configuraveis; o repositorio nao empacota Python/MLX/PyTorch nem pesos de modelo.
+- Downloads multi-arquivo de snapshots TTS continuam como instalacao por pasta local.
+- O export M4B ainda e manifest-only ate a fase de empacotamento/encoder.
 
 ## Fase 5: Empacotamento Alpha
 

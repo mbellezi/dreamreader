@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises"
 import path from "node:path"
-import { asc, eq } from "drizzle-orm"
+import { and, asc, eq } from "drizzle-orm"
 import type { AudiobookExport, AudiobookManifest } from "@shared/contracts/ai"
 import type { AppDatabase } from "@main/db/client"
 import { assets, audiobookBuildJobs, audiobookChapters, audiobookExports, books } from "@main/db/schema"
@@ -107,6 +107,21 @@ export class AudiobookService {
 
     const updated = await this.refreshManifest(input.bookId, true)
     return updated.autoBuildEnabled ? this.buildDraft(input.bookId, "chapter_completed") : updated
+  }
+
+  async removeChapterAudio(bookId: string, chapterHref: string): Promise<string[]> {
+    await this.ensureExport(bookId)
+    const rows = await this.db.query.audiobookChapters.findMany({
+      where: and(eq(audiobookChapters.bookId, bookId), eq(audiobookChapters.chapterHref, chapterHref))
+    })
+    const audioAssetIds = rows.map((row) => row.audioAssetId)
+    if (rows.length) {
+      await this.db
+        .delete(audiobookChapters)
+        .where(and(eq(audiobookChapters.bookId, bookId), eq(audiobookChapters.chapterHref, chapterHref)))
+    }
+    await this.refreshManifest(bookId, true)
+    return audioAssetIds
   }
 
   async buildDraft(bookId: string, reason = "manual_rebuild"): Promise<AudiobookExport> {

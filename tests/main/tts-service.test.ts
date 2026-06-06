@@ -4,10 +4,11 @@ import path from "node:path"
 import { PGlite } from "@electric-sql/pglite"
 import { drizzle } from "drizzle-orm/pglite"
 import { migrate } from "drizzle-orm/pglite/migrator"
+import { eq } from "drizzle-orm"
 import { describe, expect, it, afterEach } from "vitest"
 import type { AppDatabase } from "../../src/main/db/client"
 import * as schema from "../../src/main/db/schema"
-import { books } from "../../src/main/db/schema"
+import { books, runtimeManifests, ttsEngines } from "../../src/main/db/schema"
 import { AudiobookService } from "../../src/main/services/audiobook-service"
 import { DEFAULT_TTS_ENGINE_ID, DEFAULT_VOICE_PROFILE_ID, TtsService } from "../../src/main/services/tts-service"
 
@@ -93,6 +94,97 @@ describe("TtsService", () => {
 
       const prosodyRows = await db.query.prosodyAnalyses.findMany()
       expect(prosodyRows.length).toBeGreaterThan(0)
+
+      await tts.clearChapterAudio({
+        bookId: "book-audio",
+        chapterHref: "chapter-1"
+      })
+
+      expect(await tts.listJobs({ bookId: "book-audio" })).toEqual([])
+      expect(await db.query.ttsSegments.findMany()).toEqual([])
+      const clearedExport = await audiobook.getExport("book-audio")
+      expect(clearedExport.chaptersReady).toBe(0)
+      expect(clearedExport.stale).toBe(true)
+    } finally {
+      await client.close()
+    }
+  })
+
+  it("synthesizes an installed neural engine through a registered sidecar manifest", async () => {
+    const { audiobook, client, db, paths } = await createTestServices()
+    try {
+      await seedBook(db, paths)
+      const tts = new TtsService(db, paths, audiobook)
+      await tts.listJobs()
+
+      const sidecarPath = path.join(paths.userData, "mock-tts-sidecar.cjs")
+      await writeFile(
+        sidecarPath,
+        `
+const fs = require("fs")
+let input = ""
+process.stdin.setEncoding("utf8")
+process.stdin.on("data", (chunk) => { input += chunk })
+process.stdin.on("end", () => {
+  const request = JSON.parse(input)
+  fs.mkdirSync(request.outputDirectory, { recursive: true })
+  const segments = request.plan.segments.map((segment, index) => {
+    const audioPath = require("path").join(request.outputDirectory, "segment-" + index + ".wav")
+    fs.writeFileSync(audioPath, Buffer.from("segment-" + segment.segmentId))
+    return { segmentId: segment.segmentId, segmentIndex: index, audioPath, mimeType: "audio/wav", durationMs: 250 }
+  })
+  const chapterPath = require("path").join(request.outputDirectory, "chapter.wav")
+  fs.writeFileSync(chapterPath, Buffer.from("chapter-" + request.engineId))
+  process.stdout.write(JSON.stringify({
+    schemaVersion: "dreamreader-tts-sidecar-result/v1",
+    segments,
+    chapter: { audioPath: chapterPath, mimeType: "audio/wav", durationMs: 750 }
+  }))
+})
+`
+      )
+      await db
+        .update(ttsEngines)
+        .set({
+          installed: true,
+          installPath: path.join(paths.modelsDir, "qwen3-tts-06b")
+        })
+        .where(eq(ttsEngines.id, "qwen3-tts-06b-mlx"))
+      await db.insert(runtimeManifests).values({
+        id: "runtime_test_qwen3_tts_mlx",
+        adapterId: "qwen3-tts-mlx",
+        runtime: "mlx",
+        version: "test",
+        executablePath: process.execPath,
+        environmentJson: {
+          args: [sidecarPath],
+          timeoutMs: 10_000
+        },
+        capabilitiesJson: {
+          protocol: "dreamreader-tts-sidecar/v1"
+        }
+      })
+
+      const queued = await tts.enqueueChapter({
+        bookId: "book-audio",
+        chapterHref: "chapter-1",
+        engineId: "qwen3-tts-06b-mlx",
+        quality: "draft",
+        useExpressiveNarration: false
+      })
+      expect(queued.status).toBe("queued")
+
+      await tts.drainQueue()
+
+      const completed = await tts.getJob(queued.id)
+      expect(completed.status).toBe("completed")
+      expect(completed.settings.chapterAudioAssetId).toBeTruthy()
+
+      const segmentRows = await db.query.ttsSegments.findMany({
+        where: (table, { eq }) => eq(table.jobId, queued.id)
+      })
+      expect(segmentRows.every((segment) => segment.status === "completed")).toBe(true)
+      expect(segmentRows.every((segment) => Boolean(segment.audioAssetId))).toBe(true)
     } finally {
       await client.close()
     }

@@ -1,4 +1,4 @@
-import type { NarrationPlan, NarrationProsody, NarrationSegment, VoiceRole } from "@shared/contracts/ai"
+import type { NarrationPlan, NarrationProsody, NarrationSegment, PronunciationEntry, VoiceRole } from "@shared/contracts/ai"
 import { hashBuffer } from "@main/lib/hash"
 
 export const NORMALIZER_ID = "pt-br-basic-normalizer"
@@ -41,14 +41,16 @@ export type ChapterNarrationInput = {
   contentHash: string
   html: string
   language: string
+  pronunciationEntries?: PronunciationEntry[]
 }
 
 export function buildNarrationPlan(input: ChapterNarrationInput): NarrationPlan {
   const text = htmlToReadableText(input.html)
   const chunks = segmentTextForTts(text)
+  const dictionaryVersion = dictionaryVersionFor(input.pronunciationEntries ?? [])
   const segments = chunks.map((chunk, index): NarrationSegment => {
     const segmentHash = hashBuffer(`${input.bookId}:${input.chapterHref}:${index}:${chunk}`)
-    const normalizedText = normalizePtBr(chunk)
+    const normalizedText = normalizePtBr(chunk, input.pronunciationEntries)
     return {
       segmentId: `${input.bookId}:${input.chapterHref}:${index}:${segmentHash.slice(0, 12)}`,
       locator: {
@@ -76,7 +78,7 @@ export function buildNarrationPlan(input: ChapterNarrationInput): NarrationPlan 
     normalization: {
       normalizerId: NORMALIZER_ID,
       version: NORMALIZER_VERSION,
-      dictionaryVersion: DICTIONARY_VERSION
+      dictionaryVersion
     },
     prosody: {
       analyzerId: PROSODY_ANALYZER_ID,
@@ -143,7 +145,7 @@ function splitLongSentence(sentence: string): string[] {
   return chunks
 }
 
-export function normalizePtBr(text: string): string {
+export function normalizePtBr(text: string, pronunciationEntries: PronunciationEntry[] = []): string {
   let normalized = text
 
   normalized = normalized.replace(/\bR\$\s*(\d{1,6})(?:,(\d{2}))?\b/g, (_match, reais: string, centavos: string | undefined) => {
@@ -181,7 +183,49 @@ export function normalizePtBr(text: string): string {
     normalized = normalized.replace(new RegExp(`\\b${escapeRegExp(abbreviation)}`, "g"), replacement)
   }
 
+  normalized = applyPronunciationEntries(normalized, pronunciationEntries)
+
   return normalized.replace(/\s+/g, " ").trim()
+}
+
+export function dictionaryVersionFor(pronunciationEntries: PronunciationEntry[] = []): string {
+  if (!pronunciationEntries.length) {
+    return DICTIONARY_VERSION
+  }
+  const signature = pronunciationEntries
+    .map((entry) =>
+      [entry.scope, entry.bookId ?? "", entry.pattern, entry.replacement, entry.matchKind, entry.caseSensitive ? "1" : "0"].join(":")
+    )
+    .sort()
+    .join("\n")
+  return `${DICTIONARY_VERSION}:${hashBuffer(signature).slice(0, 12)}`
+}
+
+export function applyPronunciationEntries(text: string, pronunciationEntries: PronunciationEntry[]): string {
+  return pronunciationEntries.reduce((current, entry) => {
+    if (!entry.pattern.trim()) {
+      return current
+    }
+    try {
+      const flags = entry.caseSensitive ? "g" : "gi"
+      if (entry.matchKind === "regex") {
+        return current.replace(new RegExp(entry.pattern, flags), entry.replacement)
+      }
+      const escaped = escapeRegExp(entry.pattern)
+      const expression =
+        entry.matchKind === "word"
+          ? new RegExp(`(^|[^\\p{L}\\p{N}_])(${escaped})(?=$|[^\\p{L}\\p{N}_])`, `${flags}u`)
+          : new RegExp(escaped, flags)
+      return current.replace(expression, (match, prefix: string) => {
+        if (entry.matchKind !== "word") {
+          return entry.replacement
+        }
+        return `${prefix}${entry.replacement}`
+      })
+    } catch {
+      return current
+    }
+  }, text)
 }
 
 function splitSentences(paragraph: string): string[] {

@@ -1,119 +1,499 @@
-import type { VoiceCloneInput, VoiceFilter, VoiceProfile } from "@shared/contracts/ai"
+import { copyFile, mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises"
+import path from "node:path"
+import { and, asc, eq, inArray } from "drizzle-orm"
+import {
+  VoiceEngineBindingSchema,
+  VoiceProfileSchema,
+  VoiceSampleSchema,
+  type VoiceCloneInput,
+  type VoiceEngineBinding,
+  type VoiceFilter,
+  type VoiceProfile,
+  type VoiceSample
+} from "@shared/contracts/ai"
+import type { AppDatabase } from "@main/db/client"
+import { assets, ttsEngines, voiceEngineBindings, voiceProfiles, voiceSamples } from "@main/db/schema"
 import { AppError } from "@main/lib/errors"
+import { hashBuffer } from "@main/lib/hash"
 import { createId } from "@main/lib/ids"
+import type { AppPaths } from "@main/lib/paths"
+import { LocalTtsAdapter } from "@main/services/local-tts-adapter"
+import { buildPreviewPlan } from "@main/services/voice-preview"
 
-const compatibleEngineIds = [
-  "dreamreader-local-tts",
-  "qwen3-tts-06b-mlx",
-  "qwen3-tts-17b-mlx",
-  "f5-tts-pt-br"
-]
-const compatibleAdapterIds = ["dreamreader-local-wav", "qwen3-tts-mlx", "f5-tts-pt-br"]
-const builtInCreatedAt = "2026-06-06T00:00:00.000Z"
+export const DEFAULT_VOICE_PROFILE_ID = "voice_builtin_ptbr_neutral"
+
+const builtInVoiceSettings = {
+  provider: "dreamreader",
+  preset: "pt-br-neutral"
+}
 
 export class VoiceService {
-  private readonly voices = new Map<string, VoiceProfile>([
-    [
-      "voice_builtin_ptbr_neutral",
-      {
-        id: "voice_builtin_ptbr_neutral",
+  private readonly previewAdapter = new LocalTtsAdapter()
+  private readyPromise: Promise<void> | undefined
+
+  constructor(
+    private readonly db: AppDatabase,
+    private readonly paths: AppPaths
+  ) {}
+
+  async list(filter: Partial<VoiceFilter> = {}): Promise<VoiceProfile[]> {
+    await this.ensureReady()
+    const rows = await this.db.query.voiceProfiles.findMany({
+      orderBy: [asc(voiceProfiles.createdAt)]
+    })
+    const bindings = await this.db.query.voiceEngineBindings.findMany()
+    return rows
+      .filter((voice) => {
+        if (filter.language && voice.language !== filter.language) return false
+        if (filter.kind && voice.kind !== filter.kind) return false
+        if (filter.engineId || filter.adapterId || !filter.includeUnavailable) {
+          return bindings.some((binding) => {
+            if (binding.voiceProfileId !== voice.id) return false
+            if (!filter.includeUnavailable && binding.status !== "ready") return false
+            if (filter.engineId && binding.engineId !== filter.engineId) return false
+            if (filter.adapterId && binding.adapterId !== filter.adapterId) return false
+            return true
+          })
+        }
+        return true
+      })
+      .map((voice) => toVoiceProfile(voice, bindings.filter((binding) => binding.voiceProfileId === voice.id)))
+  }
+
+  async listCompatible(engineId?: string): Promise<VoiceProfile[]> {
+    return this.list(engineId ? { engineId } : {})
+  }
+
+  async createFromReference(input: VoiceCloneInput): Promise<VoiceProfile> {
+    await this.ensureReady()
+    const engine = await this.db.query.ttsEngines.findFirst({ where: eq(ttsEngines.id, input.engineId) })
+    if (!engine) {
+      throw new AppError("tts_engine_not_found", "TTS engine not found")
+    }
+    if (!engine.installed) {
+      throw new AppError("tts_engine_not_configured", "TTS engine model is not installed")
+    }
+    const capabilities = jsonObject(engine.capabilitiesJson)
+    if (capabilities.supportsVoiceClone !== true) {
+      throw new AppError("voice_clone_unsupported", "Selected engine does not support voice cloning")
+    }
+
+    const now = new Date()
+    const profileId = createId("voice")
+    const sample = await this.copyReferenceSample(profileId, input, now)
+    const [voice] = await this.db
+      .insert(voiceProfiles)
+      .values({
+        id: profileId,
+        name: input.name,
+        description: "",
+        language: input.language,
+        kind: "cloned",
+        source: JSON.stringify({
+          type: "reference_audio",
+          originalFileName: path.basename(input.referenceAudioPath),
+          sampleAssetId: sample.assetId
+        }),
+        tags: [input.language, "clonada"],
+        settingsJson: {},
+        consentConfirmedAt: now,
+        consentNote: input.consentNote,
+        createdFromEngineId: input.engineId,
+        updatedAt: now
+      })
+      .returning()
+
+    await this.db.insert(voiceSamples).values({
+      id: sample.id,
+      voiceProfileId: profileId,
+      assetId: sample.assetId,
+      transcript: input.transcript,
+      language: input.language,
+      durationMs: sample.durationMs,
+      qualityJson: sample.quality,
+      consentConfirmedAt: now
+    })
+
+    await this.db.insert(voiceEngineBindings).values({
+      id: createId("voice_binding"),
+      voiceProfileId: profileId,
+      engineId: input.engineId,
+      adapterId: engine.adapterId,
+      status: "ready",
+      bindingKind: "reference_audio",
+      bindingAssetId: sample.assetId,
+      settingsJson: {
+        transcript: input.transcript ?? "",
+        source: "local-reference"
+      },
+      compatibilityJson: {
+        language: input.language,
+        engineVersion: engine.version
+      },
+      updatedAt: now
+    })
+
+    return toVoiceProfile(voice, await this.bindingsForVoice(profileId))
+  }
+
+  async preview(input: { voiceProfileId: string; engineId: string }) {
+    await this.ensureReady()
+    const voice = await this.getProfile(input.voiceProfileId)
+    const binding = await this.readyBinding(input.voiceProfileId, input.engineId)
+    const previewPath = path.join(this.paths.voicesDir, input.voiceProfileId, `preview-${sanitizePathPart(input.engineId)}.wav`)
+    await mkdir(path.dirname(previewPath), { recursive: true })
+    await this.previewAdapter.warmup()
+    const audio = this.previewAdapter.synthesizeChapter(buildPreviewPlan(input.voiceProfileId, input.engineId, voice.language))
+    await writeFile(previewPath, audio.buffer)
+    this.previewAdapter.scheduleDispose()
+    const [asset] = await this.db
+      .insert(assets)
+      .values({
+        id: createId("asset"),
+        kind: "voice_preview",
+        path: previewPath,
+        mimeType: audio.mimeType,
+        contentHash: audio.contentHash,
+        sizeBytes: audio.buffer.byteLength
+      })
+      .returning()
+    await this.db
+      .update(voiceProfiles)
+      .set({
+        previewAssetId: asset.id,
+        updatedAt: new Date()
+      })
+      .where(eq(voiceProfiles.id, input.voiceProfileId))
+    await this.db
+      .update(voiceEngineBindings)
+      .set({
+        settingsJson: {
+          ...jsonObject(binding.settingsJson),
+          previewAssetId: asset.id
+        },
+        updatedAt: new Date()
+      })
+      .where(eq(voiceEngineBindings.id, binding.id))
+    return { audioAssetId: asset.id }
+  }
+
+  async update(input: { voiceProfileId: string; name?: string; description?: string | null; tags?: string[] }) {
+    await this.ensureReady()
+    await this.getProfile(input.voiceProfileId)
+    const [updated] = await this.db
+      .update(voiceProfiles)
+      .set({
+        name: input.name,
+        description: input.description === undefined ? undefined : input.description ?? "",
+        tags: input.tags,
+        updatedAt: new Date()
+      })
+      .where(eq(voiceProfiles.id, input.voiceProfileId))
+      .returning()
+    return toVoiceProfile(updated, await this.bindingsForVoice(input.voiceProfileId))
+  }
+
+  async delete(input: { voiceProfileId: string }) {
+    await this.ensureReady()
+    const voice = await this.getProfile(input.voiceProfileId)
+    if (voice.kind === "built_in") {
+      throw new AppError("voice_readonly", "Built-in voices cannot be deleted")
+    }
+
+    const assetIds = new Set<string>()
+    const samples = await this.db.query.voiceSamples.findMany({ where: eq(voiceSamples.voiceProfileId, input.voiceProfileId) })
+    samples.forEach((sample) => assetIds.add(sample.assetId))
+    const bindings = await this.bindingsForVoice(input.voiceProfileId)
+    bindings.forEach((binding) => {
+      if (binding.bindingAssetId) assetIds.add(binding.bindingAssetId)
+    })
+    if (voice.previewAssetId) {
+      assetIds.add(voice.previewAssetId)
+    }
+
+    const assetRows = assetIds.size
+      ? await this.db.query.assets.findMany({
+          where: inArray(assets.id, [...assetIds])
+        })
+      : []
+    await this.db.delete(voiceProfiles).where(eq(voiceProfiles.id, input.voiceProfileId))
+    if (assetIds.size) {
+      await this.db.delete(assets).where(inArray(assets.id, [...assetIds]))
+    }
+    await Promise.all(assetRows.map((asset) => unlink(asset.path).catch(() => undefined)))
+    return { deleted: true as const }
+  }
+
+  async getVoiceForSynthesis(input: {
+    engineId: string
+    voiceBindingId?: string
+    voiceProfileId?: string
+  }): Promise<{ binding?: VoiceEngineBinding; profile?: VoiceProfile; samples: VoiceSample[] }> {
+    await this.ensureReady()
+    const profileId = input.voiceProfileId ?? DEFAULT_VOICE_PROFILE_ID
+    const profileRow = await this.getProfile(profileId)
+    const binding = input.voiceBindingId
+      ? await this.bindingById(input.voiceBindingId)
+      : await this.readyBinding(profileId, input.engineId)
+    const sampleRows = await this.db.query.voiceSamples.findMany({ where: eq(voiceSamples.voiceProfileId, profileId) })
+    return {
+      binding: toVoiceBinding(binding),
+      profile: toVoiceProfile(profileRow, await this.bindingsForVoice(profileId)),
+      samples: sampleRows.map(toVoiceSample)
+    }
+  }
+
+  private async copyReferenceSample(profileId: string, input: VoiceCloneInput, now: Date) {
+    const buffer = await readFile(input.referenceAudioPath)
+    const info = await stat(input.referenceAudioPath)
+    if (!info.isFile()) {
+      throw new AppError("voice_sample_invalid", "Voice reference must be a file")
+    }
+    const contentHash = hashBuffer(buffer)
+    const extension = path.extname(input.referenceAudioPath).toLowerCase() || ".wav"
+    const targetPath = path.join(this.paths.voicesDir, profileId, `reference-${contentHash.slice(0, 16)}${extension}`)
+    await mkdir(path.dirname(targetPath), { recursive: true })
+    await copyFile(input.referenceAudioPath, targetPath)
+    const [asset] = await this.db
+      .insert(assets)
+      .values({
+        id: createId("asset"),
+        kind: "voice_sample",
+        path: targetPath,
+        mimeType: mimeTypeFor(extension),
+        contentHash,
+        sizeBytes: buffer.byteLength,
+        createdAt: now
+      })
+      .returning()
+    return {
+      id: createId("voice_sample"),
+      assetId: asset.id,
+      durationMs: estimateDurationMs(buffer),
+      quality: {
+        sourceBytes: buffer.byteLength,
+        durationEstimate: "container-header-or-fallback"
+      }
+    }
+  }
+
+  private async ensureReady(): Promise<void> {
+    this.readyPromise ??= this.ensureDefaults()
+    await this.readyPromise
+  }
+
+  private async ensureDefaults(): Promise<void> {
+    await mkdir(this.paths.voicesDir, { recursive: true })
+    const now = new Date()
+    await this.db
+      .insert(voiceProfiles)
+      .values({
+        id: DEFAULT_VOICE_PROFILE_ID,
         name: "Narrador PT-BR neutro",
         description: "Voz neutra padrao para leitura em portugues brasileiro.",
         language: "pt-BR",
         kind: "built_in",
-        source: { provider: "dreamreader", preset: "pt-br-neutral" },
+        source: JSON.stringify(builtInVoiceSettings),
         tags: ["pt-BR", "narrador"],
-        settings: {
-          compatibleEngineIds,
-          compatibleAdapterIds
+        settingsJson: {
+          preset: "pt-br-neutral"
         },
-        createdAt: builtInCreatedAt,
-        updatedAt: builtInCreatedAt
-      }
-    ]
-  ])
+        updatedAt: now
+      })
+      .onConflictDoUpdate({
+        target: voiceProfiles.id,
+        set: {
+          name: "Narrador PT-BR neutro",
+          description: "Voz neutra padrao para leitura em portugues brasileiro.",
+          language: "pt-BR",
+          source: JSON.stringify(builtInVoiceSettings),
+          tags: ["pt-BR", "narrador"],
+          settingsJson: {
+            preset: "pt-br-neutral"
+          },
+          updatedAt: now
+        }
+      })
 
-  list(filter: Partial<VoiceFilter> = {}): VoiceProfile[] {
-    return [...this.voices.values()].filter((voice) => {
-      if (filter.language && voice.language !== filter.language) return false
-      if (filter.kind && voice.kind !== filter.kind) return false
-      if (filter.engineId && !getStringArray(voice.settings.compatibleEngineIds).includes(filter.engineId)) return false
-      if (filter.adapterId && !getStringArray(voice.settings.compatibleAdapterIds).includes(filter.adapterId)) return false
-      return true
-    })
-  }
-
-  listCompatible(engineId?: string) {
-    return this.list(engineId ? { engineId } : {})
-  }
-
-  createFromReference(input: VoiceCloneInput): VoiceProfile {
-    const now = new Date().toISOString()
-    const voice: VoiceProfile = {
-      id: createId("voice"),
-      name: input.name,
-      language: input.language,
-      kind: "cloned",
-      source: {
-        type: "reference_audio",
-        referenceAudioPath: input.referenceAudioPath,
-        transcript: input.transcript ?? ""
-      },
-      tags: ["pt-BR", "clonada"],
-      settings: {
-        compatibleEngineIds: [input.engineId],
-        compatibleAdapterIds
-      },
-      consentConfirmedAt: now,
-      consentNote: input.consentNote,
-      createdFromEngineId: input.engineId,
-      createdAt: now,
-      updatedAt: now
+    const engines = await this.db.query.ttsEngines.findMany()
+    for (const engine of engines) {
+      await this.db
+        .insert(voiceEngineBindings)
+        .values({
+          id: builtInBindingIdFor(engine.id),
+          voiceProfileId: DEFAULT_VOICE_PROFILE_ID,
+          engineId: engine.id,
+          adapterId: engine.adapterId,
+          status: "ready",
+          bindingKind: "preset",
+          settingsJson: {
+            preset: "pt-br-neutral"
+          },
+          compatibilityJson: {
+            builtIn: true,
+            languages: ["pt-BR", "en"]
+          },
+          updatedAt: now
+        })
+        .onConflictDoUpdate({
+          target: [voiceEngineBindings.voiceProfileId, voiceEngineBindings.engineId],
+          set: {
+            adapterId: engine.adapterId,
+            status: "ready",
+            settingsJson: {
+              preset: "pt-br-neutral"
+            },
+            compatibilityJson: {
+              builtIn: true,
+              languages: ["pt-BR", "en"]
+            },
+            updatedAt: now
+          }
+        })
     }
-    this.voices.set(voice.id, voice)
+  }
+
+  private async getProfile(id: string) {
+    const voice = await this.db.query.voiceProfiles.findFirst({ where: eq(voiceProfiles.id, id) })
+    if (!voice) {
+      throw new AppError("voice_not_found", "Voice profile not found")
+    }
     return voice
   }
 
-  preview(input: { voiceProfileId: string; engineId: string }) {
-    const voice = this.voices.get(input.voiceProfileId)
-    if (!voice) {
-      throw new AppError("voice_not_found", "Voice profile not found")
-    }
-    if (!getStringArray(voice.settings.compatibleEngineIds).includes(input.engineId)) {
+  private async bindingsForVoice(voiceProfileId: string) {
+    return this.db.query.voiceEngineBindings.findMany({
+      where: eq(voiceEngineBindings.voiceProfileId, voiceProfileId)
+    })
+  }
+
+  private async readyBinding(voiceProfileId: string, engineId: string) {
+    const binding = await this.db.query.voiceEngineBindings.findFirst({
+      where: and(
+        eq(voiceEngineBindings.voiceProfileId, voiceProfileId),
+        eq(voiceEngineBindings.engineId, engineId),
+        eq(voiceEngineBindings.status, "ready")
+      )
+    })
+    if (!binding) {
       throw new AppError("voice_engine_incompatible", "Voice is not compatible with this engine")
     }
-    return { audioAssetId: createId("asset_voice_preview") }
+    return binding
   }
 
-  update(input: { voiceProfileId: string; name?: string; description?: string | null; tags?: string[] }) {
-    const voice = this.voices.get(input.voiceProfileId)
-    if (!voice) {
-      throw new AppError("voice_not_found", "Voice profile not found")
+  private async bindingById(id: string) {
+    const binding = await this.db.query.voiceEngineBindings.findFirst({
+      where: eq(voiceEngineBindings.id, id)
+    })
+    if (!binding) {
+      throw new AppError("voice_binding_not_found", "Voice binding not found")
     }
-    const updated: VoiceProfile = {
-      ...voice,
-      name: input.name ?? voice.name,
-      description: input.description === undefined ? voice.description : input.description ?? undefined,
-      tags: input.tags ?? voice.tags,
-      updatedAt: new Date().toISOString()
-    }
-    this.voices.set(updated.id, updated)
-    return updated
-  }
-
-  delete(input: { voiceProfileId: string }) {
-    const voice = this.voices.get(input.voiceProfileId)
-    if (!voice) {
-      throw new AppError("voice_not_found", "Voice profile not found")
-    }
-    if (voice.kind === "built_in") {
-      throw new AppError("voice_readonly", "Built-in voices cannot be deleted")
-    }
-    this.voices.delete(input.voiceProfileId)
-    return { deleted: true as const }
+    return binding
   }
 }
 
-function getStringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []
+function toVoiceProfile(row: typeof voiceProfiles.$inferSelect, bindings: Array<typeof voiceEngineBindings.$inferSelect>): VoiceProfile {
+  return VoiceProfileSchema.parse({
+    id: row.id,
+    name: row.name,
+    description: row.description || undefined,
+    language: row.language,
+    kind: row.kind,
+    source: parseJsonObject(row.source),
+    tags: row.tags,
+    settings: {
+      ...jsonObject(row.settingsJson),
+      compatibleAdapterIds: unique(bindings.filter((binding) => binding.status === "ready").map((binding) => binding.adapterId)),
+      compatibleEngineIds: unique(bindings.filter((binding) => binding.status === "ready").map((binding) => binding.engineId))
+    },
+    consentConfirmedAt: optionalDate(row.consentConfirmedAt),
+    consentNote: row.consentNote || undefined,
+    previewAssetId: row.previewAssetId || undefined,
+    createdFromEngineId: row.createdFromEngineId || undefined,
+    createdAt: toIso(row.createdAt),
+    updatedAt: toIso(row.updatedAt)
+  })
+}
+
+function toVoiceBinding(row: typeof voiceEngineBindings.$inferSelect): VoiceEngineBinding {
+  return VoiceEngineBindingSchema.parse({
+    id: row.id,
+    voiceProfileId: row.voiceProfileId,
+    engineId: row.engineId,
+    adapterId: row.adapterId,
+    status: row.status,
+    bindingKind: row.bindingKind,
+    bindingAssetId: row.bindingAssetId ?? undefined,
+    settings: row.settingsJson,
+    compatibility: row.compatibilityJson,
+    createdAt: toIso(row.createdAt),
+    updatedAt: toIso(row.updatedAt)
+  })
+}
+
+function toVoiceSample(row: typeof voiceSamples.$inferSelect): VoiceSample {
+  return VoiceSampleSchema.parse({
+    id: row.id,
+    voiceProfileId: row.voiceProfileId,
+    assetId: row.assetId,
+    transcript: row.transcript ?? undefined,
+    language: row.language ?? undefined,
+    durationMs: row.durationMs,
+    quality: row.qualityJson,
+    consentConfirmedAt: optionalDate(row.consentConfirmedAt),
+    createdAt: toIso(row.createdAt)
+  })
+}
+
+function parseJsonObject(value: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value)
+    return jsonObject(parsed)
+  } catch {
+    return value ? { value } : {}
+  }
+}
+
+function jsonObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values)]
+}
+
+function builtInBindingIdFor(engineId: string): string {
+  return `voice_binding_builtin_ptbr_neutral_${sanitizePathPart(engineId)}`
+}
+
+function sanitizePathPart(value: string): string {
+  return value.replace(/[^a-z0-9._-]+/gi, "_").slice(0, 96) || "voice"
+}
+
+function mimeTypeFor(extension: string): string {
+  if (extension === ".mp3") return "audio/mpeg"
+  if (extension === ".m4a") return "audio/mp4"
+  if (extension === ".ogg") return "audio/ogg"
+  if (extension === ".flac") return "audio/flac"
+  return "audio/wav"
+}
+
+function estimateDurationMs(buffer: Buffer): number {
+  if (buffer.subarray(0, 4).toString() === "RIFF" && buffer.subarray(8, 12).toString() === "WAVE") {
+    const byteRate = buffer.readUInt32LE(28)
+    const dataOffset = buffer.indexOf("data")
+    if (byteRate > 0 && dataOffset >= 0 && dataOffset + 8 <= buffer.byteLength) {
+      const dataSize = buffer.readUInt32LE(dataOffset + 4)
+      return Math.max(1, Math.round((dataSize / byteRate) * 1000))
+    }
+  }
+  return 1000
+}
+
+function optionalDate(value: Date | string | null | undefined): string | undefined {
+  return value ? toIso(value) : undefined
+}
+
+function toIso(value: Date | string): string {
+  return value instanceof Date ? value.toISOString() : value
 }

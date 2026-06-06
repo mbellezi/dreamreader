@@ -140,6 +140,7 @@ export type TtsJob = {
   chapterHref: string
   engineId: string
   voiceProfileId?: string
+  voiceBindingId?: string
   status: TtsJobStatus
   progress: number
   settings: Record<string, unknown>
@@ -238,6 +239,19 @@ export type VoiceProfile = {
   name: string
   language: string
   kind: string
+  settings?: Record<string, unknown>
+}
+
+export type PronunciationEntry = {
+  id: string
+  scope: "global" | "book"
+  bookId?: string
+  pattern: string
+  replacement: string
+  matchKind: "literal" | "word" | "regex"
+  caseSensitive: boolean
+  createdAt: string
+  updatedAt: string
 }
 
 export type DreamReaderBridge = {
@@ -262,7 +276,7 @@ export type DreamReaderBridge = {
   models?: {
     list?: () => Promise<unknown[]>
     diagnostics?: () => Promise<unknown[]>
-    installFromPath?: (modelPath: string) => Promise<unknown>
+    installFromPath?: (modelPath?: string) => Promise<unknown>
     download?: (modelId: string) => Promise<unknown>
   }
   tts?: {
@@ -271,6 +285,7 @@ export type DreamReaderBridge = {
     retryJob?: (id: string) => Promise<unknown>
     getJob?: (id: string) => Promise<unknown>
     listJobs?: (filter?: { bookId?: string; engineId?: string }) => Promise<unknown[]>
+    clearChapterAudio?: (input: { bookId: string; chapterHref: string }) => Promise<unknown>
   }
   voices?: {
     list?: () => Promise<unknown[]>
@@ -285,6 +300,12 @@ export type DreamReaderBridge = {
     enableAutoBuild?: (bookId: string, enabled: boolean) => Promise<unknown>
     rebuild?: (bookId: string) => Promise<unknown>
     reveal?: (bookId: string) => Promise<unknown>
+  }
+  pronunciation?: {
+    list?: (input?: { bookId?: string; includeGlobal?: boolean }) => Promise<unknown[]>
+    create?: (input: Record<string, unknown>) => Promise<unknown>
+    update?: (input: Record<string, unknown>) => Promise<unknown>
+    delete?: (id: string) => Promise<unknown>
   }
 }
 

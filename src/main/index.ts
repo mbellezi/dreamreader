@@ -6,6 +6,7 @@ import { getAppPaths } from "@main/lib/paths"
 import { registerAssetProtocol } from "@main/protocol/asset-protocol"
 import { AudiobookService } from "@main/services/audiobook-service"
 import { LibraryService } from "@main/services/library-service"
+import { PronunciationService } from "@main/services/pronunciation-service"
 import { RuntimeService } from "@main/services/runtime-service"
 import { TtsService } from "@main/services/tts-service"
 import { VoiceService } from "@main/services/voice-service"
@@ -29,14 +30,15 @@ async function createWindow() {
   registerAssetProtocol(db)
   const audiobook = new AudiobookService(db, paths)
   const tts = new TtsService(db, paths, audiobook)
+  await tts.resumePendingJobs()
   registerIpc({
     library: new LibraryService(db, paths),
     runtime: new RuntimeService(db, paths),
     tts,
-    voices: new VoiceService(),
-    audiobook
+    voices: new VoiceService(db, paths),
+    audiobook,
+    pronunciation: new PronunciationService(db)
   })
-  void tts.resumePendingJobs()
 
   mainWindow = new BrowserWindow({
     width: 1280,

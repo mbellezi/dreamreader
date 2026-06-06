@@ -22,6 +22,7 @@ import type {
   Annotation,
   AudiobookExport,
   BookDetails,
+  PronunciationEntry,
   ReaderPreferences,
   RuntimeDiagnostic,
   RuntimeModel,
@@ -42,15 +43,20 @@ export function InspectorPane({
   audioJobs,
   audioLoading,
   preferences,
+  pronunciationEntries,
   t,
   voices,
   onCancelTtsJob,
   onChangePreference,
   onChangeTab,
+  onClearChapterAudio,
+  onCreatePronunciationEntry,
   onDeleteAnnotation,
+  onDeletePronunciationEntry,
   onExportNotes,
   onDownloadModel,
   onGenerateChapterAudio,
+  onInstallModelFromPath,
   onJumpToAnnotation,
   onJumpToChapter,
   onRebuildAudiobook,
@@ -69,12 +75,16 @@ export function InspectorPane({
   exportContent: string
   models: RuntimeModel[]
   preferences: ReaderPreferences
+  pronunciationEntries: PronunciationEntry[]
   t: TranslationFn
   voices: VoiceProfile[]
   onCancelTtsJob: (jobId: string) => void
   onChangePreference: ReaderPreferenceChangeHandler
   onChangeTab: (tab: InspectorTab) => void
+  onClearChapterAudio: () => Promise<void> | void
+  onCreatePronunciationEntry: (input: { pattern: string; replacement: string; scope: "global" | "book" }) => Promise<void> | void
   onDeleteAnnotation: (annotationId: string) => void
+  onDeletePronunciationEntry: (id: string) => Promise<void> | void
   onExportNotes: () => void
   onDownloadModel: (modelId: string) => Promise<void> | void
   onGenerateChapterAudio: (input: {
@@ -83,6 +93,7 @@ export function InspectorPane({
     useExpressiveNarration: boolean
     voiceProfileId?: string
   }) => void
+  onInstallModelFromPath: () => Promise<void> | void
   onJumpToAnnotation: (annotation: Annotation) => void
   onJumpToChapter: (index: number) => void
   onRebuildAudiobook: () => void
@@ -292,11 +303,16 @@ export function InspectorPane({
             jobs={audioJobs}
             loading={audioLoading}
             models={models}
+            pronunciationEntries={pronunciationEntries}
             t={t}
             voices={voices}
             onCancelJob={onCancelTtsJob}
+            onClearChapterAudio={onClearChapterAudio}
+            onCreatePronunciationEntry={onCreatePronunciationEntry}
+            onDeletePronunciationEntry={onDeletePronunciationEntry}
             onDownloadModel={onDownloadModel}
             onGenerateChapter={onGenerateChapterAudio}
+            onInstallModelFromPath={onInstallModelFromPath}
             onRebuildAudiobook={onRebuildAudiobook}
             onRetryJob={onRetryTtsJob}
             onToggleAutoBuild={onToggleAudiobookAutoBuild}

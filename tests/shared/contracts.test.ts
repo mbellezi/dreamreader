@@ -158,6 +158,20 @@ describe("shared contracts", () => {
     ).toBe(true);
   });
 
+  it("allows model local install to be requested through the native picker", () => {
+    expect(
+      IpcContractSchemas["models.installFromPath"].request.parse({}),
+    ).toEqual({});
+
+    expect(
+      IpcContractSchemas["models.installFromPath"].request.parse({
+        path: "/models/Qwen3-TTS-12Hz-0.6B-Base",
+      }),
+    ).toEqual({
+      path: "/models/Qwen3-TTS-12Hz-0.6B-Base",
+    });
+  });
+
   it("validates annotations and settings defaults", () => {
     expect(
       AnnotationSchema.safeParse({

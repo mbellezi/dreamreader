@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { buildNarrationPlan, normalizePtBr, segmentTextForTts } from "../../src/main/services/tts-pipeline"
+import { buildNarrationPlan, dictionaryVersionFor, normalizePtBr, segmentTextForTts } from "../../src/main/services/tts-pipeline"
 
 describe("TTS pipeline", () => {
   it("normalizes common PT-BR speech forms", () => {
@@ -32,5 +32,30 @@ describe("TTS pipeline", () => {
       "O Dr. Silva chegou cedo.",
       "Depois saiu."
     ])
+  })
+
+  it("applies pronunciation entries and versions the dictionary in narration plans", () => {
+    const entry = {
+      id: "pronunciation-1",
+      scope: "global" as const,
+      pattern: "Qwen",
+      replacement: "tchuen",
+      matchKind: "word" as const,
+      caseSensitive: false,
+      createdAt: "2026-06-06T12:00:00.000Z",
+      updatedAt: "2026-06-06T12:00:00.000Z"
+    }
+    const plan = buildNarrationPlan({
+      bookId: "book-1",
+      chapterHref: "chapter-1",
+      contentHash: "hash-1",
+      html: "<article><p>Qwen melhora a prosodia.</p></article>",
+      language: "pt-BR",
+      pronunciationEntries: [entry]
+    })
+
+    expect(plan.segments[0].normalizedText).toContain("tchuen melhora")
+    expect(plan.normalization.dictionaryVersion).toBe(dictionaryVersionFor([entry]))
+    expect(plan.normalization.dictionaryVersion).not.toBe(dictionaryVersionFor([]))
   })
 })

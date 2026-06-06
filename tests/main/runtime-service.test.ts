@@ -44,6 +44,14 @@ describe("RuntimeService", () => {
 
       const diagnostics = await service.diagnostics()
       expect(diagnostics.find((item) => item.id === "qwen-prosody-gguf")?.status).toBe("available")
+
+      const qwenTtsPath = path.join(paths.modelsDir, "Qwen3-TTS-12Hz-1.7B-CustomVoice")
+      await mkdir(qwenTtsPath, { recursive: true })
+
+      const ttsModel = await service.installFromPath(qwenTtsPath)
+      expect(ttsModel.id).toBe("model_qwen3_tts_17b_customvoice_mlx")
+      expect(ttsModel.installStatus).toBe("available")
+      expect(ttsModel.path).toBe(qwenTtsPath)
     } finally {
       await client.close()
     }

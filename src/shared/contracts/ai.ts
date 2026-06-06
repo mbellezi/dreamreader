@@ -286,6 +286,79 @@ export const VoiceCloneInputSchema = z.object({
 });
 export type VoiceCloneInput = z.infer<typeof VoiceCloneInputSchema>;
 
+export const PronunciationScopeSchema = z.enum(["global", "book"]);
+export type PronunciationScope = z.infer<typeof PronunciationScopeSchema>;
+
+export const PronunciationMatchKindSchema = z.enum([
+  "literal",
+  "word",
+  "regex",
+]);
+export type PronunciationMatchKind = z.infer<
+  typeof PronunciationMatchKindSchema
+>;
+
+export const PronunciationEntrySchema = z.object({
+  id: IdSchema,
+  scope: PronunciationScopeSchema,
+  bookId: IdSchema.optional(),
+  pattern: NonEmptyStringSchema.max(120),
+  replacement: NonEmptyStringSchema.max(160),
+  matchKind: PronunciationMatchKindSchema.default("word"),
+  caseSensitive: z.boolean().default(false),
+  createdAt: IsoDateTimeStringSchema,
+  updatedAt: IsoDateTimeStringSchema,
+});
+export type PronunciationEntry = z.infer<typeof PronunciationEntrySchema>;
+
+export const CreatePronunciationEntryRequestSchema = z.object({
+  scope: PronunciationScopeSchema.default("global"),
+  bookId: IdSchema.optional(),
+  pattern: NonEmptyStringSchema.max(120),
+  replacement: NonEmptyStringSchema.max(160),
+  matchKind: PronunciationMatchKindSchema.default("word"),
+  caseSensitive: z.boolean().default(false),
+});
+export type CreatePronunciationEntryRequest = z.infer<
+  typeof CreatePronunciationEntryRequestSchema
+>;
+
+export const UpdatePronunciationEntryRequestSchema = z.object({
+  id: IdSchema,
+  pattern: NonEmptyStringSchema.max(120).optional(),
+  replacement: NonEmptyStringSchema.max(160).optional(),
+  matchKind: PronunciationMatchKindSchema.optional(),
+  caseSensitive: z.boolean().optional(),
+});
+export type UpdatePronunciationEntryRequest = z.infer<
+  typeof UpdatePronunciationEntryRequestSchema
+>;
+
+export const DeletePronunciationEntryRequestSchema = z.object({
+  id: IdSchema,
+});
+export type DeletePronunciationEntryRequest = z.infer<
+  typeof DeletePronunciationEntryRequestSchema
+>;
+
+export const ListPronunciationEntriesRequestSchema = z
+  .object({
+    bookId: IdSchema.optional(),
+    includeGlobal: z.boolean().default(true),
+  })
+  .default({ includeGlobal: true });
+export type ListPronunciationEntriesRequest = z.infer<
+  typeof ListPronunciationEntriesRequestSchema
+>;
+
+export const ClearChapterAudioRequestSchema = z.object({
+  bookId: IdSchema,
+  chapterHref: NonEmptyStringSchema,
+});
+export type ClearChapterAudioRequest = z.infer<
+  typeof ClearChapterAudioRequestSchema
+>;
+
 export const TtsSynthesisInputSchema = z.object({
   jobId: IdSchema,
   engineId: IdSchema,
