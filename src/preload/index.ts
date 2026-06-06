@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron"
+import { buildSaveLocatorRequest, type RendererLocator } from "@preload/locator"
 
 type IpcSuccess<T> = { ok: true; data: T }
 type IpcFailure = { ok: false; error: { code: string; message: string; details?: unknown } }
@@ -63,41 +64,7 @@ const api = {
     }
   },
   reader: {
-    saveProgress: async (locator: {
-      anchorParagraphIndex?: number
-      anchorText?: string
-      anchorTextOffset?: number
-      bookId: string
-      chapterId: string
-      pageCount?: number
-      pageIndex?: number
-      progress: number
-      readingFlow?: string
-      scrollProgress?: number
-      scrollTop?: number
-      updatedAt: string
-    }) =>
-      invoke("reader.saveLocator", {
-        bookId: locator.bookId,
-        locator: {
-          href: locator.chapterId,
-          text: {
-            anchorParagraphIndex: locator.anchorParagraphIndex,
-            anchorText: locator.anchorText,
-            anchorTextOffset: locator.anchorTextOffset
-          },
-          locations: {
-            pageCount: locator.pageCount,
-            pageIndex: locator.pageIndex,
-            progression: locator.progress / 100,
-            readingFlow: locator.readingFlow,
-            scrollProgress: locator.scrollProgress,
-            scrollTop: locator.scrollTop
-          }
-        },
-        chapterHref: locator.chapterId,
-        progression: locator.progress / 100
-      }),
+    saveProgress: async (locator: RendererLocator) => invoke("reader.saveLocator", buildSaveLocatorRequest(locator)),
     openBook: (bookId: string) => invoke("reader.openBook", { bookId }),
     getResource: (bookId: string, href: string) => invoke("reader.getResource", { bookId, href }),
     saveLocator: (input: {
