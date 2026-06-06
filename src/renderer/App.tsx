@@ -82,6 +82,10 @@ type PageLayout = {
   columnWidth: number
   columnGap: number
   columnsPerPage: number
+  // Empty horizontal gutter (px) on each side of the page's visible columns,
+  // measured from the article edge. When wide enough it becomes the clickable
+  // page-turn zone; otherwise the click falls back to the text's outer thirds.
+  sideMargin: number
 }
 type LibraryStatus = {
   tone: "info" | "success" | "warning" | "error"
@@ -95,6 +99,9 @@ const READING_SETTLE_MS = 12000
 const PAGINATED_COLUMN_GAP_DOUBLE = 72
 const PAGINATED_COLUMN_GAP_SINGLE = 64
 const MIN_PAGINATED_COLUMN_WIDTH = 200
+// Below this, the side gutter is too thin to be a comfortable click target, so
+// paginated paging falls back to clicking the text's outer thirds instead.
+const MIN_SIDE_MARGIN_FOR_BUTTON = 56
 
 const themeOptions: AppearanceTheme[] = ["light", "dark", "sepia", "contrast"]
 const colorOptions: HighlightColor[] = ["yellow", "green", "blue", "rose", "purple"]
@@ -862,7 +869,8 @@ function ReaderPane({
     clipWidth: 0,
     columnWidth: preferences.columnWidth,
     columnGap: PAGINATED_COLUMN_GAP_SINGLE,
-    columnsPerPage: 1
+    columnsPerPage: 1,
+    sideMargin: 0
   })
   const [pageTranslate, setPageTranslate] = useState(0)
   const [selection, setSelection] = useState<ReaderSelection | null>(null)
@@ -887,6 +895,9 @@ function ReaderPane({
   const readerAnchorInset = isPaginated ? readerTopPadding : 8
   const readerHorizontalPadding = cleanReading ? Math.max(preferences.margins, 56) : preferences.margins
   const chapterTextProgress = isPaginated ? pageProgress(pageIndex, pageCount) : 0
+  // When the page has wide enough side gutters, those whole areas become the
+  // page-turn buttons; otherwise we fall back to clicking the text's outer thirds.
+  const hasSideMargins = isPaginated && pageLayout.sideMargin >= MIN_SIDE_MARGIN_FOR_BUTTON
 
   // Geometry of one page for the current viewport + preferences. Pure: depends
   // only on the article box and reader settings, never on prior navigation.
@@ -899,7 +910,11 @@ function ReaderPane({
       const columnWidth = Math.max(1, Math.min(preferences.columnWidth, fittedColumnWidth))
       const clipWidth = pageClipWidth(columnWidth, columnGap, columnsPerPage)
       const pageHeight = Math.max(article.clientHeight - readerTopPadding - readerVerticalPadding, readerLineHeightPx)
-      return { pageHeight, clipWidth, columnWidth, columnGap, columnsPerPage }
+      // The clip is centered (mx-auto) inside the padded content box, so the
+      // empty gutter from the article edge is the padding plus half the leftover.
+      const contentBoxWidth = Math.max(article.clientWidth - readerHorizontalPadding * 2, 0)
+      const sideMargin = readerHorizontalPadding + Math.max(0, (contentBoxWidth - clipWidth) / 2)
+      return { pageHeight, clipWidth, columnWidth, columnGap, columnsPerPage, sideMargin }
     },
     [preferences.columnCount, preferences.columnWidth, readerHorizontalPadding, readerLineHeightPx, readerTopPadding, readerVerticalPadding]
   )
@@ -1269,13 +1284,15 @@ function ReaderPane({
   }
 
   const handleReaderMouseMove = (event: MouseEvent<HTMLElement>) => {
-    if (!isPaginated || !articleRef.current) {
+    // With wide side gutters the margin overlay buttons own the hover affordance,
+    // so the floating-arrow hint stays off to avoid a duplicate control.
+    if (!isPaginated || !articleRef.current || hasSideMargins) {
       setPageEdgeHint(null)
       return
     }
 
     const rect = articleRef.current.getBoundingClientRect()
-    const edgeSize = Math.min(112, rect.width * 0.18)
+    const edgeSize = rect.width / 3
     const insideVerticalPageArea = event.clientY >= rect.top && event.clientY <= rect.bottom
 
     if (!insideVerticalPageArea) {
@@ -1290,7 +1307,9 @@ function ReaderPane({
   }
 
   const handleReaderClick = (event: MouseEvent<HTMLElement>) => {
-    if (!isPaginated || !articleRef.current) {
+    // With wide side gutters the margin overlay buttons handle paging, so the
+    // article click is reserved for selection/annotation only.
+    if (!isPaginated || !articleRef.current || hasSideMargins) {
       return
     }
 
@@ -1305,7 +1324,7 @@ function ReaderPane({
     }
 
     const rect = articleRef.current.getBoundingClientRect()
-    const edgeSize = Math.min(96, rect.width * 0.18)
+    const edgeSize = rect.width / 3
     if (event.clientX <= rect.left + edgeSize) {
       goToPage(pageIndex - 1)
     } else if (event.clientX >= rect.right - edgeSize) {
@@ -1458,9 +1477,62 @@ function ReaderPane({
                 </div>
               )}
             </article>
+
+            {hasSideMargins ? (
+              <>
+                <button
+                  aria-disabled={pageIndex <= 0}
+                  aria-label={t("reader.pagePrevious")}
+                  className={cn(
+                    "group absolute inset-y-0 left-0 z-10 flex select-none items-center justify-center",
+                    pageIndex > 0 && "reader-page-zone"
+                  )}
+                  style={{ width: pageLayout.sideMargin }}
+                  title={t("reader.pagePrevious")}
+                  onClick={() => {
+                    if (pageIndex > 0) {
+                      goToPage(pageIndex - 1)
+                    }
+                  }}
+                  onDoubleClick={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                  }}
+                >
+                  <ChevronLeft
+                    className={cn("h-6 w-6 opacity-0 transition-opacity duration-200", pageIndex > 0 && "group-hover:opacity-70")}
+                    aria-hidden="true"
+                  />
+                </button>
+                <button
+                  aria-disabled={pageIndex >= pageCount - 1}
+                  aria-label={t("reader.pageNext")}
+                  className={cn(
+                    "group absolute inset-y-0 right-0 z-10 flex select-none items-center justify-center",
+                    pageIndex < pageCount - 1 && "reader-page-zone"
+                  )}
+                  style={{ width: pageLayout.sideMargin }}
+                  title={t("reader.pageNext")}
+                  onClick={() => {
+                    if (pageIndex < pageCount - 1) {
+                      goToPage(pageIndex + 1)
+                    }
+                  }}
+                  onDoubleClick={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                  }}
+                >
+                  <ChevronRight
+                    className={cn("h-6 w-6 opacity-0 transition-opacity duration-200", pageIndex < pageCount - 1 && "group-hover:opacity-70")}
+                    aria-hidden="true"
+                  />
+                </button>
+              </>
+            ) : null}
           </div>
 
-          {isPaginated ? (
+          {isPaginated && !hasSideMargins ? (
             <>
               {pageIndex > 0 ? (
                 <button

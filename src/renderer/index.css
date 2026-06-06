@@ -187,6 +187,19 @@ button:disabled {
   color: hsl(var(--reader-foreground));
 }
 
+.reader-page-zone {
+  color: hsl(var(--reader-muted-foreground));
+  transition: background-color 160ms ease;
+}
+
+.reader-page-zone:hover {
+  background: hsl(var(--reader-foreground) / 0.05);
+}
+
+.reader-page-zone:active {
+  background: hsl(var(--reader-foreground) / 0.09);
+}
+
 .annotation-yellow {
   box-shadow: inset 4px 0 0 hsl(48 88% 55%);
 }
