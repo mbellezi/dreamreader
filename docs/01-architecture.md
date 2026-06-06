@@ -13,16 +13,30 @@
 - TTS local: runtime abstrato, com adapters por motor. Em Apple Silicon, preferir MLX/Metal; usar PyTorch MPS quando MLX nao existir; CPU apenas como fallback.
 - Governador de recursos: servico do main process que controla concorrencia, memoria unificada e uso do acelerador.
 
+## Estado Atual Implementado
+
+As fases 0 e 1 estao implementadas com esta arquitetura:
+
+- `src/main/index.ts` cria a janela Electron com `sandbox`, `contextIsolation` e `nodeIntegration: false`.
+- `src/preload/index.ts` expoe `window.dreamreader` via `contextBridge` e traduz respostas IPC tipadas para a UI.
+- `src/main/ipc/register.ts` registra handlers IPC e valida os payloads de entrada com schemas Zod de `src/shared/contracts/`.
+- `src/main/db/client.ts` inicializa PGlite persistente e aplica migrations Drizzle.
+- `src/main/services/library-service.ts` implementa importacao, listagem, abertura, recursos de leitura, posicao, anotacoes, bookmarks, exportacao de anotacoes e settings.
+- `src/main/protocol/asset-protocol.ts` serve assets registrados via `dreamreader://asset/:assetId`.
+- `src/renderer/App.tsx` orquestra estado e navegacao; componentes ficam em `src/renderer/components/`, tipos de UI em `src/renderer/app/` e helpers puros em `src/renderer/lib/`.
+- `src/renderer/lib/dreamreader.ts` atua como cliente usado pelo renderer; quando a bridge Electron nao existe, usa fallback local com dados de exemplo em `localStorage`.
+- Servicos de TTS, vozes, modelos e audiobook existem como stubs/contratos para fases futuras; eles nao executam inferencia local, processamento real de voz nem montagem M4B ainda.
+
 ## Limites Entre Processos
 
 ### Renderer
 
 Responsavel por:
 
-- UI da biblioteca, leitor, anotacoes, fila de audio e configuracoes.
+- UI da biblioteca, leitor, anotacoes e configuracoes.
 - Estado visual e cache leve de consultas.
-- Player de audio.
 - Renderizacao controlada do conteudo do livro.
+- Futuramente: fila/player de audio e telas de diagnostico de modelos.
 
 Nao deve:
 
@@ -44,15 +58,11 @@ Responsavel por:
 
 - IPC handlers.
 - Banco PGlite e migrations Drizzle.
-- Importacao e indexacao de livros.
+- Importacao, extracao e armazenamento de livros.
 - Protocolo local seguro para recursos de livros.
-- Fila de jobs.
-- Supervisao de workers Node e subprocessos Python.
-- Gerenciamento de modelos locais.
-- Execucao de runtimes locais de LLM/TTS via adapters registrados.
-- Governanca de recursos para evitar que TTS, LLM e indexacao disputem CPU/GPU ao mesmo tempo.
-- Gerenciamento de perfis de voz, incluindo voice cloning, consentimento, previews e compatibilidade por adapter.
-- Montagem incremental de audiobooks M4B a partir dos capitulos sintetizados.
+- Persistencia de posicao, anotacoes, bookmarks e settings.
+- Gerenciamento inicial/stub de modelos locais, jobs TTS, perfis de voz e export M4B.
+- Futuramente: fila persistente de jobs, supervisao de workers Node e subprocessos Python, execucao real de runtimes LLM/TTS, governador de recursos, voice cloning completo e montagem incremental de audiobooks M4B.
 
 ### Workers
 
@@ -64,7 +74,7 @@ Usos recomendados:
 - Preparacao de prompts para o LLM.
 - Pos-processamento de audio e montagem de capitulos.
 
-Observacao: `node-llama-cpp` tem restricoes especificas no Electron. A primeira prova de conceito deve validar se ele pode rodar dentro de um `worker_thread` controlado pelo main. Se nao puder, o main process deve manter uma fila serializada para inferencia.
+Observacao: `node-llama-cpp` tem restricoes especificas no Electron. A integracao futura deve validar se ele pode rodar dentro de um `worker_thread` controlado pelo main. Se nao puder, o main process deve manter uma fila serializada para inferencia.
 
 ### Runtimes Locais de IA
 
@@ -82,7 +92,7 @@ Usar runtimes locais como servicos supervisionados pelo main process:
 Ver `docs/06-apple-silicon-performance.md` para a politica detalhada. Resumo arquitetural:
 
 - Detectar chip, memoria unificada, macOS, disponibilidade de Metal, MLX e MPS no diagnostico inicial.
-- Preferir modelos em formato MLX para TTS Qwen3 e, se aprovado em prova de conceito, para o LLM de prosodia.
+- Preferir modelos em formato MLX para TTS Qwen3 e, se os benchmarks aprovarem, para o LLM de prosodia.
 - Usar `node-llama-cpp` com Metal para GGUF quando a integracao Electron/Node for mais simples ou mais estavel.
 - Usar PyTorch MPS para F5-TTS-pt-br enquanto nao houver adapter MLX confiavel.
 - Serializar inferencia pesada por padrao: um job TTS ativo ou um job LLM ativo por acelerador.
@@ -114,6 +124,8 @@ Os canais devem ser nomeados por dominio e validados com schemas Zod compartilha
 - `annotations.create`
 - `annotations.update`
 - `annotations.delete`
+- `annotations.export`
+- `bookmarks.create`
 - `tts.enqueueChapter`
 - `tts.cancelJob`
 - `tts.getJob`
@@ -129,6 +141,7 @@ Os canais devem ser nomeados por dominio e validados com schemas Zod compartilha
 - `audiobook.rebuild`
 - `audiobook.reveal`
 - `models.list`
+- `models.diagnostics`
 - `models.installFromPath`
 - `settings.get`
 - `settings.update`
@@ -196,19 +209,23 @@ Ver `docs/08-audiobook-m4b.md` para detalhes. Resumo arquitetural:
 
 ## Motor de Leitura
 
-Decisao pendente:
+Estado atual do MVP:
 
-- Readium Web/TS Toolkit: preferencia inicial para uma base mais robusta de EPUB, locators, preferencias e decorators.
-- `epub.js`: caminho mais rapido para um MVP se a integracao com Readium exigir servidor/manifesto demais.
+- O app usa um motor proprio simples no `LibraryService`: EPUB e lido com `JSZip` + `fast-xml-parser`; TXT/Markdown/HTML viram um manifesto interno.
+- EPUBs com spine ou NCX sao convertidos em capitulos legiveis; anchors de NCX podem dividir secoes dentro do mesmo arquivo HTML.
+- O preload busca recursos pelo IPC `reader.getResource` e converte HTML para texto simples para o renderer atual.
+- O renderer implementa leitura continua e paginada, preferencias, sumario, locators, marcacoes por selecao e retomada de posicao.
+- Readium Web/TS Toolkit e `epub.js` nao foram adotados no MVP atual.
 
-Prova de conceito obrigatoria:
+Endurecimento futuro:
 
 - Abrir EPUB local sem expor `file://`.
 - Salvar e restaurar locator.
 - Criar marcacao em texto selecionado.
 - Navegar por sumario.
 - Aplicar temas e preferencias.
-- Bloquear scripts e navegacao externa.
+- Isolar conteudo rico em iframe sandboxed quando a renderizacao HTML completa for necessaria.
+- Bloquear scripts e navegacao externa dentro de conteudo de livro.
 
 ## Seguranca de Conteudo
 

@@ -1,6 +1,39 @@
-# Modelo de Dados Inicial
+# Modelo de Dados
 
-Este modelo e uma base para Drizzle/PGlite. Os nomes podem mudar durante o scaffold, mas as entidades ajudam a estabilizar os fluxos.
+Este documento descreve o schema Drizzle/PGlite e tambem registra entidades planejadas para fases futuras.
+
+## Estado Atual do Schema
+
+A migration atual (`drizzle/0000_fearless_swordsman.sql`) implementa estas tabelas:
+
+- `books`
+- `assets`
+- `reading_positions`
+- `annotations`
+- `bookmarks`
+- `collections`
+- `collection_books`
+- `settings`
+- `tts_engines`
+- `voice_profiles`
+- `audiobook_exports`
+
+Essas tabelas cobrem as fases 0 e 1: biblioteca local, assets de capa, posicao de leitura, anotacoes, bookmarks, settings e bases contratuais para TTS/vozes/audiobook.
+
+Ainda nao existem no schema atual:
+
+- `voice_samples`
+- `voice_engine_bindings`
+- `voice_clone_jobs`
+- `tts_jobs`
+- `tts_segments`
+- `audiobook_chapters`
+- `audiobook_build_jobs`
+- `pronunciation_entries`
+- `model_assets`
+- `runtime_manifests`
+
+Essas entidades permanecem planejadas para as fases de audio local, prosodia, multi-engine TTS, voice cloning e empacotamento.
 
 ## Entidades
 
@@ -390,32 +423,38 @@ Usos:
 - Registrar runtime GGUF via `node-llama-cpp`.
 - Permitir troca de runtime sem mudar jobs, UI ou schema de prosodia.
 
-## Indices Iniciais
+## Indices
+
+Indices implementados na migration atual:
 
 - `books.content_hash`
 - `books.title`
 - `books.language`
 - `annotations.book_id`
-- `annotations.tags`
 - `reading_positions.book_id`
-- `tts_jobs.status`
-- `tts_jobs.book_id`
 - `tts_engines.adapter_id`
 - `tts_engines.runtime`
 - `voice_profiles.language`
 - `voice_profiles.kind`
+- `audiobook_exports.book_id`
+- `audiobook_exports.status`
+- `assets.content_hash`
+- `assets.book_id`
+
+Indices planejados para fases futuras:
+
+- `annotations.tags`
+- `tts_jobs.status`
+- `tts_jobs.book_id`
 - `voice_engine_bindings.voice_profile_id`
 - `voice_engine_bindings.engine_id`
 - `voice_engine_bindings.status`
 - `voice_clone_jobs.status`
 - `tts_segments.job_id`
 - `tts_segments.segment_hash`
-- `audiobook_exports.book_id`
-- `audiobook_exports.status`
 - `audiobook_build_jobs.status`
 - `audiobook_chapters.audiobook_export_id`
 - `audiobook_chapters.chapter_href`
-- `assets.content_hash`
 - `model_assets.kind`
 - `model_assets.runtime`
 

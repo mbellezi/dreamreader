@@ -7,12 +7,12 @@ Este mapa orienta agentes e subagentes sobre onde procurar contexto antes de alt
 - `README.md`: visao geral do produto, stack e comandos principais.
 - `docs/00-product-spec.md`: especificacao de produto.
 - `docs/01-architecture.md`: arquitetura Electron, renderer, main, workers e sidecars.
-- `docs/02-data-model.md`: modelo de dados local, PGlite e Drizzle.
-- `docs/03-ipc-contracts.md`: canais IPC e fronteiras de seguranca.
+- `docs/02-ai-tts-pipeline.md`: pipeline planejado de IA/TTS, normalizacao, prosodia e cache de audio.
+- `docs/03-data-model.md`: modelo de dados local, PGlite e Drizzle.
 - `docs/04-roadmap.md`: fases de implementacao.
-- `docs/05-pt-br-language.md`: requisitos de portugues brasileiro.
-- `docs/06-local-ai-apple-silicon.md`: estrategia para LLM/TTS local em Apple Silicon.
-- `docs/07-voice-cloning.md`: modelo de vozes e consentimento.
+- `docs/05-research-notes.md`: notas de pesquisa e verificacoes tecnicas iniciais.
+- `docs/06-apple-silicon-performance.md`: estrategia para LLM/TTS local em Apple Silicon.
+- `docs/07-tts-prosody-abstractions.md`: contratos de prosodia, TTS e modelos locais.
 - `docs/08-audiobook-m4b.md`: montagem incremental de M4B.
 
 ## Codigo
@@ -20,7 +20,10 @@ Este mapa orienta agentes e subagentes sobre onde procurar contexto antes de alt
 - `src/shared/contracts/`: contratos Zod canonicos compartilhados.
 - `src/main/`: main process do Electron, banco, IPC e services locais.
 - `src/preload/`: ponte segura entre renderer e main.
-- `src/renderer/`: UI React e cliente do preload.
+- `src/renderer/App.tsx`: orquestracao de alto nivel da UI.
+- `src/renderer/components/`: panes, controles e componentes React modulares.
+- `src/renderer/app/`: tipos internos compartilhados pela UI.
+- `src/renderer/lib/`: cliente do preload, helpers puros, paginacao, anotacoes e fallback renderer.
 - `src/main/db/schema.ts`: schema Drizzle canonico.
 - `drizzle/`: migrations geradas.
 - `tests/`: testes de contratos e regressao.

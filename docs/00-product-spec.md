@@ -26,6 +26,26 @@ O produto deve funcionar bem como leitor tradicional antes de tentar ser uma fer
 - Usar um LLM local pequeno para produzir instrucoes estruturadas de prosodia, emocao e ritmo para o TTS.
 - Tratar portugues do Brasil como idioma de primeira classe.
 
+## Estado Atual
+
+As fases 0 e 1 estao implementadas. O produto atual e um MVP leitor desktop local-first:
+
+- App Electron com preload seguro, IPC validado por Zod, PGlite/Drizzle e biblioteca interna em `userData`.
+- Importacao de EPUB, TXT, Markdown e HTML por seletor nativo.
+- Extracao de metadados basicos, sumario, capitulos legiveis e capa EPUB quando disponivel.
+- Lista/grid da biblioteca com busca simples por metadados.
+- Leitor com fluxo continuo ou paginado, preferencias visuais, sumario, progresso, retomada de posicao e modo limpo.
+- Marcacoes coloridas, notas e favoritos com ancoragem por paragrafo/offset.
+- Exportacao de anotacoes em Markdown/JSON no main process; a UI atual expoe Markdown.
+- Configuracoes iniciais de idioma, aparencia e preferencias do leitor.
+- Fallback renderer com dados de exemplo quando o app roda sem bridge Electron.
+
+Ainda planejado:
+
+- Busca no texto completo, filtros avancados, tags/colecoes completas e monitoramento de pastas.
+- Player de audio, fila persistente de TTS, normalizacao PT-BR para audio, cache de audio e retomada de jobs.
+- Execucao real de LLM/TTS local, adapters de engines, voice cloning persistente e montagem M4B.
+
 ## Nao-objetivos iniciais
 
 - DRM, LCP, Kindle DRM ou remocao/conversao de protecoes.

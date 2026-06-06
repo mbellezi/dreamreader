@@ -1,62 +1,90 @@
 # Roadmap
 
-## Fase 0: Provas de Conceito
+Este roadmap descreve o estado atual do repositorio e o escopo planejado. As fases 0 e 1 estao implementadas no codigo atual; as fases seguintes continuam planejadas.
 
-Objetivo: reduzir riscos antes de construir muita UI.
+## Fase 0: Fundacao Tecnica - Implementada
 
-- Scaffold Electron com `electron-vite`, React, Tailwind 4 e shadcn/ui.
-- IPC tipado com Zod entre renderer/preload/main.
-- PGlite persistente em `userData` com Drizzle migration inicial.
-- Importar um EPUB e extrair metadados/capa.
-- Comparar Readium Web e `epub.js` para abrir EPUB local, salvar locator e criar highlight.
-- Rodar `node-llama-cpp` no main process com um GGUF pequeno e resposta JSON validada.
-- Rodar LLM de prosodia em dois caminhos no Mac: GGUF via `node-llama-cpp` + Metal e, se houver modelo pronto, MLX.
-- Rodar TTS PT-BR em processo long-lived com Qwen3-TTS MLX e F5-TTS-pt-br via PyTorch MPS/CPU.
-- Criar o contrato `NarrationPlan` + adapters TTS com schemas Zod.
-- Criar POC de voice cloning: audio de referencia, transcricao, preview e voz disponivel no seletor.
-- Criar POC de M4B: gerar dois capitulos curtos, montar M4B parcial, adicionar terceiro capitulo e remontar atomicamente.
-- Medir RTF de TTS, tokens/s de LLM, cold start, memoria de pico e estabilidade termica em Apple Silicon.
-- Validar que o governador de recursos impede TTS e LLM de rodarem inferencia pesada simultaneamente por padrao.
+Objetivo: reduzir riscos de arquitetura antes de construir funcionalidades de produto.
 
-## Fase 1: MVP Leitor
+Implementado:
+
+- Scaffold Electron com `electron-vite`, React 19, TypeScript, Tailwind CSS 4 e `lucide-react`.
+- Janela Electron com `sandbox`, `contextIsolation` e `nodeIntegration: false`.
+- Preload seguro via `contextBridge`, expondo a API `window.dreamreader`.
+- IPC registrado no main process com requests validados por schemas Zod compartilhados.
+- Contratos Zod em `src/shared/contracts/` para biblioteca, leitor, anotacoes, configuracoes, TTS, vozes, modelos e audiobook.
+- Banco PGlite persistente em `app.getPath("userData")/db/pglite`.
+- Drizzle ORM com migration inicial em `drizzle/0000_fearless_swordsman.sql`.
+- Estrutura local de arquivos em `userData`: biblioteca, capas, extraidos, cache de audio, audiobooks, vozes, modelos, logs e backups.
+- Protocolo local `dreamreader://asset/:assetId` para servir assets registrados sem expor `file://`.
+- Servicos do main process para biblioteca, runtime/modelos, TTS, vozes e audiobook.
+- Testes de contratos, locator preload, importacao EPUB, paginacao, anotacoes e helpers de estado do renderer.
+
+Escopo preparado, mas sem execucao real ainda:
+
+- Contratos de `NarrationPlan`, adapters TTS, voice cloning, jobs TTS, diagnosticos de runtime e M4B.
+- Stubs de TTS, vozes, modelos e audiobook para validar fronteiras IPC e UI futura.
+- A inferencia real de LLM/TTS, processamento de voz e montagem M4B ficam nas fases 2 a 4.
+
+## Fase 1: MVP Leitor - Implementada
+
+Implementado:
 
 - Biblioteca local com importacao de EPUB, TXT, Markdown e HTML.
+- Copia de livros importados para a biblioteca interna por hash de conteudo.
+- Deteccao de duplicatas por `content_hash`.
+- Extracao de metadados basicos de EPUB: titulo, autores, idioma, sumario e capa quando disponivel.
+- Suporte a EPUBs com NCX/anchors, incluindo divisao de capitulos em um mesmo arquivo HTML.
 - Lista/grid de livros com busca simples.
-- Tela de leitura com sumario, temas, preferencias e retomada de posicao.
-- Marcacoes, notas e favoritos.
-- Persistencia local completa em PGlite.
-- Exportacao basica de notas em Markdown.
-- Configuracoes iniciais de idioma e aparencia.
+- Tela de leitura com sumario, capitulo anterior/proximo e retorno para posicao anterior.
+- Preferencias do leitor: tema, fonte, tamanho, largura de coluna, numero de colunas, entrelinha, espacamento, margens, fluxo continuo/paginado, alinhamento e hifenizacao.
+- Modo de leitura paginado com geometria testada e ancoragem de pagina para reflow.
+- Retomada de posicao por locator persistente e progressao 0..1.
+- Marcacoes coloridas, notas e favoritos baseados em selecao de texto.
+- Resolucao de marcacoes por paragrafo/offset para evitar destacar ocorrencias repetidas erradas.
+- Exportacao basica de anotacoes em Markdown ou JSON pelo main; a UI expoe Markdown.
+- Configuracoes iniciais de idioma, aparencia e preferencias do leitor.
+- Fallback renderer com dados de exemplo em `localStorage` quando a bridge Electron nao esta disponivel.
+- Renderer modularizado: `App.tsx` orquestra alto nivel; panes, controles, helpers DOM e regras puras vivem em arquivos dedicados.
+- i18n inicial em `pt-BR` e `en`.
 
-## Fase 2: Audio Local Basico
+Limites conhecidos do MVP leitor:
 
-- Fila de jobs de TTS por capitulo.
-- Adapter inicial para uma engine TTS usando o contrato canonico.
+- Busca atual cobre metadados na biblioteca; busca no texto completo fica para fase beta.
+- Colecoes/tags existem no modelo planejado, mas nao tem UI completa no MVP atual.
+- O leitor usa extracao/renderizacao propria de HTML/texto; Readium/epub.js nao foram adotados no MVP atual.
+- Conteudo EPUB/HTML e convertido para texto no renderer atual; isolamento de iframe/sandbox para conteudo rico permanece como endurecimento futuro.
+
+## Fase 2: Audio Local Basico - Proxima
+
+- Persistir jobs de TTS no banco em vez de apenas em memoria.
+- Criar fila de jobs de TTS por capitulo.
+- Implementar adapter inicial para uma engine TTS usando o contrato canonico.
 - Segmentacao e normalizacao PT-BR basicas.
 - Player de audio por capitulo.
 - Cache de audio por capitulo.
-- Cancelamento e retomada de jobs.
-- Tela de diagnostico de modelos.
+- Cancelamento, retomada e retry de jobs.
+- Tela de diagnostico de modelos baseada nos contratos existentes.
 - Processo TTS long-lived com warmup e timeout de desalocacao.
 - M4B parcial por livro usando capitulos ja gerados.
 
 ## Fase 3: Prosodia com LLM
 
 - LLM local para gerar instrucoes estruturadas por segmento.
-- Schema Zod para `NarrationPlan` e prosodia.
+- Schema Zod para `NarrationPlan` e prosodia ja existe; implementar geracao e cache.
 - Fallback neutro quando o LLM falhar.
-- UI para ligar/desligar "narração expressiva".
+- UI para ligar/desligar "narracao expressiva".
 - Comparacao de qualidade entre audio neutro e audio com instrucoes.
 - Cache da analise de prosodia por segmento.
 
-## Fase 4: Multi-engine TTS
+## Fase 4: Multi-engine TTS e Vozes
 
 - Adapter Qwen3-TTS 0.6B.
 - Adapter Qwen3-TTS 1.7B.
 - Adapter F5-TTS-pt-br.
 - Tabela de capacidades por adapter e runtime: MLX, PyTorch MPS, CPU fallback.
 - Seletor de motor por livro/capitulo.
-- Perfis de voz.
+- Persistencia completa de perfis de voz, samples e bindings.
 - Gerenciador de vozes clonadas com consentimento, samples, previews e bindings por engine.
 - Dicionario de pronuncia global e por livro.
 - Exclusao e limpeza de audio/cache.
