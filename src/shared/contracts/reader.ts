@@ -38,12 +38,15 @@ export type ReaderTheme = z.infer<typeof ReaderThemeSchema>;
 
 export const ReaderPreferencesSchema = z.object({
   theme: ReaderThemeSchema.default("light"),
-  fontFamily: z.string().trim().optional(),
+  fontFamily: z.string().trim().default("georgia"),
   fontSizePx: z.number().int().min(12).max(40).default(18),
   lineHeight: z.number().min(1).max(2.5).default(1.5),
+  paragraphSpacing: z.number().min(0.5).max(2.5).default(1),
   columnWidthPx: z.number().int().min(360).max(1200).default(720),
+  columnCount: z.number().int().min(1).max(2).default(1),
   marginsPx: z.number().int().min(0).max(96).default(24),
-  textAlign: z.enum(["start", "justify"]).default("start"),
+  readingFlow: z.enum(["continuous", "paginated"]).default("continuous"),
+  textAlign: z.enum(["start", "justify"]).default("justify"),
   hyphenation: z.boolean().default(true),
 });
 export type ReaderPreferences = z.infer<typeof ReaderPreferencesSchema>;

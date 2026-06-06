@@ -50,26 +50,50 @@ const api = {
           }
         })
       )
+      const position = (opened.position ?? {}) as Record<string, unknown>
+      const locator = (position.locator ?? {}) as Record<string, unknown>
       return {
         ...book,
         publisher: optionalString((opened.book as Record<string, unknown> | undefined)?.publisher),
         description: optionalString((opened.book as Record<string, unknown> | undefined)?.description),
+        lastChapterId: optionalString(position.chapterHref) ?? optionalString(locator.href),
+        lastPosition: toRendererLocator(bookId, position),
         chapters
       }
     }
   },
   reader: {
     saveProgress: async (locator: {
+      anchorParagraphIndex?: number
+      anchorText?: string
+      anchorTextOffset?: number
       bookId: string
       chapterId: string
+      pageCount?: number
+      pageIndex?: number
       progress: number
+      readingFlow?: string
+      scrollProgress?: number
+      scrollTop?: number
       updatedAt: string
     }) =>
       invoke("reader.saveLocator", {
         bookId: locator.bookId,
         locator: {
           href: locator.chapterId,
-          locations: { progression: locator.progress / 100 }
+          text: {
+            anchorParagraphIndex: locator.anchorParagraphIndex,
+            anchorText: locator.anchorText,
+            anchorTextOffset: locator.anchorTextOffset
+          },
+          locations: {
+            pageCount: locator.pageCount,
+            pageIndex: locator.pageIndex,
+            progression: locator.progress / 100,
+            readingFlow: locator.readingFlow,
+            scrollProgress: locator.scrollProgress,
+            scrollTop: locator.scrollTop
+          }
         },
         chapterHref: locator.chapterId,
         progression: locator.progress / 100
@@ -118,6 +142,18 @@ const api = {
         tags: [draft.kind]
       })
       return toRendererAnnotation(created, draft.kind, draft.chapterId)
+    },
+    updateAnnotation: async (draft: {
+      id: string
+      color?: string
+      note?: string
+    }) => {
+      const updated = await invoke("annotations.update", {
+        id: draft.id,
+        color: draft.color === "rose" ? "pink" : draft.color,
+        note: draft.note
+      })
+      return toRendererAnnotation(updated)
     },
     deleteAnnotation: (annotationId: string) => invoke("annotations.delete", { id: annotationId }),
     exportNotes: (bookId: string, format: "markdown" | "json") =>
@@ -222,9 +258,15 @@ function toRendererSettings(input: unknown) {
     appearance: String(ui.theme ?? "light") === "system" ? "light" : String(ui.theme ?? "light"),
     reader: {
       theme: String(reader.theme ?? "light") === "high_contrast" ? "contrast" : String(reader.theme ?? "light"),
+      fontFamily: String(reader.fontFamily ?? "georgia"),
       fontScale: Number(reader.fontSizePx ?? 18),
       columnWidth: Number(reader.columnWidthPx ?? 720),
+      columnCount: Number(reader.columnCount ?? 1),
       lineHeight: Number(reader.lineHeight ?? 1.5),
+      paragraphSpacing: Number(reader.paragraphSpacing ?? 1),
+      margins: Number(reader.marginsPx ?? 24),
+      readingFlow: String(reader.readingFlow ?? "continuous"),
+      textAlign: String(reader.textAlign ?? "justify"),
       hyphenation: Boolean(reader.hyphenation ?? true)
     }
   }
@@ -238,11 +280,44 @@ function rendererSettingsToCanonical(input: { locale: string; appearance: string
     },
     reader: {
       theme: input.reader.theme === "contrast" ? "high_contrast" : input.reader.theme,
+      fontFamily: input.reader.fontFamily,
       fontSizePx: input.reader.fontScale,
       columnWidthPx: input.reader.columnWidth,
+      columnCount: input.reader.columnCount,
       lineHeight: input.reader.lineHeight,
+      paragraphSpacing: input.reader.paragraphSpacing,
+      marginsPx: input.reader.margins,
+      readingFlow: input.reader.readingFlow,
+      textAlign: input.reader.textAlign,
       hyphenation: input.reader.hyphenation
     }
+  }
+}
+
+function toRendererLocator(bookId: string, position: Record<string, unknown>) {
+  const locator = (position.locator ?? {}) as Record<string, unknown>
+  const locations = (locator.locations ?? {}) as Record<string, unknown>
+  const text = (locator.text ?? {}) as Record<string, unknown>
+  const progression = Number(position.progression ?? locations.progression ?? 0)
+  const chapterId = optionalString(position.chapterHref) ?? optionalString(locator.href)
+
+  if (!chapterId) {
+    return undefined
+  }
+
+  return {
+    anchorParagraphIndex: optionalNumber(text.anchorParagraphIndex),
+    anchorText: optionalString(text.anchorText),
+    anchorTextOffset: optionalNumber(text.anchorTextOffset),
+    bookId,
+    chapterId,
+    pageCount: optionalNumber(locations.pageCount),
+    pageIndex: optionalNumber(locations.pageIndex),
+    progress: Math.round(progression * 100),
+    readingFlow: optionalString(locations.readingFlow) ?? "continuous",
+    scrollProgress: optionalNumber(locations.scrollProgress),
+    scrollTop: optionalNumber(locations.scrollTop),
+    updatedAt: String(position.updatedAt ?? new Date().toISOString())
   }
 }
 
@@ -275,4 +350,9 @@ function toArray(value: unknown): unknown[] {
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined
+}
+
+function optionalNumber(value: unknown): number | undefined {
+  const numberValue = Number(value)
+  return Number.isFinite(numberValue) ? numberValue : undefined
 }

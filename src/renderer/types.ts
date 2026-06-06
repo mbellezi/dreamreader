@@ -8,7 +8,13 @@ export type BookFormat = "epub" | "txt" | "markdown" | "html"
 
 export type AnnotationKind = "highlight" | "note" | "favorite"
 
-export type HighlightColor = "yellow" | "green" | "blue" | "rose"
+export type HighlightColor = "yellow" | "green" | "blue" | "rose" | "purple"
+
+export type ReaderFontFamily = "georgia" | "palatino" | "charter" | "system-serif" | "system-sans"
+
+export type ReaderTextAlign = "start" | "justify"
+
+export type ReaderFlowMode = "continuous" | "paginated"
 
 export type BookSummary = {
   id: string
@@ -35,13 +41,23 @@ export type Chapter = {
 export type BookDetails = BookSummary & {
   publisher?: string
   description?: string
+  lastChapterId?: string
+  lastPosition?: ReaderLocator
   chapters: Chapter[]
 }
 
 export type ReaderLocator = {
+  anchorParagraphIndex?: number
+  anchorText?: string
+  anchorTextOffset?: number
   bookId: string
   chapterId: string
+  pageCount?: number
+  pageIndex?: number
   progress: number
+  readingFlow?: ReaderFlowMode
+  scrollProgress?: number
+  scrollTop?: number
   updatedAt: string
 }
 
@@ -56,11 +72,23 @@ export type Annotation = {
   createdAt: string
 }
 
+export type AnnotationUpdateDraft = {
+  id: string
+  color?: HighlightColor
+  note?: string
+}
+
 export type ReaderPreferences = {
   theme: AppearanceTheme
+  fontFamily: ReaderFontFamily
   fontScale: number
   columnWidth: number
+  columnCount: 1 | 2
   lineHeight: number
+  paragraphSpacing: number
+  margins: number
+  readingFlow: ReaderFlowMode
+  textAlign: ReaderTextAlign
   hyphenation: boolean
 }
 
@@ -99,6 +127,7 @@ export type DreamReaderBridge = {
     saveProgress?: (locator: ReaderLocator) => Promise<void>
     listAnnotations?: (bookId: string) => Promise<Annotation[]>
     createAnnotation?: (draft: AnnotationDraft) => Promise<Annotation>
+    updateAnnotation?: (draft: AnnotationUpdateDraft) => Promise<Annotation>
     deleteAnnotation?: (annotationId: string) => Promise<void>
     exportNotes?: (bookId: string, format: "markdown" | "json") => Promise<string>
   }

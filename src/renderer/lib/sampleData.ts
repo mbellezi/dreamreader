@@ -5,9 +5,15 @@ export const defaultSettings: AppSettings = {
   appearance: "light",
   reader: {
     theme: "light",
+    fontFamily: "georgia",
     fontScale: 18,
     columnWidth: 720,
+    columnCount: 1,
     lineHeight: 1.7,
+    paragraphSpacing: 1,
+    margins: 40,
+    readingFlow: "continuous",
+    textAlign: "justify",
     hyphenation: true
   }
 }

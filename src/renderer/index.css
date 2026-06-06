@@ -113,23 +113,78 @@ button:disabled {
 }
 
 .reader-copy {
-  font-family: Georgia, Cambria, "Times New Roman", Times, serif;
+  font-family: inherit;
 }
 
 .reader-light {
   --reader: 45 38% 98%;
+  --reader-border: 210 18% 82%;
+  --reader-control: 0 0% 100%;
+  --reader-foreground: 218 28% 14%;
+  --reader-muted-foreground: 218 12% 44%;
+  --reader-progress-track: 210 14% 88%;
+  --reader-surface: 0 0% 100%;
 }
 
 .reader-dark {
   --reader: 225 18% 11%;
+  --reader-border: 224 12% 30%;
+  --reader-control: 225 16% 16%;
+  --reader-foreground: 210 28% 92%;
+  --reader-muted-foreground: 214 15% 70%;
+  --reader-progress-track: 224 12% 28%;
+  --reader-surface: 225 16% 14%;
 }
 
 .reader-sepia {
   --reader: 40 52% 95%;
+  --reader-border: 35 24% 76%;
+  --reader-control: 38 46% 97%;
+  --reader-foreground: 220 20% 17%;
+  --reader-muted-foreground: 218 12% 42%;
+  --reader-progress-track: 36 22% 82%;
+  --reader-surface: 38 46% 97%;
 }
 
 .reader-contrast {
   --reader: 0 0% 3%;
+  --reader-border: 0 0% 45%;
+  --reader-control: 0 0% 8%;
+  --reader-foreground: 0 0% 98%;
+  --reader-muted-foreground: 0 0% 88%;
+  --reader-progress-track: 0 0% 18%;
+  --reader-surface: 0 0% 6%;
+}
+
+.reader-light,
+.reader-dark,
+.reader-sepia,
+.reader-contrast {
+  color: hsl(var(--reader-foreground));
+}
+
+.reader-control,
+.reader-floating-control {
+  border-color: hsl(var(--reader-border));
+  background: hsl(var(--reader-control) / 0.82);
+  color: hsl(var(--reader-foreground));
+}
+
+.reader-floating-control {
+  background: hsl(var(--reader-control) / 0.68);
+}
+
+.reader-muted {
+  color: hsl(var(--reader-muted-foreground));
+}
+
+.reader-progress-track {
+  background: hsl(var(--reader-progress-track));
+}
+
+.reader-surface {
+  background: hsl(var(--reader-surface) / 0.86);
+  color: hsl(var(--reader-foreground));
 }
 
 .annotation-yellow {
@@ -146,4 +201,8 @@ button:disabled {
 
 .annotation-rose {
   box-shadow: inset 4px 0 0 hsl(342 70% 55%);
+}
+
+.annotation-purple {
+  box-shadow: inset 4px 0 0 hsl(262 70% 58%);
 }

@@ -1,6 +1,7 @@
 import type {
   Annotation,
   AnnotationDraft,
+  AnnotationUpdateDraft,
   AppSettings,
   BookDetails,
   BookSummary,
@@ -17,6 +18,7 @@ type FallbackState = {
   books: BookDetails[]
   annotations: Annotation[]
   settings: AppSettings
+  positions: Record<string, ReaderLocator>
 }
 
 function readFallbackState(): FallbackState {
@@ -26,7 +28,8 @@ function readFallbackState(): FallbackState {
     return {
       books: sampleBooks,
       annotations: sampleAnnotations,
-      settings: defaultSettings
+      settings: normalizeSettings(defaultSettings),
+      positions: {}
     }
   }
 
@@ -36,13 +39,15 @@ function readFallbackState(): FallbackState {
     return {
       books: parsed.books?.length ? parsed.books : sampleBooks,
       annotations: parsed.annotations ?? sampleAnnotations,
-      settings: parsed.settings ?? defaultSettings
+      settings: normalizeSettings(parsed.settings),
+      positions: parsed.positions ?? {}
     }
   } catch {
     return {
       books: sampleBooks,
       annotations: sampleAnnotations,
-      settings: defaultSettings
+      settings: normalizeSettings(defaultSettings),
+      positions: {}
     }
   }
 }
@@ -52,7 +57,14 @@ function writeFallbackState(state: FallbackState): void {
 }
 
 function toSummary(book: BookDetails): BookSummary {
-  const { chapters: _chapters, description: _description, publisher: _publisher, ...summary } = book
+  const {
+    chapters: _chapters,
+    description: _description,
+    lastChapterId: _lastChapterId,
+    lastPosition: _lastPosition,
+    publisher: _publisher,
+    ...summary
+  } = book
   return summary
 }
 
@@ -68,6 +80,17 @@ function filterBooks(books: BookDetails[], query?: LibraryQuery): BookSummary[] 
       return normalizeSearch([book.title, ...book.authors, ...book.tags, book.collection ?? ""].join(" ")).includes(search)
     })
     .map(toSummary)
+}
+
+function normalizeSettings(settings?: Partial<AppSettings>): AppSettings {
+  return {
+    ...defaultSettings,
+    ...settings,
+    reader: {
+      ...defaultSettings.reader,
+      ...settings?.reader
+    }
+  }
 }
 
 function exportAnnotations(book: BookDetails | undefined, annotations: Annotation[], format: "markdown" | "json"): string {
@@ -115,7 +138,15 @@ export const dreamreaderClient = {
       return bridgeGet(bookId)
     }
 
-    return readFallbackState().books.find((book) => book.id === bookId) ?? null
+    const state = readFallbackState()
+    const book = state.books.find((item) => item.id === bookId)
+    return book
+      ? {
+        ...book,
+        lastChapterId: state.positions[bookId]?.chapterId,
+        lastPosition: state.positions[bookId]
+      }
+      : null
   },
 
   async importBooks(): Promise<ImportBooksResult> {
@@ -148,6 +179,7 @@ export const dreamreaderClient = {
         status: locator.progress >= 100 ? "finished" : "reading",
         updatedAt: locator.updatedAt
       }
+      state.positions[locator.bookId] = locator
       writeFallbackState(state)
     }
   },
@@ -176,6 +208,32 @@ export const dreamreaderClient = {
       createdAt: new Date().toISOString()
     }
     state.annotations = [annotation, ...state.annotations]
+    writeFallbackState(state)
+    return annotation
+  },
+
+  async updateAnnotation(draft: AnnotationUpdateDraft): Promise<Annotation> {
+    const bridgeUpdate = window.dreamreader?.reader?.updateAnnotation
+
+    if (bridgeUpdate) {
+      return bridgeUpdate(draft)
+    }
+
+    const state = readFallbackState()
+    const annotationIndex = state.annotations.findIndex((annotation) => annotation.id === draft.id)
+
+    if (annotationIndex < 0) {
+      throw Object.assign(new Error("Annotation not found"), {
+        code: "annotation_not_found"
+      })
+    }
+
+    const annotation = {
+      ...state.annotations[annotationIndex],
+      color: draft.color ?? state.annotations[annotationIndex].color,
+      note: draft.note ?? state.annotations[annotationIndex].note
+    }
+    state.annotations[annotationIndex] = annotation
     writeFallbackState(state)
     return annotation
   },

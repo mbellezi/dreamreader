@@ -178,9 +178,11 @@ export class LibraryService {
     const rows = await this.db.query.books.findMany({
       orderBy: (table, { desc }) => [desc(table.lastOpenedAt), desc(table.addedAt)]
     })
+    const positions = await this.db.query.readingPositions.findMany()
+    const positionByBookId = new Map(positions.map((position) => [position.bookId, position]))
     const normalized = query?.trim().toLocaleLowerCase("pt-BR")
     if (!normalized) {
-      return { books: rows.map(toBookContract), total: rows.length }
+      return { books: rows.map((book) => toBookContract(book, positionByBookId.get(book.id))), total: rows.length }
     }
     const filtered = rows.filter((book) => {
       const haystack = [book.title, book.subtitle, ...(book.authors ?? []), book.language]
@@ -189,7 +191,7 @@ export class LibraryService {
         .toLocaleLowerCase("pt-BR")
       return haystack.includes(normalized)
     })
-    return { books: filtered.map(toBookContract), total: filtered.length }
+    return { books: filtered.map((book) => toBookContract(book, positionByBookId.get(book.id))), total: filtered.length }
   }
 
   async updateBookMetadata(input: {
@@ -247,7 +249,7 @@ export class LibraryService {
       manifest: toReaderManifestContract(manifest),
       annotations: bookAnnotations.filter((item) => !item.deletedAt).map(toAnnotationContract),
       bookmarks: bookBookmarks.map(toBookmarkContract),
-      book: toBookContract(book)
+      book: toBookContract(book, position)
     }
   }
 
@@ -859,7 +861,9 @@ function normalizeFileType(ext: string): "epub" | "txt" | "markdown" | "html" | 
   return undefined
 }
 
-function toBookContract(book: typeof books.$inferSelect) {
+function toBookContract(book: typeof books.$inferSelect, position?: typeof readingPositions.$inferSelect) {
+  const progress = Math.round((position?.progression ?? 0) * 100)
+
   return {
     id: book.id,
     contentHash: book.contentHash,
@@ -875,7 +879,10 @@ function toBookContract(book: typeof books.$inferSelect) {
     libraryPath: book.libraryPath,
     coverAssetId: optional(book.coverAssetId),
     coverImageUrl: book.coverAssetId ? `dreamreader://asset/${encodeURIComponent(book.coverAssetId)}` : undefined,
-    manifest: (book.manifestJson ?? {}) as Record<string, unknown>,
+    manifest: {
+      ...((book.manifestJson ?? {}) as Record<string, unknown>),
+      progress
+    },
     addedAt: toIso(book.addedAt),
     updatedAt: toIso(book.updatedAt),
     lastOpenedAt: optionalDate(book.lastOpenedAt)
