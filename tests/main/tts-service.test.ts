@@ -195,6 +195,76 @@ process.stdin.on("end", () => {
     }
   })
 
+  it("persists fragments from a streaming (NDJSON) sidecar as each one arrives", async () => {
+    const { audiobook, client, db, paths } = await createTestServices()
+    try {
+      await seedBook(db, paths)
+      const tts = new TtsService(db, paths, audiobook)
+      await tts.listJobs()
+
+      const sidecarPath = path.join(paths.userData, "mock-streaming-sidecar.cjs")
+      await writeFile(
+        sidecarPath,
+        `
+const fs = require("fs")
+const path = require("path")
+let input = ""
+process.stdin.setEncoding("utf8")
+process.stdin.on("data", (chunk) => { input += chunk })
+process.stdin.on("end", () => {
+  const request = JSON.parse(input)
+  fs.mkdirSync(request.outputDirectory, { recursive: true })
+  // Stream one NDJSON event per fragment, as the real Python sidecars now do.
+  request.plan.segments.forEach((segment, index) => {
+    const audioPath = path.join(request.outputDirectory, "segment-" + index + ".wav")
+    fs.writeFileSync(audioPath, Buffer.from("segment-" + segment.segmentId))
+    process.stdout.write(JSON.stringify({ type: "segment", segmentId: segment.segmentId, segmentIndex: index, audioPath, mimeType: "audio/wav", durationMs: 250 }) + "\\n")
+  })
+  const chapterPath = path.join(request.outputDirectory, "chapter.wav")
+  fs.writeFileSync(chapterPath, Buffer.from("chapter-" + request.engineId))
+  // Final result intentionally reports no segments: persistence must come from
+  // the streamed events above, not from the final blob.
+  process.stdout.write(JSON.stringify({ type: "result", schemaVersion: "dreamreader-tts-sidecar-result/v1", segments: [], chapter: { audioPath: chapterPath, mimeType: "audio/wav", durationMs: 750 } }) + "\\n")
+})
+`
+      )
+      await db
+        .update(ttsEngines)
+        .set({ installed: true, installPath: path.join(paths.modelsDir, "qwen3-tts-17b") })
+        .where(eq(ttsEngines.id, "qwen3-tts-17b-mlx"))
+      await db.insert(runtimeManifests).values({
+        id: "runtime_test_streaming",
+        adapterId: "qwen3-tts-mlx",
+        runtime: "mlx",
+        version: "test",
+        executablePath: process.execPath,
+        environmentJson: { args: [sidecarPath], timeoutMs: 10_000 },
+        capabilitiesJson: { protocol: "dreamreader-tts-sidecar/v1" }
+      })
+
+      const queued = await tts.enqueueChapter({
+        bookId: "book-audio",
+        chapterHref: "chapter-1",
+        engineId: "qwen3-tts-17b-mlx",
+        quality: "draft",
+        useExpressiveNarration: false,
+        voiceProfileId: "voice_qwen3_design_ptbr_neutral"
+      })
+      await tts.drainQueue()
+
+      const completed = await tts.getJob(queued.id)
+      expect(completed.status).toBe("completed")
+      expect(completed.settings.chapterAudioAssetId).toBeTruthy()
+
+      const segments = await tts.listSegments(queued.id)
+      expect(segments.length).toBeGreaterThan(0)
+      expect(segments.every((segment) => segment.status === "completed")).toBe(true)
+      expect(segments.every((segment) => Boolean(segment.audioAssetId))).toBe(true)
+    } finally {
+      await client.close()
+    }
+  })
+
   it("passes cloned reference audio and transcript to the Qwen Base sidecar", async () => {
     const { audiobook, client, db, paths } = await createTestServices()
     try {

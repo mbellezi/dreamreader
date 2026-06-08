@@ -39,7 +39,7 @@ export function GenerationProgress({
         cancelled = true
       }
     }
-    const interval = window.setInterval(() => void load(), 1200)
+    const interval = window.setInterval(() => void load(), 600)
     return () => {
       cancelled = true
       window.clearInterval(interval)

@@ -19,9 +19,17 @@ def main() -> int:
 
     try:
         request = json.loads(sys.stdin.read())
+        # Library noise must stay off stdout; events/results stream as NDJSON
+        # lines on the real stdout so the app sees fragments one by one.
+        real_stdout = sys.stdout
+
+        def emit(event):
+            real_stdout.write(json.dumps(event) + "\n")
+            real_stdout.flush()
+
         with contextlib.redirect_stdout(sys.stderr):
-            result = synthesize(request)
-        sys.stdout.write(json.dumps(result))
+            result = synthesize(request, emit)
+        emit({"type": "result", **result})
         return 0
     except Exception as exc:
         print(str(exc), file=sys.stderr)
@@ -43,7 +51,7 @@ def health() -> int:
     return 0 if ok else 1
 
 
-def synthesize(request):
+def synthesize(request, emit=lambda event: None):
     from f5_tts.api import F5TTS
 
     install_soundfile_torchaudio_loader()
@@ -87,15 +95,15 @@ def synthesize(request):
             speed=f5_speed(),
         )
         duration_ms = wav_duration_ms(target_path)
-        rendered_segments.append(
-            {
-                "segmentId": segment_id,
-                "segmentIndex": index,
-                "audioPath": str(target_path),
-                "mimeType": "audio/wav",
-                "durationMs": duration_ms,
-            }
-        )
+        segment_payload = {
+            "segmentId": segment_id,
+            "segmentIndex": index,
+            "audioPath": str(target_path),
+            "mimeType": "audio/wav",
+            "durationMs": duration_ms,
+        }
+        rendered_segments.append(segment_payload)
+        emit({"type": "segment", **segment_payload})
 
     chapter_path = output_dir / "chapter.wav"
     chapter_duration_ms = merge_wavs([Path(item["audioPath"]) for item in rendered_segments], chapter_path)

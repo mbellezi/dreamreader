@@ -24,6 +24,13 @@ const SidecarSegmentResultSchema = z.object({
   contentHash: z.string().trim().optional()
 })
 
+export type SidecarSegmentResult = z.infer<typeof SidecarSegmentResultSchema>
+
+// Streaming event: one JSON line emitted by the sidecar per finished fragment.
+const SidecarSegmentEventSchema = SidecarSegmentResultSchema.extend({
+  type: z.literal("segment")
+})
+
 const SidecarChapterResultSchema = z.object({
   audioPath: z.string().trim().min(1),
   mimeType: z.string().trim().min(1).default("audio/wav"),
@@ -75,6 +82,7 @@ export type SidecarSynthesisInput = {
   voiceBinding?: VoiceEngineBinding
   voiceProfile?: VoiceProfile
   voiceSamples: VoiceSample[]
+  onSegment?: (segment: SidecarSegmentResult) => void
 }
 
 export type ImportedSidecarAudio = {
@@ -113,7 +121,15 @@ export class SidecarTtsAdapter {
       executablePath,
       request,
       signal: input.signal,
-      timeoutMs: timeoutMsFor(input.runtimeManifest.environmentJson)
+      timeoutMs: timeoutMsFor(input.runtimeManifest.environmentJson),
+      onEvent: (event) => {
+        const segment = SidecarSegmentEventSchema.safeParse(event)
+        if (!segment.success) {
+          return
+        }
+        assertOutputPath(input.outputDirectory, segment.data.audioPath)
+        input.onSegment?.(segment.data)
+      }
     })
     const parsed = SidecarSynthesisResultSchema.parse(raw)
     assertOutputPath(input.outputDirectory, parsed.chapter.audioPath)
@@ -144,6 +160,7 @@ function runSidecarProcess(input: {
   request: Record<string, unknown>
   signal?: AbortSignal
   timeoutMs: number
+  onEvent?: (event: unknown) => void
 }): Promise<unknown> {
   return new Promise((resolve, reject) => {
     if (input.signal?.aborted) {
@@ -162,6 +179,8 @@ function runSidecarProcess(input: {
     })
     let stdout = ""
     let stderr = ""
+    let lineBuffer = ""
+    let resultObject: unknown
     let cancelled = false
     let settled = false
     let timer: NodeJS.Timeout | undefined
@@ -234,9 +253,35 @@ function runSidecarProcess(input: {
       input.signal?.addEventListener("abort", onAbort, { once: true })
     }
 
+    const handleLine = (line: string): void => {
+      const trimmed = line.trim()
+      if (!trimmed) {
+        return
+      }
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(trimmed)
+      } catch {
+        return // ignore non-JSON noise on stdout
+      }
+      if (isResultLike(parsed)) {
+        resultObject = parsed
+      } else {
+        input.onEvent?.(parsed)
+      }
+    }
+
     child.stdout.setEncoding("utf8")
     child.stdout.on("data", (chunk) => {
       stdout += chunk
+      lineBuffer += chunk
+      let newlineIndex = lineBuffer.indexOf("\n")
+      while (newlineIndex >= 0) {
+        const line = lineBuffer.slice(0, newlineIndex)
+        lineBuffer = lineBuffer.slice(newlineIndex + 1)
+        handleLine(line)
+        newlineIndex = lineBuffer.indexOf("\n")
+      }
     })
     child.stderr.setEncoding("utf8")
     child.stderr.on("data", (chunk) => {
@@ -254,7 +299,16 @@ function runSidecarProcess(input: {
         finish(() => reject(new AppError("tts_sidecar_failed", stderr.trim() || `TTS sidecar exited with code ${code}`)))
         return
       }
+      if (lineBuffer.trim()) {
+        handleLine(lineBuffer)
+        lineBuffer = ""
+      }
+      if (resultObject !== undefined) {
+        finish(() => resolve(resultObject))
+        return
+      }
       try {
+        // Fallback for sidecars that print a single JSON blob without a tagged result event.
         const parsed = parseSidecarJson(stdout)
         finish(() => resolve(parsed))
       } catch {
@@ -263,6 +317,15 @@ function runSidecarProcess(input: {
     })
     child.stdin.end(`${JSON.stringify(input.request)}\n`)
   })
+}
+
+function isResultLike(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false
+  }
+  const record = value as Record<string, unknown>
+  // Tagged final event, or an untagged single-blob result (old protocol).
+  return record.type === "result" || (record.type === undefined && "chapter" in record)
 }
 
 function parseSidecarJson(stdout: string): unknown {

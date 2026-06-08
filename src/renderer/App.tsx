@@ -208,7 +208,7 @@ export function App(): ReactElement {
 
     const interval = window.setInterval(() => {
       void refreshActiveAudioView()
-    }, 1400)
+    }, 800)
     return () => window.clearInterval(interval)
   }, [activeView, audioJobs, refreshActiveAudioView, runtimeModels])
 

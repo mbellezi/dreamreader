@@ -39,7 +39,7 @@ import {
   DEFAULT_VOICE_PROFILE_ID
 } from "@main/services/default-voices"
 import { LocalTtsAdapter } from "@main/services/local-tts-adapter"
-import { importSidecarAudio, SidecarTtsAdapter, type SidecarRuntimeManifest } from "@main/services/sidecar-tts-adapter"
+import { importSidecarAudio, SidecarTtsAdapter, type SidecarRuntimeManifest, type SidecarSegmentResult } from "@main/services/sidecar-tts-adapter"
 import type { AudiobookService } from "@main/services/audiobook-service"
 import { buildNarrationPlan, dictionaryVersionFor, NARRATION_PLAN_VERSION, NORMALIZER_VERSION } from "@main/services/tts-pipeline"
 import { createDefaultProsodyAnalyzerProvider, ProsodyService, type ProsodyPlanResult } from "@main/services/prosody-service"
@@ -831,6 +831,9 @@ export class TtsService {
       await this.updateJob(job.id, {
         progress: 0.18 + ((index + 1) / Math.max(totalSegments, 1)) * 0.62
       })
+      // The local adapter synthesizes instantly; pace each paragraph so the UI
+      // can show segments streaming in one by one and the progress bar climbing.
+      await sleep(localSegmentPacingMs(segment.normalizedText))
     }
 
     const chapterAudio = this.adapter.synthesizeChapter(plan)
@@ -881,6 +884,48 @@ export class TtsService {
       : undefined
     const controller = new AbortController()
     this.sidecarAbortControllers.set(input.job.id, controller)
+
+    // Persist each paragraph as the sidecar streams it back so the UI shows
+    // fragments and progress arriving one by one instead of all at once.
+    const totalSegments = input.plan.segments.length
+    const persistedIndexes = new Set<number>()
+    let persistChain: Promise<void> = Promise.resolve()
+    const persistSegment = async (sidecarSegment: SidecarSegmentResult): Promise<void> => {
+      const index =
+        typeof sidecarSegment.segmentIndex === "number"
+          ? sidecarSegment.segmentIndex
+          : input.plan.segments.findIndex((segment) => segment.segmentId === sidecarSegment.segmentId)
+      if (index < 0 || persistedIndexes.has(index)) {
+        return
+      }
+      persistedIndexes.add(index)
+      const audio = await importSidecarAudio(sidecarSegment)
+      const [asset] = await this.db
+        .insert(assets)
+        .values({
+          id: createId("asset"),
+          kind: "audio_segment",
+          bookId: input.job.bookId,
+          path: audio.audioPath,
+          mimeType: audio.mimeType,
+          contentHash: audio.contentHash,
+          sizeBytes: audio.sizeBytes
+        })
+        .returning()
+      await this.db
+        .update(ttsSegments)
+        .set({
+          audioAssetId: asset.id,
+          durationMs: audio.durationMs,
+          status: "completed",
+          updatedAt: new Date()
+        })
+        .where(and(eq(ttsSegments.jobId, input.job.id), eq(ttsSegments.segmentIndex, index)))
+      await this.updateJob(input.job.id, {
+        progress: 0.18 + (persistedIndexes.size / Math.max(totalSegments, 1)) * 0.62
+      })
+    }
+
     const result = await this.sidecarAdapter
       .synthesize({
         adapterId: input.readyEngine.adapterId,
@@ -896,49 +941,20 @@ export class TtsService {
         signal: controller.signal,
         voiceBinding: voice.binding,
         voiceProfile: voice.profile,
-        voiceSamples: voice.samples
+        voiceSamples: voice.samples,
+        onSegment: (sidecarSegment) => {
+          persistChain = persistChain.then(() => persistSegment(sidecarSegment)).catch(() => undefined)
+        }
       })
       .finally(() => {
         this.sidecarAbortControllers.delete(input.job.id)
       })
 
-    const totalSegments = input.plan.segments.length
-    for (const [index, segment] of input.plan.segments.entries()) {
-      await this.throwIfInterrupted(input.job.id)
-      const sidecarSegment =
-        result.segments.find((item) => item.segmentId === segment.segmentId) ??
-        result.segments.find((item) => item.segmentIndex === index)
-      let audioAssetId: string | undefined
-      let durationMs: number | undefined
-      if (sidecarSegment) {
-        const audio = await importSidecarAudio(sidecarSegment)
-        const [asset] = await this.db
-          .insert(assets)
-          .values({
-            id: createId("asset"),
-            kind: "audio_segment",
-            bookId: input.job.bookId,
-            path: audio.audioPath,
-            mimeType: audio.mimeType,
-            contentHash: audio.contentHash,
-            sizeBytes: audio.sizeBytes
-          })
-          .returning()
-        audioAssetId = asset.id
-        durationMs = audio.durationMs
-      }
-      await this.db
-        .update(ttsSegments)
-        .set({
-          audioAssetId,
-          durationMs,
-          status: "completed",
-          updatedAt: new Date()
-        })
-        .where(and(eq(ttsSegments.jobId, input.job.id), eq(ttsSegments.segmentIndex, index)))
-      await this.updateJob(input.job.id, {
-        progress: 0.18 + ((index + 1) / Math.max(totalSegments, 1)) * 0.62
-      })
+    await persistChain
+    // Fallback for sidecars that do not stream events: persist whatever the
+    // final result reported and was not already handled above.
+    for (const sidecarSegment of result.segments) {
+      await persistSegment(sidecarSegment)
     }
 
     const chapterAudio = await importSidecarAudio(result.chapter)
@@ -1540,6 +1556,20 @@ async function disableStaleBuiltInBindings(db: AppDatabase, now: Date): Promise<
         .where(eq(voiceEngineBindings.id, binding.id))
     }
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function localSegmentPacingMs(text: string): number {
+  // Disabled under tests so the deterministic suite stays fast.
+  if (process.env.VITEST || process.env.NODE_ENV === "test") {
+    return 0
+  }
+  // Roughly proportional to paragraph length, bounded so streaming stays visible
+  // without making batch/whole-book generation feel slow.
+  return Math.min(700, Math.max(150, Math.round(text.length * 4)))
 }
 
 function qualityFor(value: unknown): "draft" | "standard" | "high" {
