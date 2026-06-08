@@ -1,7 +1,23 @@
 import { describe, expect, it } from "vitest"
-import { buildNarrationPlan, dictionaryVersionFor, normalizePtBr, segmentTextForTts } from "../../src/main/services/tts-pipeline"
+import { buildNarrationPlan, dictionaryVersionFor, limitParagraphs, normalizePtBr, segmentTextForTts } from "../../src/main/services/tts-pipeline"
 
 describe("TTS pipeline", () => {
+  it("limits a narration plan to the first N paragraphs", () => {
+    const html = "<article><p>Primeiro parágrafo.</p><p>Segundo parágrafo.</p><p>Terceiro parágrafo.</p></article>"
+    const full = buildNarrationPlan({ bookId: "b", chapterHref: "c", contentHash: "h", html, language: "pt-BR" })
+    const partial = buildNarrationPlan({ bookId: "b", chapterHref: "c", contentHash: "h", html, language: "pt-BR", paragraphLimit: 1 })
+
+    expect(full.segments.length).toBeGreaterThan(partial.segments.length)
+    expect(partial.segments).toHaveLength(1)
+    expect(partial.segments[0].originalText).toContain("Primeiro")
+  })
+
+  it("limitParagraphs keeps only the requested leading paragraphs", () => {
+    const text = "um\n\ndois\n\ntrês"
+    expect(limitParagraphs(text, 2)).toBe("um\n\ndois")
+    expect(limitParagraphs(text, 0)).toBe(text)
+  })
+
   it("normalizes common PT-BR speech forms", () => {
     const normalized = normalizePtBr("Sr. João chegou em 06/06/2026 às 14h30. Custou R$ 25,90 e rendeu 12%.")
 

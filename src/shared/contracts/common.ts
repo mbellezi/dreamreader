@@ -67,6 +67,7 @@ export const JobStatusSchema = z.enum([
   "updating_m4b",
   "building",
   "validating",
+  "paused",
   "completed",
   "failed",
   "cancelled",

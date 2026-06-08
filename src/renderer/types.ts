@@ -130,9 +130,20 @@ export type TtsJobStatus =
   | "updating_m4b"
   | "building"
   | "validating"
+  | "paused"
   | "completed"
   | "failed"
   | "cancelled"
+
+export type TtsSegment = {
+  id: string
+  jobId: string
+  segmentIndex: number
+  status: string
+  textPreview: string
+  audioAssetId?: string
+  durationMs?: number
+}
 
 export type TtsJob = {
   id: string
@@ -180,6 +191,20 @@ export type AudiobookExport = {
   durationMs?: number
   stale: boolean
   errorMessage?: string
+}
+
+export type LibraryAudioStatus = {
+  bookId: string
+  title: string
+  authors: string[]
+  coverAssetId?: string
+  status: "none" | "partial" | "stale" | "complete" | "error"
+  chaptersReady: number
+  chaptersTotal: number
+  durationMs: number
+  hasChapterAudio: boolean
+  hasActiveJob: boolean
+  updatedAt: string
 }
 
 export type RuntimeDiagnostic = {
@@ -287,10 +312,14 @@ export type DreamReaderBridge = {
   }
   tts?: {
     enqueueChapter?: (input: Record<string, unknown>) => Promise<unknown>
+    enqueueChapters?: (input: Record<string, unknown>) => Promise<unknown[]>
     cancelJob?: (id: string) => Promise<unknown>
+    pauseJob?: (id: string) => Promise<unknown>
+    resumeJob?: (id: string) => Promise<unknown>
     retryJob?: (id: string) => Promise<unknown>
     getJob?: (id: string) => Promise<unknown>
     listJobs?: (filter?: { bookId?: string; engineId?: string }) => Promise<unknown[]>
+    listSegments?: (jobId: string) => Promise<unknown[]>
     clearChapterAudio?: (input: { bookId: string; chapterHref: string }) => Promise<unknown>
     clearTerminalJobs?: (input: { bookId: string }) => Promise<unknown>
   }
@@ -299,13 +328,14 @@ export type DreamReaderBridge = {
     listCompatible?: (engineId?: string) => Promise<unknown[]>
     createFromReference?: (input: Record<string, unknown>) => Promise<unknown>
     createFromDesignPrompt?: (input: Record<string, unknown>) => Promise<unknown>
-    selectReferenceAudio?: () => Promise<{ path?: string }>
+    selectReferenceAudio?: () => Promise<{ path?: string; durationMs?: number; sampleRate?: number }>
     preview?: (voiceProfileId: string, engineId: string) => Promise<unknown>
     update?: (input: Record<string, unknown>) => Promise<unknown>
     delete?: (voiceProfileId: string) => Promise<unknown>
   }
   audiobook?: {
     getExport?: (bookId: string) => Promise<unknown>
+    listLibraryStatus?: () => Promise<unknown[]>
     enableAutoBuild?: (bookId: string, enabled: boolean) => Promise<unknown>
     rebuild?: (bookId: string) => Promise<unknown>
     reveal?: (bookId: string) => Promise<unknown>

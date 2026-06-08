@@ -276,7 +276,9 @@ export const VoiceFilterSchema = z.object({
 export type VoiceFilter = z.infer<typeof VoiceFilterSchema>;
 
 export const VoiceCloneInputSchema = z.object({
-  engineId: IdSchema,
+  // Reference voices are shared across every compatible installed engine, so the
+  // engine is optional (kept for backward compatibility / as a hint).
+  engineId: IdSchema.optional(),
   name: NonEmptyStringSchema,
   referenceAudioPath: NonEmptyStringSchema,
   transcript: z.string().trim().optional(),
@@ -447,10 +449,38 @@ export const EnqueueChapterTtsRequestSchema = z.object({
   voiceBindingId: IdSchema.optional(),
   quality: z.enum(["draft", "standard", "high"]).default("standard"),
   useExpressiveNarration: z.boolean().default(false),
+  // When set, only the first N paragraphs are synthesized (partial preview for
+  // testing). Omitted/undefined means the whole chapter (default = total).
+  paragraphLimit: z.number().int().positive().optional(),
 });
 export type EnqueueChapterTtsRequest = z.infer<
   typeof EnqueueChapterTtsRequestSchema
 >;
+
+export const EnqueueChaptersTtsRequestSchema = z.object({
+  bookId: IdSchema,
+  // Omitted means every chapter of the book.
+  chapterHrefs: z.array(NonEmptyStringSchema).optional(),
+  engineId: IdSchema.default("dreamreader-local-tts"),
+  voiceProfileId: IdSchema.optional(),
+  voiceBindingId: IdSchema.optional(),
+  quality: z.enum(["draft", "standard", "high"]).default("standard"),
+  useExpressiveNarration: z.boolean().default(false),
+});
+export type EnqueueChaptersTtsRequest = z.infer<
+  typeof EnqueueChaptersTtsRequestSchema
+>;
+
+export const TtsSegmentSummarySchema = z.object({
+  id: IdSchema,
+  jobId: IdSchema,
+  segmentIndex: z.number().int().min(0),
+  status: z.string(),
+  textPreview: z.string(),
+  audioAssetId: IdSchema.optional(),
+  durationMs: z.number().int().nonnegative().optional(),
+});
+export type TtsSegmentSummary = z.infer<typeof TtsSegmentSummarySchema>;
 
 export const AudiobookExportStatusSchema = z.enum([
   "none",
@@ -494,6 +524,21 @@ export const AudiobookManifestSchema = z.object({
   durationMs: z.number().int().min(0),
 });
 export type AudiobookManifest = z.infer<typeof AudiobookManifestSchema>;
+
+export const LibraryAudioStatusSchema = z.object({
+  bookId: IdSchema,
+  title: NonEmptyStringSchema,
+  authors: z.array(NonEmptyStringSchema).default([]),
+  coverAssetId: IdSchema.optional(),
+  status: AudiobookExportStatusSchema,
+  chaptersReady: z.number().int().min(0),
+  chaptersTotal: z.number().int().min(0),
+  durationMs: z.number().int().min(0).default(0),
+  hasChapterAudio: z.boolean(),
+  hasActiveJob: z.boolean().default(false),
+  updatedAt: IsoDateTimeStringSchema,
+});
+export type LibraryAudioStatus = z.infer<typeof LibraryAudioStatusSchema>;
 
 export const AudiobookExportSchema = z.object({
   id: IdSchema,

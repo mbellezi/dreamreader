@@ -460,6 +460,94 @@ setInterval(() => {}, 1000)
       await client.close()
     }
   })
+
+  it("generates a partial preview without marking the chapter ready in the audiobook", async () => {
+    const { audiobook, client, db, paths } = await createTestServices()
+    try {
+      await seedBook(db, paths)
+      const tts = new TtsService(db, paths, audiobook)
+
+      const queued = await tts.enqueueChapter({
+        bookId: "book-audio",
+        chapterHref: "chapter-1",
+        engineId: DEFAULT_TTS_ENGINE_ID,
+        voiceProfileId: DEFAULT_VOICE_PROFILE_ID,
+        quality: "draft",
+        useExpressiveNarration: false,
+        paragraphLimit: 1
+      })
+      await tts.drainQueue()
+
+      const completed = await tts.getJob(queued.id)
+      expect(completed.status).toBe("completed")
+      expect(completed.settings.partial).toBe(true)
+      expect(typeof completed.settings.chapterAudioAssetId).toBe("string")
+
+      const segments = await tts.listSegments(queued.id)
+      expect(segments).toHaveLength(1)
+      expect(segments[0].audioAssetId).toBeTruthy()
+
+      // Partial previews are test snippets and must not count toward the audiobook.
+      const exportState = await audiobook.getExport("book-audio")
+      expect(exportState.chaptersReady).toBe(0)
+    } finally {
+      await client.close()
+    }
+  })
+
+  it("keeps a paused job out of the queue until it is resumed", async () => {
+    const { audiobook, client, db, paths } = await createTestServices()
+    try {
+      await seedBook(db, paths)
+      const tts = new TtsService(db, paths, audiobook)
+
+      const queued = await tts.enqueueChapter({
+        bookId: "book-audio",
+        chapterHref: "chapter-1",
+        engineId: DEFAULT_TTS_ENGINE_ID,
+        voiceProfileId: DEFAULT_VOICE_PROFILE_ID,
+        quality: "draft",
+        useExpressiveNarration: false
+      })
+
+      const paused = await tts.pauseJob(queued.id)
+      expect(paused.status).toBe("paused")
+
+      await tts.drainQueue()
+      expect((await tts.getJob(queued.id)).status).toBe("paused")
+
+      const resumed = await tts.resumeJob(queued.id)
+      expect(resumed.status).toBe("queued")
+
+      await tts.drainQueue()
+      expect((await tts.getJob(queued.id)).status).toBe("completed")
+    } finally {
+      await client.close()
+    }
+  })
+
+  it("enqueues every chapter of a book in one batch call", async () => {
+    const { audiobook, client, db, paths } = await createTestServices()
+    try {
+      await seedBook(db, paths)
+      const tts = new TtsService(db, paths, audiobook)
+
+      const jobs = await tts.enqueueChapters({
+        bookId: "book-audio",
+        engineId: DEFAULT_TTS_ENGINE_ID,
+        voiceProfileId: DEFAULT_VOICE_PROFILE_ID,
+        quality: "draft",
+        useExpressiveNarration: false
+      })
+      expect(jobs).toHaveLength(1)
+
+      await tts.drainQueue()
+      const exportState = await audiobook.getExport("book-audio")
+      expect(exportState.chaptersReady).toBe(1)
+    } finally {
+      await client.close()
+    }
+  })
 })
 
 async function createTestServices() {

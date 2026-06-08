@@ -7,9 +7,11 @@ import {
   VoiceProfileSchema,
   VoiceSampleSchema,
   type EnqueueChapterTtsRequest,
+  type EnqueueChaptersTtsRequest,
   type NarrationPlan,
   type PronunciationEntry,
-  type TtsJob
+  type TtsJob,
+  type TtsSegmentSummary
 } from "@shared/contracts/ai"
 import type { AppDatabase } from "@main/db/client"
 import {
@@ -208,6 +210,7 @@ export class TtsService {
   private readonly adapter = new LocalTtsAdapter()
   private readonly sidecarAdapter = new SidecarTtsAdapter()
   private readonly sidecarAbortControllers = new Map<string, AbortController>()
+  private readonly pausedJobIds = new Set<string>()
   private readonly prosody: ProsodyService
   private processing = false
   private queueTimer: NodeJS.Timeout | undefined
@@ -240,7 +243,8 @@ export class TtsService {
       engineId,
       voiceBindingId: voice.bindingId,
       voiceProfileId: voice.profileId,
-      useExpressiveNarration: input.useExpressiveNarration
+      useExpressiveNarration: input.useExpressiveNarration,
+      paragraphLimit: input.paragraphLimit
     })
     const now = new Date()
     const adapterId = adapterIdForEngine(engineId)
@@ -265,7 +269,9 @@ export class TtsService {
           normalizationDictionaryVersion: dictionaryVersion,
           normalizationVersion: NORMALIZER_VERSION,
           sourceContentHash: source.contentHash,
-          useExpressiveNarration: input.useExpressiveNarration
+          useExpressiveNarration: input.useExpressiveNarration,
+          paragraphLimit: input.paragraphLimit,
+          partial: input.paragraphLimit ? true : undefined
         }),
         narrationPlanVersion: cached ? NARRATION_PLAN_VERSION : undefined,
         resourcePolicyJson: {
@@ -285,6 +291,29 @@ export class TtsService {
     return toTtsJob(job)
   }
 
+  async enqueueChapters(input: EnqueueChaptersTtsRequest): Promise<TtsJob[]> {
+    await this.ensureReady()
+    const chapters = await this.getBookChapters(input.bookId)
+    const selected = input.chapterHrefs?.length
+      ? chapters.filter((chapter) => input.chapterHrefs?.includes(chapter.href))
+      : chapters
+    const jobs: TtsJob[] = []
+    for (const chapter of selected) {
+      jobs.push(
+        await this.enqueueChapter({
+          bookId: input.bookId,
+          chapterHref: chapter.href,
+          engineId: input.engineId,
+          voiceProfileId: input.voiceProfileId,
+          voiceBindingId: input.voiceBindingId,
+          quality: input.quality,
+          useExpressiveNarration: input.useExpressiveNarration
+        })
+      )
+    }
+    return jobs
+  }
+
   async cancelJob(id: string): Promise<TtsJob> {
     await this.ensureReady()
     const job = await this.getJobRow(id)
@@ -300,6 +329,7 @@ export class TtsService {
       })
       .where(eq(ttsJobs.id, id))
       .returning()
+    this.pausedJobIds.delete(id)
     this.sidecarAbortControllers.get(id)?.abort()
     if (!activeStatuses.includes(job.status as (typeof activeStatuses)[number])) {
       await this.cleanupTtsJobArtifacts([updated], { removeAudiobookChapters: "withChapterAudio" })
@@ -307,9 +337,62 @@ export class TtsService {
     return toTtsJob(updated)
   }
 
+  async pauseJob(id: string): Promise<TtsJob> {
+    await this.ensureReady()
+    const job = await this.getJobRow(id)
+    if (terminalStatuses.includes(job.status as (typeof terminalStatuses)[number]) || job.status === "paused") {
+      return toTtsJob(job)
+    }
+    // Cooperative pause: the synthesis loop checks this set between paragraphs
+    // (real pause for the local adapter). Sidecars synthesize a whole chapter in
+    // one call, so we abort the in-flight request and resume restarts it.
+    this.pausedJobIds.add(id)
+    this.sidecarAbortControllers.get(id)?.abort()
+    const [updated] = await this.db
+      .update(ttsJobs)
+      .set({ status: "paused", updatedAt: new Date() })
+      .where(eq(ttsJobs.id, id))
+      .returning()
+    return toTtsJob(updated)
+  }
+
+  async resumeJob(id: string): Promise<TtsJob> {
+    await this.ensureReady()
+    const job = await this.getJobRow(id)
+    this.pausedJobIds.delete(id)
+    if (job.status !== "paused") {
+      return toTtsJob(job)
+    }
+    const [updated] = await this.db
+      .update(ttsJobs)
+      .set({ status: "queued", updatedAt: new Date() })
+      .where(eq(ttsJobs.id, id))
+      .returning()
+    this.scheduleQueue()
+    return toTtsJob(updated)
+  }
+
+  async listSegments(jobId: string): Promise<TtsSegmentSummary[]> {
+    await this.ensureReady()
+    const rows = await this.db.query.ttsSegments.findMany({
+      where: eq(ttsSegments.jobId, jobId),
+      orderBy: [asc(ttsSegments.segmentIndex)]
+    })
+    return rows.map((row) => ({
+      id: row.id,
+      jobId: row.jobId,
+      segmentIndex: row.segmentIndex,
+      status: row.status,
+      textPreview: row.originalText.slice(0, 160),
+      audioAssetId: row.audioAssetId ?? undefined,
+      durationMs: typeof row.durationMs === "number" ? row.durationMs : undefined
+    }))
+  }
+
   async retryJob(id: string): Promise<TtsJob> {
     await this.ensureReady()
     await this.getJobRow(id)
+    this.pausedJobIds.delete(id)
     await this.db.delete(ttsSegments).where(eq(ttsSegments.jobId, id))
     const [updated] = await this.db
       .update(ttsJobs)
@@ -487,10 +570,12 @@ export class TtsService {
   private async processJob(job: TtsJobRow): Promise<void> {
     try {
       await this.updateJob(job.id, { status: "preparing", startedAt: job.startedAt ?? new Date(), progress: 0.04 })
-      await this.throwIfCancelled(job.id)
+      await this.throwIfInterrupted(job.id)
       const source = await this.getChapterSource(job.bookId, job.chapterHref)
       const jobSettings = jsonObject(job.settingsJson)
       const useExpressiveNarration = Boolean(jobSettings.useExpressiveNarration)
+      const paragraphLimit = typeof jobSettings.paragraphLimit === "number" ? jobSettings.paragraphLimit : undefined
+      const isPartial = Boolean(paragraphLimit)
       const pronunciation = await this.pronunciationEntriesForBook(job.bookId)
       const dictionaryVersion = dictionaryVersionFor(pronunciation)
       const cached = await this.findCachedJob({
@@ -502,7 +587,8 @@ export class TtsService {
         excludeJobId: job.id,
         voiceBindingId: job.voiceBindingId ?? undefined,
         voiceProfileId: job.voiceProfileId ?? undefined,
-        useExpressiveNarration
+        useExpressiveNarration,
+        paragraphLimit
       })
       if (cached) {
         await this.updateJob(job.id, {
@@ -532,11 +618,17 @@ export class TtsService {
         contentHash: source.contentHash,
         html: source.html,
         language: source.language,
-        pronunciationEntries: pronunciation
+        pronunciationEntries: pronunciation,
+        paragraphLimit
       })
       const prosodyResult = await this.prosody.applyProsody(neutralPlan, useExpressiveNarration)
       const plan = prosodyResult.plan
-      await this.persistSegments(job.id, plan, prosodyResult, readyEngine.adapterId)
+      // Preserve segment rows (and any already-synthesized paragraph audio) across
+      // a pause/resume so resuming continues instead of restarting from scratch.
+      const existingSegments = await this.db.query.ttsSegments.findMany({ where: eq(ttsSegments.jobId, job.id) })
+      if (existingSegments.length !== plan.segments.length) {
+        await this.persistSegments(job.id, plan, prosodyResult, readyEngine.adapterId)
+      }
       await this.updateJob(job.id, {
         narrationPlanVersion: plan.schemaVersion,
         settingsJson: compactJson({
@@ -565,28 +657,32 @@ export class TtsService {
         readyEngine
       })
 
-      await this.throwIfCancelled(job.id)
+      await this.throwIfInterrupted(job.id)
       await this.updateJob(job.id, { status: "assembling", progress: 0.86 })
       const chapterCacheHash = chapterCacheHashFor(source.contentHash, job, plan, useExpressiveNarration)
 
       await this.updateJob(job.id, { status: "updating_m4b", progress: 0.94 })
       let audiobookError: string | undefined
-      try {
-        await this.audiobook.recordChapterAudio({
-          audioAssetId: synthesized.chapterAssetId,
-          audioHash: synthesized.chapterAudioHash,
-          bookId: job.bookId,
-          chapterHref: job.chapterHref,
-          chapterIndex: source.chapterIndex,
-          contentHash: chapterCacheHash,
-          durationMs: synthesized.chapterDurationMs,
-          engineId: job.engineId,
-          title: source.title,
-          voiceBindingId: job.voiceBindingId ?? undefined,
-          voiceProfileId: job.voiceProfileId ?? undefined
-        })
-      } catch (error) {
-        audiobookError = error instanceof Error ? error.message : "Audiobook rebuild failed"
+      // Partial previews are test snippets and must not mark the chapter as ready
+      // in the audiobook manifest.
+      if (!isPartial) {
+        try {
+          await this.audiobook.recordChapterAudio({
+            audioAssetId: synthesized.chapterAssetId,
+            audioHash: synthesized.chapterAudioHash,
+            bookId: job.bookId,
+            chapterHref: job.chapterHref,
+            chapterIndex: source.chapterIndex,
+            contentHash: chapterCacheHash,
+            durationMs: synthesized.chapterDurationMs,
+            engineId: job.engineId,
+            title: source.title,
+            voiceBindingId: job.voiceBindingId ?? undefined,
+            voiceProfileId: job.voiceProfileId ?? undefined
+          })
+        } catch (error) {
+          audiobookError = error instanceof Error ? error.message : "Audiobook rebuild failed"
+        }
       }
 
       await this.updateJob(job.id, {
@@ -602,9 +698,19 @@ export class TtsService {
         }),
         finishedAt: new Date()
       })
+      this.pausedJobIds.delete(job.id)
     } catch (error) {
-      if (error instanceof AppError && error.code === "tts_job_cancelled") {
-        await this.cleanupTtsJobArtifacts([await this.getJobRow(job.id).catch(() => job)], {
+      const current = await this.getJobRow(job.id).catch(() => job)
+      const paused = this.pausedJobIds.has(job.id) || (error instanceof AppError && error.code === "tts_job_paused")
+      if (paused) {
+        // Keep partial artifacts (segments/assets) so resume can continue.
+        if (current.status !== "paused") {
+          await this.updateJob(job.id, { status: "paused" })
+        }
+        return
+      }
+      if (current.status === "cancelled" || (error instanceof AppError && error.code === "tts_job_cancelled")) {
+        await this.cleanupTtsJobArtifacts([current], {
           removeAudiobookChapters: "withChapterAudio"
         })
         await this.updateJob(job.id, {
@@ -613,6 +719,7 @@ export class TtsService {
         })
         return
       }
+      this.pausedJobIds.delete(job.id)
       const message = error instanceof Error ? error.message : "TTS job failed"
       await this.updateJob(job.id, {
         status: "failed",
@@ -684,8 +791,19 @@ export class TtsService {
     const outputDir = path.join(this.paths.audioCacheDir, job.bookId, sanitizePathPart(job.chapterHref), job.id)
     await mkdir(outputDir, { recursive: true })
     const totalSegments = plan.segments.length
+    const doneSegments = new Set(
+      (await this.db.query.ttsSegments.findMany({ where: eq(ttsSegments.jobId, job.id) }))
+        .filter((row) => row.status === "completed" && row.audioAssetId)
+        .map((row) => row.segmentIndex)
+    )
     for (const [index, segment] of plan.segments.entries()) {
-      await this.throwIfCancelled(job.id)
+      await this.throwIfInterrupted(job.id)
+      if (doneSegments.has(index)) {
+        await this.updateJob(job.id, {
+          progress: 0.18 + ((index + 1) / Math.max(totalSegments, 1)) * 0.62
+        })
+        continue
+      }
       const audio = this.adapter.synthesizeSegment(segment)
       const filePath = path.join(outputDir, `${String(index).padStart(4, "0")}-${hashBuffer(segment.segmentId).slice(0, 10)}.wav`)
       await writeFile(filePath, audio.buffer)
@@ -786,7 +904,7 @@ export class TtsService {
 
     const totalSegments = input.plan.segments.length
     for (const [index, segment] of input.plan.segments.entries()) {
-      await this.throwIfCancelled(input.job.id)
+      await this.throwIfInterrupted(input.job.id)
       const sidecarSegment =
         result.segments.find((item) => item.segmentId === segment.segmentId) ??
         result.segments.find((item) => item.segmentIndex === index)
@@ -1004,6 +1122,26 @@ export class TtsService {
     await disableStaleBuiltInBindings(this.db, now)
   }
 
+  private async getBookChapters(bookId: string): Promise<Array<{ href: string; index: number; title: string }>> {
+    const book = await this.db.query.books.findFirst({ where: eq(books.id, bookId) })
+    if (!book) {
+      throw new AppError("book_not_found", "Book not found")
+    }
+    const manifest = book.manifestJson as {
+      chapters?: Array<{ href: string; id?: string; title?: string; content?: string }>
+    }
+    const chapters = manifest.chapters ?? []
+    return chapters
+      .map((chapter, index) => ({
+        href: chapter.href ?? chapter.id ?? `chapter-${index + 1}`,
+        index,
+        title: chapter.title ?? `Capitulo ${index + 1}`,
+        hasContent: Boolean(chapter.content)
+      }))
+      .filter((chapter) => chapter.hasContent)
+      .map(({ href, index, title }) => ({ href, index, title }))
+  }
+
   private async getChapterSource(bookId: string, chapterHref: string): Promise<ChapterSource> {
     const book = await this.db.query.books.findFirst({ where: eq(books.id, bookId) })
     if (!book) {
@@ -1039,6 +1177,7 @@ export class TtsService {
     voiceBindingId?: string
     voiceProfileId?: string
     useExpressiveNarration: boolean
+    paragraphLimit?: number
   }) {
     const candidates = await this.db.query.ttsJobs.findMany({
       where: and(eq(ttsJobs.bookId, input.bookId), eq(ttsJobs.chapterHref, input.chapterHref), eq(ttsJobs.status, "completed")),
@@ -1055,11 +1194,13 @@ export class TtsService {
         return false
       }
       const settings = jsonObject(job.settingsJson)
+      const cachedParagraphLimit = typeof settings.paragraphLimit === "number" ? settings.paragraphLimit : undefined
       return (
         settings.sourceContentHash === input.contentHash &&
         settings.normalizationDictionaryVersion === input.dictionaryVersion &&
         settings.normalizationVersion === NORMALIZER_VERSION &&
         settings.useExpressiveNarration === input.useExpressiveNarration &&
+        cachedParagraphLimit === input.paragraphLimit &&
         typeof settings.chapterAudioAssetId === "string"
       )
     })
@@ -1254,10 +1395,13 @@ export class TtsService {
     return job
   }
 
-  private async throwIfCancelled(jobId: string): Promise<void> {
+  private async throwIfInterrupted(jobId: string): Promise<void> {
     const job = await this.getJobRow(jobId)
     if (job.status === "cancelled") {
       throw new AppError("tts_job_cancelled", "TTS job was cancelled")
+    }
+    if (this.pausedJobIds.has(jobId) || job.status === "paused") {
+      throw new AppError("tts_job_paused", "TTS job was paused")
     }
   }
 
@@ -1297,7 +1441,7 @@ function toTtsJob(row: TtsJobRow): TtsJob {
 }
 
 function normalizeJobStatus(status: string): TtsJob["status"] {
-  if ([...activeStatuses, ...terminalStatuses, "building", "validating"].includes(status as never)) {
+  if ([...activeStatuses, ...terminalStatuses, "building", "validating", "paused"].includes(status as never)) {
     return status as TtsJob["status"]
   }
   return "queued"

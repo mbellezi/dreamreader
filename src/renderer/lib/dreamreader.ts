@@ -7,6 +7,7 @@ import type {
   BookDetails,
   BookSummary,
   ImportBooksResult,
+  LibraryAudioStatus,
   LibraryQuery,
   ModelDownloadJob,
   PronunciationEntry,
@@ -14,6 +15,7 @@ import type {
   RuntimeDiagnostic,
   RuntimeModel,
   TtsJob,
+  TtsSegment,
   VoiceProfile
 } from "@renderer/types"
 import { defaultSettings, sampleAnnotations, sampleBooks } from "@renderer/lib/sampleData"
@@ -301,6 +303,7 @@ export const dreamreaderClient = {
     quality?: "draft" | "standard" | "high"
     voiceProfileId?: string
     useExpressiveNarration?: boolean
+    paragraphLimit?: number
   }): Promise<TtsJob> {
     const bridgeEnqueue = window.dreamreader?.tts?.enqueueChapter
 
@@ -311,6 +314,23 @@ export const dreamreaderClient = {
     return fallbackTtsJob(input.bookId, input.chapterHref, "completed")
   },
 
+  async enqueueChaptersAudio(input: {
+    bookId: string
+    chapterHrefs?: string[]
+    engineId?: string
+    quality?: "draft" | "standard" | "high"
+    voiceProfileId?: string
+    useExpressiveNarration?: boolean
+  }): Promise<TtsJob[]> {
+    const bridgeEnqueue = window.dreamreader?.tts?.enqueueChapters
+
+    if (bridgeEnqueue) {
+      return (await bridgeEnqueue(input)).map(toTtsJob)
+    }
+
+    return []
+  },
+
   async cancelTtsJob(id: string): Promise<TtsJob> {
     const bridgeCancel = window.dreamreader?.tts?.cancelJob
 
@@ -319,6 +339,26 @@ export const dreamreaderClient = {
     }
 
     return fallbackTtsJob("fallback-book", "chapter-1", "cancelled", id)
+  },
+
+  async pauseTtsJob(id: string): Promise<TtsJob> {
+    const bridgePause = window.dreamreader?.tts?.pauseJob
+
+    if (bridgePause) {
+      return toTtsJob(await bridgePause(id))
+    }
+
+    return fallbackTtsJob("fallback-book", "chapter-1", "paused", id)
+  },
+
+  async resumeTtsJob(id: string): Promise<TtsJob> {
+    const bridgeResume = window.dreamreader?.tts?.resumeJob
+
+    if (bridgeResume) {
+      return toTtsJob(await bridgeResume(id))
+    }
+
+    return fallbackTtsJob("fallback-book", "chapter-1", "queued", id)
   },
 
   async retryTtsJob(id: string): Promise<TtsJob> {
@@ -341,6 +381,16 @@ export const dreamreaderClient = {
     return []
   },
 
+  async listTtsSegments(jobId: string): Promise<TtsSegment[]> {
+    const bridgeList = window.dreamreader?.tts?.listSegments
+
+    if (bridgeList) {
+      return (await bridgeList(jobId)).map(toTtsSegment)
+    }
+
+    return []
+  },
+
   async clearChapterAudio(input: { bookId: string; chapterHref: string }): Promise<void> {
     const bridgeClear = window.dreamreader?.tts?.clearChapterAudio
 
@@ -355,6 +405,16 @@ export const dreamreaderClient = {
     if (bridgeClear) {
       await bridgeClear({ bookId })
     }
+  },
+
+  async listLibraryAudioStatus(): Promise<LibraryAudioStatus[]> {
+    const bridgeList = window.dreamreader?.audiobook?.listLibraryStatus
+
+    if (bridgeList) {
+      return (await bridgeList()).map(toLibraryAudioStatus)
+    }
+
+    return []
   },
 
   async getAudiobookExport(bookId: string): Promise<AudiobookExport | null> {
@@ -464,12 +524,12 @@ export const dreamreaderClient = {
     ]
   },
 
-  async selectVoiceReferenceAudio(): Promise<string | null> {
+  async selectVoiceReferenceAudio(): Promise<{ path: string; durationMs?: number; sampleRate?: number } | null> {
     const bridgeSelect = window.dreamreader?.voices?.selectReferenceAudio
 
     if (bridgeSelect) {
       const result = await bridgeSelect()
-      return result.path ?? null
+      return result.path ? { path: result.path, durationMs: result.durationMs, sampleRate: result.sampleRate } : null
     }
 
     return null
@@ -478,7 +538,7 @@ export const dreamreaderClient = {
   async createVoiceFromReference(input: {
     consentConfirmed: true
     consentNote: string
-    engineId: string
+    engineId?: string
     language: string
     name: string
     referenceAudioPath: string
@@ -490,7 +550,7 @@ export const dreamreaderClient = {
       return toVoiceProfile(await bridgeCreate(input))
     }
 
-    return fallbackVoice(input.name, input.language, "cloned", input.engineId)
+    return fallbackVoice(input.name, input.language, "cloned", input.engineId ?? "dreamreader-local-tts")
   },
 
   async createVoiceFromDesignPrompt(input: {
@@ -506,6 +566,16 @@ export const dreamreaderClient = {
     }
 
     return fallbackVoice(input.name, input.language, "generated", input.engineId)
+  },
+
+  async updateVoice(input: { voiceProfileId: string; name?: string; description?: string | null }): Promise<VoiceProfile> {
+    const bridgeUpdate = window.dreamreader?.voices?.update
+
+    if (bridgeUpdate) {
+      return toVoiceProfile(await bridgeUpdate(input))
+    }
+
+    return fallbackVoice(input.name ?? "Voz", "pt-BR", "cloned", "dreamreader-local-tts")
   },
 
   async deleteVoice(voiceProfileId: string): Promise<void> {
@@ -640,6 +710,23 @@ function toAudiobookExport(input: unknown): AudiobookExport | null {
     durationMs: optionalNumber(item.durationMs),
     stale: Boolean(item.stale),
     errorMessage: optionalString(item.errorMessage)
+  }
+}
+
+function toLibraryAudioStatus(input: unknown): LibraryAudioStatus {
+  const item = (input ?? {}) as Record<string, unknown>
+  return {
+    bookId: String(item.bookId ?? ""),
+    title: String(item.title ?? ""),
+    authors: toArray(item.authors).map(String),
+    coverAssetId: optionalString(item.coverAssetId),
+    status: toAudiobookStatus(item.status),
+    chaptersReady: Number(item.chaptersReady ?? 0),
+    chaptersTotal: Number(item.chaptersTotal ?? 0),
+    durationMs: Number(item.durationMs ?? 0),
+    hasChapterAudio: Boolean(item.hasChapterAudio),
+    hasActiveJob: Boolean(item.hasActiveJob),
+    updatedAt: String(item.updatedAt ?? new Date().toISOString())
   }
 }
 
@@ -807,6 +894,7 @@ function toTtsJobStatus(value: unknown): TtsJob["status"] {
     status === "updating_m4b" ||
     status === "building" ||
     status === "validating" ||
+    status === "paused" ||
     status === "completed" ||
     status === "failed" ||
     status === "cancelled"
@@ -814,6 +902,19 @@ function toTtsJobStatus(value: unknown): TtsJob["status"] {
     return status
   }
   return "queued"
+}
+
+function toTtsSegment(input: unknown): TtsSegment {
+  const item = (input ?? {}) as Record<string, unknown>
+  return {
+    id: String(item.id ?? ""),
+    jobId: String(item.jobId ?? ""),
+    segmentIndex: Number(item.segmentIndex ?? 0),
+    status: String(item.status ?? "queued"),
+    textPreview: String(item.textPreview ?? ""),
+    audioAssetId: optionalString(item.audioAssetId),
+    durationMs: optionalNumber(item.durationMs)
+  }
 }
 
 function toAudiobookStatus(value: unknown): AudiobookExport["status"] {

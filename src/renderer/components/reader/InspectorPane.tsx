@@ -10,25 +10,13 @@ import {
   TextAlignJustify,
   TextAlignStart,
   Trash2,
-  Type,
-  Volume2
+  Type
 } from "lucide-react"
 import { IconToggle, SegmentButton, SliderField } from "@renderer/components/common/Controls"
-import { AudioPanel } from "@renderer/components/reader/AudioPanel"
 import type { InspectorTab, ReaderPreferenceChangeHandler, TranslationFn } from "@renderer/app/types"
 import { fontFamilyOptions, swatchClasses, themeOptions, themePreviewClasses } from "@renderer/lib/readerOptions"
 import { cn } from "@renderer/lib/utils"
-import type {
-  Annotation,
-  AudiobookExport,
-  BookDetails,
-  PronunciationEntry,
-  ReaderPreferences,
-  RuntimeDiagnostic,
-  RuntimeModel,
-  TtsJob,
-  VoiceProfile
-} from "@renderer/types"
+import type { Annotation, BookDetails, ReaderPreferences } from "@renderer/types"
 
 export function InspectorPane({
   activeTab,
@@ -36,95 +24,37 @@ export function InspectorPane({
   annotations,
   book,
   chapterIndex,
-  diagnostics,
   exportContent,
-  models,
-  audiobook,
-  audioJobs,
-  audioLoading,
   preferences,
-  pronunciationEntries,
   t,
-  voices,
-  onCancelTtsJob,
   onChangePreference,
   onChangeTab,
-  onClearChapterAudio,
-  onClearTerminalTtsJobs,
-  onCreateVoiceFromDesignPrompt,
-  onCreateVoiceFromReference,
-  onCreatePronunciationEntry,
   onDeleteAnnotation,
-  onDeleteVoice,
-  onDeletePronunciationEntry,
   onExportNotes,
-  onDownloadModel,
-  onGenerateChapterAudio,
-  onInstallModelFromPath,
   onJumpToAnnotation,
   onJumpToChapter,
-  onRebuildAudiobook,
-  onRetryTtsJob,
-  onSelectVoiceReferenceAudio,
-  onToggleAudiobookAutoBuild,
 }: {
   activeTab: InspectorTab
   activeAnnotationId: string | null
   annotations: Annotation[]
-  audiobook: AudiobookExport | null
-  audioJobs: TtsJob[]
-  audioLoading: boolean
   book: BookDetails | null
   chapterIndex: number
-  diagnostics: RuntimeDiagnostic[]
   exportContent: string
-  models: RuntimeModel[]
   preferences: ReaderPreferences
-  pronunciationEntries: PronunciationEntry[]
   t: TranslationFn
-  voices: VoiceProfile[]
-  onCancelTtsJob: (jobId: string) => void
   onChangePreference: ReaderPreferenceChangeHandler
   onChangeTab: (tab: InspectorTab) => void
-  onClearChapterAudio: () => Promise<void> | void
-  onClearTerminalTtsJobs: () => Promise<void> | void
-  onCreateVoiceFromDesignPrompt: (input: { engineId: string; language: string; name: string; prompt: string }) => Promise<VoiceProfile | void> | VoiceProfile | void
-  onCreateVoiceFromReference: (input: {
-    consentConfirmed: true
-    consentNote: string
-    engineId: string
-    language: string
-    name: string
-    referenceAudioPath: string
-    transcript?: string
-  }) => Promise<VoiceProfile | void> | VoiceProfile | void
-  onCreatePronunciationEntry: (input: { pattern: string; replacement: string; scope: "global" | "book" }) => Promise<void> | void
   onDeleteAnnotation: (annotationId: string) => void
-  onDeleteVoice: (voiceProfileId: string) => Promise<void> | void
-  onDeletePronunciationEntry: (id: string) => Promise<void> | void
   onExportNotes: () => void
-  onDownloadModel: (modelId: string) => Promise<void> | void
-  onGenerateChapterAudio: (input: {
-    engineId: string
-    quality: "draft" | "standard" | "high"
-    useExpressiveNarration: boolean
-    voiceProfileId?: string
-  }) => void
-  onInstallModelFromPath: () => Promise<void> | void
   onJumpToAnnotation: (annotation: Annotation) => void
   onJumpToChapter: (index: number) => void
-  onRebuildAudiobook: () => void
-  onRetryTtsJob: (jobId: string) => void
-  onSelectVoiceReferenceAudio: () => Promise<string | null>
-  onToggleAudiobookAutoBuild: (enabled: boolean) => void
 }) {
   return (
     <aside className="flex h-full min-h-0 flex-col overflow-hidden border-l bg-sidebar">
-      <div className="grid shrink-0 grid-cols-4 border-b p-2">
+      <div className="grid shrink-0 grid-cols-3 border-b p-2">
         <IconToggle active={activeTab === "summary"} icon={PanelRight} label={t("reader.summary")} onClick={() => onChangeTab("summary")} />
         <IconToggle active={activeTab === "annotations"} icon={Highlighter} label={t("reader.annotations")} onClick={() => onChangeTab("annotations")} />
         <IconToggle active={activeTab === "preferences"} icon={SlidersHorizontal} label={t("reader.preferences")} onClick={() => onChangeTab("preferences")} />
-        <IconToggle active={activeTab === "audio"} icon={Volume2} label={t("audio.tab")} onClick={() => onChangeTab("audio")} />
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden p-4">
@@ -310,36 +240,6 @@ export function InspectorPane({
               />
             </label>
           </div>
-        ) : null}
-
-        {activeTab === "audio" ? (
-          <AudioPanel
-            audiobook={audiobook}
-            book={book}
-            chapterIndex={chapterIndex}
-            diagnostics={diagnostics}
-            jobs={audioJobs}
-            loading={audioLoading}
-            models={models}
-            pronunciationEntries={pronunciationEntries}
-            t={t}
-            voices={voices}
-            onCancelJob={onCancelTtsJob}
-            onClearChapterAudio={onClearChapterAudio}
-            onClearTerminalJobs={onClearTerminalTtsJobs}
-            onCreateVoiceFromDesignPrompt={onCreateVoiceFromDesignPrompt}
-            onCreateVoiceFromReference={onCreateVoiceFromReference}
-            onCreatePronunciationEntry={onCreatePronunciationEntry}
-            onDeleteVoice={onDeleteVoice}
-            onDeletePronunciationEntry={onDeletePronunciationEntry}
-            onDownloadModel={onDownloadModel}
-            onGenerateChapter={onGenerateChapterAudio}
-            onInstallModelFromPath={onInstallModelFromPath}
-            onRebuildAudiobook={onRebuildAudiobook}
-            onRetryJob={onRetryTtsJob}
-            onSelectVoiceReferenceAudio={onSelectVoiceReferenceAudio}
-            onToggleAutoBuild={onToggleAudiobookAutoBuild}
-          />
         ) : null}
       </div>
     </aside>

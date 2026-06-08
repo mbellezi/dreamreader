@@ -1,5 +1,6 @@
 export {
   AudiobookExportSchema,
+  LibraryAudioStatusSchema,
   PronunciationEntrySchema,
   NarrationPlanSchema,
   TtsEngineCapabilitiesSchema,
@@ -10,6 +11,7 @@ export {
 } from "./ai";
 export type {
   AudiobookExport,
+  LibraryAudioStatus,
   PronunciationEntry,
   NarrationPlan,
   TtsEngineCapabilities,

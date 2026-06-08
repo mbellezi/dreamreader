@@ -7,6 +7,7 @@ import { PronunciationService } from "@main/services/pronunciation-service"
 import { RuntimeService } from "@main/services/runtime-service"
 import { TtsService } from "@main/services/tts-service"
 import { VoiceService } from "@main/services/voice-service"
+import { probeAudio } from "@main/lib/audio-transcode"
 import { toIpcError } from "@main/lib/errors"
 
 type Services = {
@@ -56,10 +57,14 @@ export function registerIpc(services: Services): void {
   handle("annotations.export", contract["annotations.export"].request, (input) => services.library.exportAnnotations(input))
   handle("bookmarks.create", contract["bookmarks.create"].request, (input) => services.library.createBookmark(input))
   handle("tts.enqueueChapter", contract["tts.enqueueChapter"].request, (input) => services.tts.enqueueChapter(input))
+  handle("tts.enqueueChapters", contract["tts.enqueueChapters"].request, (input) => services.tts.enqueueChapters(input))
   handle("tts.cancelJob", contract["tts.cancelJob"].request, (input) => services.tts.cancelJob(input.id))
+  handle("tts.pauseJob", contract["tts.pauseJob"].request, (input) => services.tts.pauseJob(input.id))
+  handle("tts.resumeJob", contract["tts.resumeJob"].request, (input) => services.tts.resumeJob(input.id))
   handle("tts.retryJob", contract["tts.retryJob"].request, (input) => services.tts.retryJob(input.id))
   handle("tts.getJob", contract["tts.getJob"].request, (input) => services.tts.getJob(input.id))
   handle("tts.listJobs", contract["tts.listJobs"].request, (input) => services.tts.listJobs(input))
+  handle("tts.listSegments", contract["tts.listSegments"].request, (input) => services.tts.listSegments(input.jobId))
   handle("tts.clearChapterAudio", contract["tts.clearChapterAudio"].request, (input) => services.tts.clearChapterAudio(input))
   handle("tts.clearTerminalJobs", contract["tts.clearTerminalJobs"].request, (input) => services.tts.clearTerminalJobs(input))
   handle("settings.get", contract["settings.get"].request, () => services.library.getSettings())
@@ -97,7 +102,11 @@ export function registerIpc(services: Services): void {
         ]
       })
     ).filePaths[0]
-    return selectedPath ? { path: selectedPath } : {}
+    if (!selectedPath) {
+      return {}
+    }
+    const probe = await probeAudio(selectedPath)
+    return { path: selectedPath, durationMs: probe.durationMs, sampleRate: probe.sampleRate }
   })
   handle("voices.preview", contract["voices.preview"].request, (input) => services.voices.preview(input))
   handle("voices.update", contract["voices.update"].request, (input) => services.voices.update(input))
@@ -106,6 +115,9 @@ export function registerIpc(services: Services): void {
     services.voices.listCompatible(input.engineId)
   )
   handle("audiobook.getExport", contract["audiobook.getExport"].request, (input) => services.audiobook.getExport(input.bookId))
+  handle("audiobook.listLibraryStatus", contract["audiobook.listLibraryStatus"].request, () =>
+    services.audiobook.listLibraryStatus()
+  )
   handle("audiobook.enableAutoBuild", contract["audiobook.enableAutoBuild"].request, (input) =>
     services.audiobook.setAutoBuild(input.bookId, input.enabled)
   )

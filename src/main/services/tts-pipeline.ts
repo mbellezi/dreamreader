@@ -43,10 +43,13 @@ export type ChapterNarrationInput = {
   html: string
   language: string
   pronunciationEntries?: PronunciationEntry[]
+  // When set, only the first N paragraphs are kept (partial preview for testing).
+  paragraphLimit?: number
 }
 
 export function buildNarrationPlan(input: ChapterNarrationInput): NarrationPlan {
-  const text = htmlToReadableText(input.html)
+  const fullText = htmlToReadableText(input.html)
+  const text = input.paragraphLimit ? limitParagraphs(fullText, input.paragraphLimit) : fullText
   const chunks = segmentTextForTts(text)
   const dictionaryVersion = dictionaryVersionFor(input.pronunciationEntries ?? [])
   const segments = chunks.map((chunk, index): NarrationSegment => {
@@ -108,6 +111,17 @@ export function htmlToReadableText(html: string): string {
     .replace(/\n{3,}/g, "\n\n")
     .trim()
   )
+}
+
+export function limitParagraphs(text: string, limit: number): string {
+  if (!Number.isFinite(limit) || limit <= 0) {
+    return text
+  }
+  const paragraphs = text
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean)
+  return paragraphs.slice(0, Math.floor(limit)).join("\n\n")
 }
 
 export function segmentTextForTts(text: string): string[] {

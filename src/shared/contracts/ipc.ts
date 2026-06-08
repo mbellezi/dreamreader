@@ -50,6 +50,9 @@ import {
   DeletePronunciationEntryRequestSchema,
   DownloadModelRequestSchema,
   EnqueueChapterTtsRequestSchema,
+  EnqueueChaptersTtsRequestSchema,
+  LibraryAudioStatusSchema,
+  TtsSegmentSummarySchema,
   ListPronunciationEntriesRequestSchema,
   ModelAssetSchema,
   ModelDownloadJobSchema,
@@ -145,10 +148,14 @@ export const IpcChannelSchema = z.enum([
   "annotations.export",
   "bookmarks.create",
   "tts.enqueueChapter",
+  "tts.enqueueChapters",
   "tts.cancelJob",
+  "tts.pauseJob",
+  "tts.resumeJob",
   "tts.retryJob",
   "tts.getJob",
   "tts.listJobs",
+  "tts.listSegments",
   "tts.clearChapterAudio",
   "tts.clearTerminalJobs",
   "voices.list",
@@ -160,6 +167,7 @@ export const IpcChannelSchema = z.enum([
   "voices.delete",
   "voices.listCompatible",
   "audiobook.getExport",
+  "audiobook.listLibraryStatus",
   "audiobook.enableAutoBuild",
   "audiobook.rebuild",
   "audiobook.reveal",
@@ -233,7 +241,19 @@ export const IpcContractSchemas = {
     request: EnqueueChapterTtsRequestSchema,
     response: createIpcResponseSchema(TtsJobSchema),
   },
+  "tts.enqueueChapters": {
+    request: EnqueueChaptersTtsRequestSchema,
+    response: createIpcResponseSchema(z.array(TtsJobSchema)),
+  },
   "tts.cancelJob": {
+    request: IdRequestSchema,
+    response: createIpcResponseSchema(TtsJobSchema),
+  },
+  "tts.pauseJob": {
+    request: IdRequestSchema,
+    response: createIpcResponseSchema(TtsJobSchema),
+  },
+  "tts.resumeJob": {
     request: IdRequestSchema,
     response: createIpcResponseSchema(TtsJobSchema),
   },
@@ -253,6 +273,10 @@ export const IpcContractSchemas = {
       })
       .default({}),
     response: createIpcResponseSchema(z.array(TtsJobSchema)),
+  },
+  "tts.listSegments": {
+    request: z.object({ jobId: IdSchema }),
+    response: createIpcResponseSchema(z.array(TtsSegmentSummarySchema)),
   },
   "tts.clearChapterAudio": {
     request: ClearChapterAudioRequestSchema,
@@ -277,7 +301,11 @@ export const IpcContractSchemas = {
   "voices.selectReferenceAudio": {
     request: EmptyRequestSchema,
     response: createIpcResponseSchema(
-      z.object({ path: z.string().trim().min(1).optional() }),
+      z.object({
+        path: z.string().trim().min(1).optional(),
+        durationMs: z.number().int().nonnegative().optional(),
+        sampleRate: z.number().int().positive().optional(),
+      }),
     ),
   },
   "voices.preview": {
@@ -311,6 +339,10 @@ export const IpcContractSchemas = {
   "audiobook.getExport": {
     request: BookIdRequestSchema,
     response: createIpcResponseSchema(AudiobookExportSchema.nullable()),
+  },
+  "audiobook.listLibraryStatus": {
+    request: EmptyRequestSchema,
+    response: createIpcResponseSchema(z.array(LibraryAudioStatusSchema)),
   },
   "audiobook.enableAutoBuild": {
     request: z.object({

@@ -1,13 +1,15 @@
 import { mkdir, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { and, asc, eq } from "drizzle-orm"
-import type { AudiobookExport, AudiobookManifest } from "@shared/contracts/ai"
+import type { AudiobookExport, AudiobookManifest, LibraryAudioStatus } from "@shared/contracts/ai"
 import type { AppDatabase } from "@main/db/client"
-import { assets, audiobookBuildJobs, audiobookChapters, audiobookExports, books } from "@main/db/schema"
+import { assets, audiobookBuildJobs, audiobookChapters, audiobookExports, books, ttsJobs } from "@main/db/schema"
 import { AppError } from "@main/lib/errors"
 import { hashBuffer } from "@main/lib/hash"
 import { createId } from "@main/lib/ids"
 import type { AppPaths } from "@main/lib/paths"
+
+const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "cancelled"])
 
 export type ChapterAudioReadyInput = {
   audioAssetId: string
@@ -31,6 +33,36 @@ export class AudiobookService {
 
   async getExport(bookId: string): Promise<AudiobookExport> {
     return this.ensureExport(bookId)
+  }
+
+  async listLibraryStatus(): Promise<LibraryAudioStatus[]> {
+    const bookRows = await this.db.query.books.findMany({
+      orderBy: [asc(books.updatedAt)]
+    })
+    const exportRows = await this.db.query.audiobookExports.findMany()
+    const exportsByBook = new Map(exportRows.map((row) => [row.bookId, row]))
+    const jobRows = await this.db.query.ttsJobs.findMany()
+    const activeBookIds = new Set(
+      jobRows.filter((job) => !TERMINAL_JOB_STATUSES.has(job.status)).map((job) => job.bookId)
+    )
+
+    return bookRows.map((book) => {
+      const exportRow = exportsByBook.get(book.id)
+      const chaptersReady = exportRow?.chaptersReady ?? 0
+      return {
+        bookId: book.id,
+        title: book.title,
+        authors: book.authors ?? [],
+        coverAssetId: optional(book.coverAssetId),
+        status: exportRow ? normalizeStatus(exportRow.status) : "none",
+        chaptersReady,
+        chaptersTotal: exportRow?.chaptersTotal || totalChaptersFor(book),
+        durationMs: exportRow?.durationMs ?? 0,
+        hasChapterAudio: chaptersReady > 0,
+        hasActiveJob: activeBookIds.has(book.id),
+        updatedAt: toIso(exportRow?.updatedAt ?? book.updatedAt)
+      }
+    })
   }
 
   async setAutoBuild(bookId: string, enabled: boolean): Promise<AudiobookExport> {

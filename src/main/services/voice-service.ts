@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises"
+import { copyFile, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { and, asc, eq, inArray } from "drizzle-orm"
 import {
@@ -28,10 +28,8 @@ import {
 } from "@main/services/default-voices"
 import { LocalTtsAdapter } from "@main/services/local-tts-adapter"
 import { buildPreviewPlan } from "@main/services/voice-preview"
+import { probeAudio, resampleAudio, TARGET_SAMPLE_RATE } from "@main/lib/audio-transcode"
 
-const F5_ENGINE_ID = "f5-tts-pt-br"
-const F5_REFERENCE_MAX_MS = 12_000
-const QWEN_BASE_CLONE_ENGINE_IDS = new Set(["qwen3-tts-06b-mlx", "qwen3-tts-17b-base-mlx"])
 const QWEN_VOICE_DESIGN_ENGINE_ID = "qwen3-tts-17b-mlx"
 
 export class VoiceService {
@@ -73,18 +71,16 @@ export class VoiceService {
 
   async createFromReference(input: VoiceCloneInput): Promise<VoiceProfile> {
     await this.ensureReady()
-    const engine = await this.db.query.ttsEngines.findFirst({ where: eq(ttsEngines.id, input.engineId) })
-    if (!engine) {
-      throw new AppError("tts_engine_not_found", "TTS engine not found")
+    // A reference voice is shared across every installed engine that supports
+    // cloning (Qwen 0.6B Base, Qwen 1.7B Base and F5 use the same sample).
+    const engines = await this.db.query.ttsEngines.findMany()
+    const cloneEngines = engines.filter(
+      (engine) => engine.installed && jsonObject(engine.capabilitiesJson).supportsVoiceClone === true
+    )
+    if (!cloneEngines.length) {
+      throw new AppError("voice_clone_no_engine", "No installed engine supports voice cloning")
     }
-    if (!engine.installed) {
-      throw new AppError("tts_engine_not_configured", "TTS engine model is not installed")
-    }
-    const capabilities = jsonObject(engine.capabilitiesJson)
-    if (capabilities.supportsVoiceClone !== true) {
-      throw new AppError("voice_clone_unsupported", "Selected engine does not support voice cloning")
-    }
-    if (requiresReferenceTranscript(engine.id) && !input.transcript?.trim()) {
+    if (!input.transcript?.trim()) {
       throw new AppError("voice_transcript_required", "Voice cloning requires a transcript that matches the reference audio")
     }
 
@@ -102,16 +98,17 @@ export class VoiceService {
         source: JSON.stringify({
           type: "reference_audio",
           originalFileName: path.basename(input.referenceAudioPath),
-          sampleAssetId: sample.assetId
+          sampleAssetId: sample.assetId,
+          sampleRate: sample.sampleRate
         }),
         tags: [input.language, "clonada"],
         settingsJson: {
-          compatibleAdapterIds: [engine.adapterId],
-          compatibleEngineIds: [input.engineId]
+          compatibleAdapterIds: unique(cloneEngines.map((engine) => engine.adapterId)),
+          compatibleEngineIds: cloneEngines.map((engine) => engine.id)
         },
         consentConfirmedAt: now,
         consentNote: input.consentNote,
-        createdFromEngineId: input.engineId,
+        createdFromEngineId: input.engineId ?? cloneEngines[0].id,
         updatedAt: now
       })
       .returning()
@@ -127,24 +124,26 @@ export class VoiceService {
       consentConfirmedAt: now
     })
 
-    await this.db.insert(voiceEngineBindings).values({
-      id: createId("voice_binding"),
-      voiceProfileId: profileId,
-      engineId: input.engineId,
-      adapterId: engine.adapterId,
-      status: "ready",
-      bindingKind: "reference_audio",
-      bindingAssetId: sample.assetId,
-      settingsJson: {
-        transcript: input.transcript ?? "",
-        source: "local-reference"
-      },
-      compatibilityJson: {
-        language: input.language,
-        engineVersion: engine.version
-      },
-      updatedAt: now
-    })
+    for (const engine of cloneEngines) {
+      await this.db.insert(voiceEngineBindings).values({
+        id: createId("voice_binding"),
+        voiceProfileId: profileId,
+        engineId: engine.id,
+        adapterId: engine.adapterId,
+        status: "ready",
+        bindingKind: "reference_audio",
+        bindingAssetId: sample.assetId,
+        settingsJson: {
+          transcript: input.transcript ?? "",
+          source: "local-reference"
+        },
+        compatibilityJson: {
+          language: input.language,
+          engineVersion: engine.version
+        },
+        updatedAt: now
+      })
+    }
 
     return toVoiceProfile(voice, await this.bindingsForVoice(profileId))
   }
@@ -314,23 +313,39 @@ export class VoiceService {
   }
 
   private async copyReferenceSample(profileId: string, input: VoiceCloneInput, now: Date) {
-    const buffer = await readFile(input.referenceAudioPath)
     const info = await stat(input.referenceAudioPath)
     if (!info.isFile()) {
       throw new AppError("voice_sample_invalid", "Voice reference must be a file")
     }
-    const contentHash = hashBuffer(buffer)
-    const extension = path.extname(input.referenceAudioPath).toLowerCase() || ".wav"
-    const durationMs = estimateDurationMs(buffer)
-    if (input.engineId === F5_ENGINE_ID && durationMs > F5_REFERENCE_MAX_MS) {
-      throw new AppError(
-        "voice_reference_too_long",
-        "F5-TTS PT-BR reference audio must be 12 seconds or shorter with a matching transcript"
-      )
+    const probe = await probeAudio(input.referenceAudioPath)
+    const targetDir = path.join(this.paths.voicesDir, profileId)
+    await mkdir(targetDir, { recursive: true })
+
+    // Audio length is not limited; we only down-sample to 22.05 kHz when the
+    // source rate is higher (Qwen Base / F5 expect <= 22 kHz references).
+    let sourcePath = input.referenceAudioPath
+    let extension = path.extname(input.referenceAudioPath).toLowerCase() || ".wav"
+    let sampleRate = probe.sampleRate
+    let converted = false
+    if (probe.sampleRate && probe.sampleRate > TARGET_SAMPLE_RATE) {
+      const tempPath = path.join(targetDir, "reference-converting.wav")
+      if (await resampleAudio(input.referenceAudioPath, tempPath, TARGET_SAMPLE_RATE)) {
+        sourcePath = tempPath
+        extension = ".wav"
+        sampleRate = TARGET_SAMPLE_RATE
+        converted = true
+      }
     }
-    const targetPath = path.join(this.paths.voicesDir, profileId, `reference-${contentHash.slice(0, 16)}${extension}`)
-    await mkdir(path.dirname(targetPath), { recursive: true })
-    await copyFile(input.referenceAudioPath, targetPath)
+
+    const buffer = await readFile(sourcePath)
+    const contentHash = hashBuffer(buffer)
+    const targetPath = path.join(targetDir, `reference-${contentHash.slice(0, 16)}${extension}`)
+    if (converted) {
+      await rename(sourcePath, targetPath)
+    } else {
+      await copyFile(sourcePath, targetPath)
+    }
+    const durationMs = probe.durationMs ?? estimateDurationMs(buffer)
     const [asset] = await this.db
       .insert(assets)
       .values({
@@ -347,9 +362,12 @@ export class VoiceService {
       id: createId("voice_sample"),
       assetId: asset.id,
       durationMs,
+      sampleRate,
       quality: {
         sourceBytes: buffer.byteLength,
-        durationEstimate: "container-header-or-fallback"
+        sampleRate: sampleRate ?? null,
+        converted,
+        durationEstimate: probe.durationMs ? "ffprobe" : "container-header-or-fallback"
       }
     }
   }
@@ -564,10 +582,6 @@ async function disableStaleBuiltInBindings(db: AppDatabase, now: Date): Promise<
         .where(eq(voiceEngineBindings.id, binding.id))
     }
   }
-}
-
-function requiresReferenceTranscript(engineId: string): boolean {
-  return engineId === F5_ENGINE_ID || QWEN_BASE_CLONE_ENGINE_IDS.has(engineId)
 }
 
 function mimeTypeFor(extension: string): string {

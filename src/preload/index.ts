@@ -157,10 +157,14 @@ const api = {
   },
   tts: {
     enqueueChapter: (input: Record<string, unknown>) => invoke("tts.enqueueChapter", input),
+    enqueueChapters: (input: Record<string, unknown>) => invoke("tts.enqueueChapters", input),
     cancelJob: (id: string) => invoke("tts.cancelJob", { id }),
+    pauseJob: (id: string) => invoke("tts.pauseJob", { id }),
+    resumeJob: (id: string) => invoke("tts.resumeJob", { id }),
     retryJob: (id: string) => invoke("tts.retryJob", { id }),
     getJob: (id: string) => invoke("tts.getJob", { id }),
     listJobs: (filter?: { bookId?: string; engineId?: string }) => invoke("tts.listJobs", filter ?? {}),
+    listSegments: (jobId: string) => invoke("tts.listSegments", { jobId }),
     clearChapterAudio: (input: { bookId: string; chapterHref: string }) => invoke("tts.clearChapterAudio", input),
     clearTerminalJobs: (input: { bookId: string }) => invoke("tts.clearTerminalJobs", input)
   },
@@ -176,6 +180,7 @@ const api = {
   },
   audiobook: {
     getExport: (bookId: string) => invoke("audiobook.getExport", { bookId }),
+    listLibraryStatus: () => invoke("audiobook.listLibraryStatus"),
     enableAutoBuild: (bookId: string, enabled: boolean) =>
       invoke("audiobook.enableAutoBuild", { bookId, enabled }),
     rebuild: (bookId: string) => invoke("audiobook.rebuild", { bookId }),

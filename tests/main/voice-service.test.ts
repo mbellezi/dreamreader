@@ -110,10 +110,12 @@ describe("VoiceService", () => {
         referenceAudioPath: samplePath,
         transcript: "Amostra curta."
       })
+      // Reference voices are shared across every installed clone-capable engine.
       expect(qwenClone.settings).toMatchObject({
-        compatibleEngineIds: ["qwen3-tts-17b-base-mlx"]
+        compatibleEngineIds: expect.arrayContaining(["qwen3-tts-17b-base-mlx", "f5-tts-pt-br"])
       })
       expect((await service.listCompatible("qwen3-tts-17b-base-mlx")).map((voice) => voice.id)).toContain(qwenClone.id)
+      expect((await service.listCompatible("f5-tts-pt-br")).map((voice) => voice.id)).toContain(qwenClone.id)
 
       await writeFile(samplePath, createSilentWav(61_000))
       const qwenLongReferenceClone = await service.createFromReference({
@@ -125,8 +127,10 @@ describe("VoiceService", () => {
         referenceAudioPath: samplePath,
         transcript: "Esta transcrição representa uma referência longa para o Qwen Base."
       })
+      // Audio length is no longer limited: a >12s reference is accepted (the UI
+      // only warns) and is down-sampled to 22 kHz when needed.
       expect(qwenLongReferenceClone.settings).toMatchObject({
-        compatibleEngineIds: ["qwen3-tts-17b-base-mlx"]
+        compatibleEngineIds: expect.arrayContaining(["qwen3-tts-17b-base-mlx", "f5-tts-pt-br"])
       })
 
       const f5BuiltIns = await service.listCompatible("f5-tts-pt-br")
@@ -143,18 +147,6 @@ describe("VoiceService", () => {
         })
       ).rejects.toMatchObject({ code: "voice_transcript_required" })
 
-      await expect(
-        service.createFromReference({
-          consentConfirmed: true,
-          consentNote: "Autorizado para teste local.",
-          engineId: "f5-tts-pt-br",
-          language: "pt-BR",
-          name: "Voz longa",
-          referenceAudioPath: samplePath,
-          transcript: "Esta transcrição representa uma referência longa demais para o F5."
-        })
-      ).rejects.toMatchObject({ code: "voice_reference_too_long" })
-
       await writeFile(samplePath, createSilentWav(8_000))
       const cloned = await service.createFromReference({
         consentConfirmed: true,
@@ -168,6 +160,13 @@ describe("VoiceService", () => {
 
       expect(cloned.kind).toBe("cloned")
       expect(cloned.consentConfirmedAt).toBeTruthy()
+
+      // The 24 kHz reference is down-sampled to 22.05 kHz on registration.
+      const clonedSample = await db.query.voiceSamples.findFirst({ where: eq(schema.voiceSamples.voiceProfileId, cloned.id) })
+      expect((clonedSample?.qualityJson as { sampleRate?: number; converted?: boolean }).sampleRate).toBe(22_050)
+      expect((clonedSample?.qualityJson as { converted?: boolean }).converted).toBe(true)
+      // A reference voice binds to every installed clone-capable engine.
+      expect(await db.query.voiceEngineBindings.findMany({ where: eq(voiceEngineBindings.voiceProfileId, cloned.id) })).toHaveLength(2)
 
       const compatible = await service.listCompatible("f5-tts-pt-br")
       expect(compatible.map((voice) => voice.id)).toContain(cloned.id)
