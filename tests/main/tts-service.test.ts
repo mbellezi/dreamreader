@@ -453,6 +453,65 @@ process.stdin.on("end", () => {
     }
   })
 
+  it("does not reuse cached audio when model settings or fixed seed change", async () => {
+    const { audiobook, client, db, paths } = await createTestServices()
+    try {
+      await seedBook(db, paths)
+      const tts = new TtsService(db, paths, audiobook)
+
+      const first = await tts.enqueueChapter({
+        bookId: "book-audio",
+        chapterHref: "chapter-1",
+        engineId: DEFAULT_TTS_ENGINE_ID,
+        voiceProfileId: DEFAULT_VOICE_PROFILE_ID,
+        generationLanguage: "Portuguese",
+        modelSettings: { temperature: 0.9 },
+        quality: "draft",
+        seed: 1234,
+        seedFixed: true,
+        useExpressiveNarration: false
+      })
+      await tts.drainQueue()
+      expect((await tts.getJob(first.id)).status).toBe("completed")
+
+      const changedTemperature = await tts.enqueueChapter({
+        bookId: "book-audio",
+        chapterHref: "chapter-1",
+        engineId: DEFAULT_TTS_ENGINE_ID,
+        voiceProfileId: DEFAULT_VOICE_PROFILE_ID,
+        generationLanguage: "Portuguese",
+        modelSettings: { temperature: 0.7 },
+        quality: "draft",
+        seed: 1234,
+        seedFixed: true,
+        useExpressiveNarration: false
+      })
+
+      expect(changedTemperature.status).toBe("queued")
+      expect(changedTemperature.settings.cached).toBe(false)
+      await tts.drainQueue()
+
+      const changedSeed = await tts.enqueueChapter({
+        bookId: "book-audio",
+        chapterHref: "chapter-1",
+        engineId: DEFAULT_TTS_ENGINE_ID,
+        voiceProfileId: DEFAULT_VOICE_PROFILE_ID,
+        generationLanguage: "Portuguese",
+        modelSettings: { temperature: 0.7 },
+        quality: "draft",
+        seed: 4321,
+        seedFixed: true,
+        useExpressiveNarration: false
+      })
+
+      expect(changedSeed.status).toBe("queued")
+      expect(changedSeed.settings.cached).toBe(false)
+      await tts.drainQueue()
+    } finally {
+      await client.close()
+    }
+  })
+
   it("terminates a running neural sidecar when the job is cancelled", async () => {
     const { audiobook, client, db, paths } = await createTestServices()
     try {

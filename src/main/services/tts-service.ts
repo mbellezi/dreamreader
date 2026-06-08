@@ -11,6 +11,7 @@ import {
   type NarrationPlan,
   type PronunciationEntry,
   type TtsJob,
+  type TtsModelSettings,
   type TtsSegmentSummary
 } from "@shared/contracts/ai"
 import type { AppDatabase } from "@main/db/client"
@@ -62,6 +63,14 @@ type ChapterSource = {
 
 type TtsJobRow = typeof ttsJobs.$inferSelect
 type TtsEngineRow = typeof ttsEngines.$inferSelect
+type EnqueueChapterTtsInput = Omit<EnqueueChapterTtsRequest, "modelSettings" | "seedFixed"> & {
+  modelSettings?: TtsModelSettings
+  seedFixed?: boolean
+}
+type EnqueueChaptersTtsInput = Omit<EnqueueChaptersTtsRequest, "modelSettings" | "seedFixed"> & {
+  modelSettings?: TtsModelSettings
+  seedFixed?: boolean
+}
 
 type ReadyEngine = {
   adapterId: string
@@ -224,7 +233,7 @@ export class TtsService {
     this.prosody = new ProsodyService(db, createDefaultProsodyAnalyzerProvider(paths))
   }
 
-  async enqueueChapter(input: EnqueueChapterTtsRequest): Promise<TtsJob> {
+  async enqueueChapter(input: EnqueueChapterTtsInput): Promise<TtsJob> {
     await this.ensureReady()
     const engineId = input.engineId || DEFAULT_TTS_ENGINE_ID
     const voice = await this.resolveVoiceForEngine({
@@ -235,12 +244,20 @@ export class TtsService {
     const source = await this.getChapterSource(input.bookId, input.chapterHref)
     const pronunciation = await this.pronunciationEntriesForBook(input.bookId)
     const dictionaryVersion = dictionaryVersionFor(pronunciation)
+    const modelSettings = jsonObject(input.modelSettings)
+    const seed = input.seedFixed ? input.seed : undefined
+    const generationConfigSignature = generationConfigSignatureFor({
+      generationLanguage: input.generationLanguage,
+      modelSettings,
+      seed
+    })
     const cached = await this.findCachedJob({
       bookId: input.bookId,
       chapterHref: input.chapterHref,
       contentHash: source.contentHash,
       dictionaryVersion,
       engineId,
+      generationConfigSignature,
       voiceBindingId: voice.bindingId,
       voiceProfileId: voice.profileId,
       useExpressiveNarration: input.useExpressiveNarration,
@@ -264,8 +281,13 @@ export class TtsService {
           cachedFromJobId: cached?.id,
           chapterAudioAssetId: cached?.chapterAudioAssetId,
           chapterDurationMs: cached?.chapterDurationMs,
+          generationConfigSignature,
+          generationLanguage: input.generationLanguage,
+          modelSettings,
           prosodyMode: input.useExpressiveNarration ? "expressive" : "neutral",
           quality: input.quality,
+          seed,
+          seedFixed: input.seedFixed,
           normalizationDictionaryVersion: dictionaryVersion,
           normalizationVersion: NORMALIZER_VERSION,
           sourceContentHash: source.contentHash,
@@ -291,7 +313,7 @@ export class TtsService {
     return toTtsJob(job)
   }
 
-  async enqueueChapters(input: EnqueueChaptersTtsRequest): Promise<TtsJob[]> {
+  async enqueueChapters(input: EnqueueChaptersTtsInput): Promise<TtsJob[]> {
     await this.ensureReady()
     const chapters = await this.getBookChapters(input.bookId)
     const selected = input.chapterHrefs?.length
@@ -306,7 +328,11 @@ export class TtsService {
           engineId: input.engineId,
           voiceProfileId: input.voiceProfileId,
           voiceBindingId: input.voiceBindingId,
+          generationLanguage: input.generationLanguage,
+          modelSettings: input.modelSettings,
           quality: input.quality,
+          seed: input.seed,
+          seedFixed: input.seedFixed,
           useExpressiveNarration: input.useExpressiveNarration
         })
       )
@@ -576,6 +602,14 @@ export class TtsService {
       const useExpressiveNarration = Boolean(jobSettings.useExpressiveNarration)
       const paragraphLimit = typeof jobSettings.paragraphLimit === "number" ? jobSettings.paragraphLimit : undefined
       const isPartial = Boolean(paragraphLimit)
+      const generationConfigSignature =
+        typeof jobSettings.generationConfigSignature === "string"
+          ? jobSettings.generationConfigSignature
+          : generationConfigSignatureFor({
+              generationLanguage: optionalStringValue(jobSettings.generationLanguage),
+              modelSettings: jsonObject(jobSettings.modelSettings),
+              seed: typeof jobSettings.seed === "number" ? jobSettings.seed : undefined
+            })
       const pronunciation = await this.pronunciationEntriesForBook(job.bookId)
       const dictionaryVersion = dictionaryVersionFor(pronunciation)
       const cached = await this.findCachedJob({
@@ -585,6 +619,7 @@ export class TtsService {
         dictionaryVersion,
         engineId: job.engineId,
         excludeJobId: job.id,
+        generationConfigSignature,
         voiceBindingId: job.voiceBindingId ?? undefined,
         voiceProfileId: job.voiceProfileId ?? undefined,
         useExpressiveNarration,
@@ -653,7 +688,10 @@ export class TtsService {
         job,
         outputDir,
         plan,
+        generationLanguage: optionalStringValue(jobSettings.generationLanguage),
+        modelSettings: jsonObject(jobSettings.modelSettings) as TtsModelSettings,
         quality: qualityFor(jobSettings.quality),
+        seed: typeof jobSettings.seed === "number" ? jobSettings.seed : undefined,
         readyEngine
       })
 
@@ -766,7 +804,10 @@ export class TtsService {
     job: TtsJobRow
     outputDir: string
     plan: NarrationPlan
+    generationLanguage?: string
+    modelSettings: TtsModelSettings
     quality: "draft" | "standard" | "high"
+    seed?: number
     readyEngine: ReadyEngine
   }): Promise<{
     chapterAssetId: string
@@ -868,7 +909,10 @@ export class TtsService {
     job: TtsJobRow
     outputDir: string
     plan: NarrationPlan
+    generationLanguage?: string
+    modelSettings: TtsModelSettings
     quality: "draft" | "standard" | "high"
+    seed?: number
     readyEngine: ReadyEngine
   }): Promise<{
     chapterAssetId: string
@@ -933,11 +977,14 @@ export class TtsService {
         jobId: input.job.id,
         modelPath: input.readyEngine.modelPath,
         outputDirectory: input.outputDir,
+        generationLanguage: input.generationLanguage,
+        modelSettings: input.modelSettings,
         plan: input.plan,
         quality: input.quality,
         referenceAudioPath: reference?.audioPath,
         referenceText: reference?.text,
         runtimeManifest: input.readyEngine.runtimeManifest,
+        seed: input.seed,
         signal: controller.signal,
         voiceBinding: voice.binding,
         voiceProfile: voice.profile,
@@ -1194,6 +1241,7 @@ export class TtsService {
     voiceProfileId?: string
     useExpressiveNarration: boolean
     paragraphLimit?: number
+    generationConfigSignature: string
   }) {
     const candidates = await this.db.query.ttsJobs.findMany({
       where: and(eq(ttsJobs.bookId, input.bookId), eq(ttsJobs.chapterHref, input.chapterHref), eq(ttsJobs.status, "completed")),
@@ -1216,6 +1264,7 @@ export class TtsService {
         settings.normalizationDictionaryVersion === input.dictionaryVersion &&
         settings.normalizationVersion === NORMALIZER_VERSION &&
         settings.useExpressiveNarration === input.useExpressiveNarration &&
+        settings.generationConfigSignature === input.generationConfigSignature &&
         cachedParagraphLimit === input.paragraphLimit &&
         typeof settings.chapterAudioAssetId === "string"
       )
@@ -1480,7 +1529,20 @@ function parseJsonObject(value: string): Record<string, unknown> {
   }
 }
 
+function generationConfigSignatureFor(input: {
+  generationLanguage?: string
+  modelSettings: Record<string, unknown>
+  seed?: number
+}): string {
+  return stableJsonString({
+    generationLanguage: input.generationLanguage ?? "",
+    modelSettings: input.modelSettings,
+    seed: input.seed ?? null
+  })
+}
+
 function chapterCacheHashFor(sourceContentHash: string, job: TtsJobRow, plan: NarrationPlan, expressive: boolean): string {
+  const settings = jsonObject(job.settingsJson)
   return hashBuffer(
     [
       sourceContentHash,
@@ -1493,9 +1555,14 @@ function chapterCacheHashFor(sourceContentHash: string, job: TtsJobRow, plan: Na
       plan.prosody.promptVersion ?? "",
       plan.normalization.normalizerId,
       plan.normalization.version,
-      plan.normalization.dictionaryVersion
+      plan.normalization.dictionaryVersion,
+      typeof settings.generationConfigSignature === "string" ? settings.generationConfigSignature : ""
     ].join("\n")
   )
+}
+
+function optionalStringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined
 }
 
 function optional(value: string | null | undefined): string | undefined {
@@ -1574,6 +1641,19 @@ function localSegmentPacingMs(text: string): number {
 
 function qualityFor(value: unknown): "draft" | "standard" | "high" {
   return value === "draft" || value === "high" ? value : "standard"
+}
+
+function stableJsonString(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableJsonString(item)).join(",")}]`
+  }
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableJsonString(item)}`)
+      .join(",")}}`
+  }
+  return JSON.stringify(value)
 }
 
 function adapterIdForEngine(engineId: string): string {

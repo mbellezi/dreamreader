@@ -98,6 +98,18 @@ function normalizeSettings(settings?: Partial<AppSettings>): AppSettings {
     reader: {
       ...defaultSettings.reader,
       ...settings?.reader
+    },
+    audio: {
+      ...defaultSettings.audio,
+      ...settings?.audio,
+      generationLanguageByEngineId: {
+        ...defaultSettings.audio.generationLanguageByEngineId,
+        ...settings?.audio?.generationLanguageByEngineId
+      },
+      modelSettingsByEngineId: {
+        ...defaultSettings.audio.modelSettingsByEngineId,
+        ...settings?.audio?.modelSettingsByEngineId
+      }
     }
   }
 }
@@ -300,7 +312,11 @@ export const dreamreaderClient = {
     bookId: string
     chapterHref: string
     engineId?: string
+    generationLanguage?: string
+    modelSettings?: Record<string, unknown>
     quality?: "draft" | "standard" | "high"
+    seed?: number
+    seedFixed?: boolean
     voiceProfileId?: string
     useExpressiveNarration?: boolean
     paragraphLimit?: number
@@ -318,7 +334,11 @@ export const dreamreaderClient = {
     bookId: string
     chapterHrefs?: string[]
     engineId?: string
+    generationLanguage?: string
+    modelSettings?: Record<string, unknown>
     quality?: "draft" | "standard" | "high"
+    seed?: number
+    seedFixed?: boolean
     voiceProfileId?: string
     useExpressiveNarration?: boolean
   }): Promise<TtsJob[]> {

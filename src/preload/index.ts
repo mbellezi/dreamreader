@@ -146,6 +146,7 @@ const api = {
     saveSettings: async (settings: {
       locale: string
       appearance: string
+      audio?: Record<string, unknown>
       reader: Record<string, unknown>
     }) => toRendererSettings(await invoke("settings.update", rendererSettingsToCanonical(settings)))
   },
@@ -248,6 +249,7 @@ function toRendererAnnotation(input: unknown, fallbackKind = "highlight", fallba
 function toRendererSettings(input: unknown) {
   const settings = (input ?? {}) as Record<string, unknown>
   const ui = (settings.ui ?? {}) as Record<string, unknown>
+  const audio = (settings.audio ?? {}) as Record<string, unknown>
   const reader = (settings.reader ?? {}) as Record<string, unknown>
   return {
     locale: String(ui.locale ?? "pt-BR"),
@@ -264,11 +266,21 @@ function toRendererSettings(input: unknown) {
       readingFlow: String(reader.readingFlow ?? "continuous"),
       textAlign: String(reader.textAlign ?? "justify"),
       hyphenation: Boolean(reader.hyphenation ?? true)
+    },
+    audio: {
+      defaultEngineId: optionalString(audio.defaultEngineId),
+      defaultVoiceProfileId: optionalString(audio.defaultVoiceProfileId),
+      expressiveNarrationEnabled: Boolean(audio.expressiveNarrationEnabled),
+      autoBuildM4b: Boolean(audio.autoBuildM4b),
+      generationLanguageByEngineId: stringRecord(audio.generationLanguageByEngineId),
+      modelSettingsByEngineId: recordObject(audio.modelSettingsByEngineId),
+      seed: clampSeed(audio.seed),
+      seedFixed: Boolean(audio.seedFixed)
     }
   }
 }
 
-function rendererSettingsToCanonical(input: { locale: string; appearance: string; reader: Record<string, unknown> }) {
+function rendererSettingsToCanonical(input: { locale: string; appearance: string; audio?: Record<string, unknown>; reader: Record<string, unknown> }) {
   return {
     ui: {
       locale: input.locale,
@@ -286,6 +298,16 @@ function rendererSettingsToCanonical(input: { locale: string; appearance: string
       readingFlow: input.reader.readingFlow,
       textAlign: input.reader.textAlign,
       hyphenation: input.reader.hyphenation
+    },
+    audio: {
+      defaultEngineId: optionalString(input.audio?.defaultEngineId),
+      defaultVoiceProfileId: optionalString(input.audio?.defaultVoiceProfileId),
+      expressiveNarrationEnabled: Boolean(input.audio?.expressiveNarrationEnabled),
+      autoBuildM4b: Boolean(input.audio?.autoBuildM4b),
+      generationLanguageByEngineId: stringRecord(input.audio?.generationLanguageByEngineId),
+      modelSettingsByEngineId: recordObject(input.audio?.modelSettingsByEngineId),
+      seed: clampSeed(input.audio?.seed),
+      seedFixed: Boolean(input.audio?.seedFixed)
     }
   }
 }
@@ -351,6 +373,36 @@ function optionalString(value: unknown): string | undefined {
 function optionalNumber(value: unknown): number | undefined {
   const numberValue = Number(value)
   return Number.isFinite(numberValue) ? numberValue : undefined
+}
+
+function clampSeed(value: unknown): number {
+  const seed = Math.floor(Number(value))
+  if (!Number.isFinite(seed)) {
+    return 1801202606
+  }
+  return Math.min(Math.max(seed, 0), 4_294_967_295)
+}
+
+function recordObject(value: unknown): Record<string, Record<string, unknown>> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {}
+  }
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => item && typeof item === "object" && !Array.isArray(item))
+      .map(([key, item]) => [key, item as Record<string, unknown>])
+  )
+}
+
+function stringRecord(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {}
+  }
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => typeof item === "string" && item.length > 0)
+      .map(([key, item]) => [key, String(item)])
+  )
 }
 
 function compact<T extends Record<string, unknown>>(value: T): Partial<T> {

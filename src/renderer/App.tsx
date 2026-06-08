@@ -26,6 +26,7 @@ import type {
   Annotation,
   AnnotationKind,
   AppSettings,
+  AudioSettings,
   BookDetails,
   BookSummary,
   HighlightColor,
@@ -365,7 +366,11 @@ export function App(): ReactElement {
   const generateChapterAudio = async (input: {
     chapterHref: string
     engineId: string
+    generationLanguage?: string
+    modelSettings?: Record<string, unknown>
     quality: "draft" | "standard" | "high"
+    seed?: number
+    seedFixed?: boolean
     useExpressiveNarration: boolean
     voiceProfileId?: string
   }) => {
@@ -388,7 +393,11 @@ export function App(): ReactElement {
   const generateChapters = async (input: {
     chapterHrefs?: string[]
     engineId: string
+    generationLanguage?: string
+    modelSettings?: Record<string, unknown>
     quality: "draft" | "standard" | "high"
+    seed?: number
+    seedFixed?: boolean
     useExpressiveNarration: boolean
     voiceProfileId?: string
   }) => {
@@ -630,6 +639,20 @@ export function App(): ReactElement {
     scheduleSettingsSave(nextSettings, key === "readingFlow" || key === "theme" ? 0 : 450)
   }
 
+  const updateAudioSettings = (audio: AudioSettings, delay = 450) => {
+    if (!settings) {
+      return
+    }
+
+    const nextSettings = {
+      ...settings,
+      audio
+    }
+
+    updateSettings(nextSettings)
+    scheduleSettingsSave(nextSettings, delay)
+  }
+
   const saveSettings = async () => {
     if (!settings) {
       return
@@ -734,6 +757,7 @@ export function App(): ReactElement {
                 diagnostics={diagnostics}
                 jobs={audioJobs}
                 loading={audioLoading}
+                audioSettings={settings.audio}
                 models={runtimeModels}
                 pronunciationEntries={pronunciationEntries}
                 t={t}
@@ -754,6 +778,7 @@ export function App(): ReactElement {
                 onResumeJob={resumeTtsJob}
                 onRetryJob={retryTtsJob}
                 onToggleAutoBuild={toggleAudiobookAutoBuild}
+                onUpdateAudioSettings={updateAudioSettings}
               />
             ) : (
               <AudioDashboardPane

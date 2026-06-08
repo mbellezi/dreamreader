@@ -97,10 +97,43 @@ export type ReaderPreferences = {
   hyphenation: boolean
 }
 
+export type TtsModelSettings = {
+  cfgStrength?: number
+  crossFadeDuration?: number
+  doSample?: boolean
+  maxNewTokens?: number
+  nfeStep?: number
+  nonStreamingMode?: boolean
+  removeSilence?: boolean
+  repetitionPenalty?: number
+  speed?: number
+  subtalkerDoSample?: boolean
+  subtalkerTemperature?: number
+  subtalkerTopK?: number
+  subtalkerTopP?: number
+  swaySamplingCoef?: number
+  targetRms?: number
+  temperature?: number
+  topK?: number
+  topP?: number
+}
+
+export type AudioSettings = {
+  defaultEngineId?: string
+  defaultVoiceProfileId?: string
+  expressiveNarrationEnabled: boolean
+  autoBuildM4b: boolean
+  generationLanguageByEngineId: Record<string, string>
+  modelSettingsByEngineId: Record<string, TtsModelSettings>
+  seed: number
+  seedFixed: boolean
+}
+
 export type AppSettings = {
   locale: Locale
   appearance: AppearanceTheme
   reader: ReaderPreferences
+  audio: AudioSettings
 }
 
 export type LibraryQuery = {

@@ -196,6 +196,37 @@ export const DownloadModelRequestSchema = z.object({
 });
 export type DownloadModelRequest = z.infer<typeof DownloadModelRequestSchema>;
 
+export const TtsGenerationSeedSchema = z
+  .number()
+  .int()
+  .min(0)
+  .max(4_294_967_295);
+export type TtsGenerationSeed = z.infer<typeof TtsGenerationSeedSchema>;
+
+export const TtsModelSettingsSchema = z
+  .object({
+    cfgStrength: z.number().min(0).max(10).optional(),
+    crossFadeDuration: z.number().min(0).max(2).optional(),
+    doSample: z.boolean().optional(),
+    maxNewTokens: z.number().int().positive().max(32_768).optional(),
+    nfeStep: z.number().int().min(1).max(128).optional(),
+    nonStreamingMode: z.boolean().optional(),
+    removeSilence: z.boolean().optional(),
+    repetitionPenalty: z.number().min(0).max(3).optional(),
+    speed: z.number().min(0.25).max(2).optional(),
+    subtalkerDoSample: z.boolean().optional(),
+    subtalkerTemperature: z.number().min(0).max(2).optional(),
+    subtalkerTopK: z.number().int().min(0).max(200).optional(),
+    subtalkerTopP: z.number().min(0).max(1).optional(),
+    swaySamplingCoef: z.number().min(-10).max(10).optional(),
+    targetRms: z.number().min(0).max(1).optional(),
+    temperature: z.number().min(0).max(2).optional(),
+    topK: z.number().int().min(0).max(200).optional(),
+    topP: z.number().min(0).max(1).optional(),
+  })
+  .default({});
+export type TtsModelSettings = z.infer<typeof TtsModelSettingsSchema>;
+
 export const VoiceKindSchema = z.enum([
   "built_in",
   "cloned",
@@ -393,6 +424,9 @@ export const TtsSynthesisInputSchema = z.object({
   plan: NarrationPlanSchema,
   outputDirectory: NonEmptyStringSchema,
   quality: z.enum(["draft", "standard", "high"]).default("standard"),
+  generationLanguage: NonEmptyStringSchema.optional(),
+  modelSettings: TtsModelSettingsSchema,
+  seed: TtsGenerationSeedSchema.optional(),
 });
 export type TtsSynthesisInput = z.infer<typeof TtsSynthesisInputSchema>;
 
@@ -449,6 +483,10 @@ export const EnqueueChapterTtsRequestSchema = z.object({
   voiceBindingId: IdSchema.optional(),
   quality: z.enum(["draft", "standard", "high"]).default("standard"),
   useExpressiveNarration: z.boolean().default(false),
+  generationLanguage: NonEmptyStringSchema.optional(),
+  modelSettings: TtsModelSettingsSchema,
+  seed: TtsGenerationSeedSchema.optional(),
+  seedFixed: z.boolean().default(false),
   // When set, only the first N paragraphs are synthesized (partial preview for
   // testing). Omitted/undefined means the whole chapter (default = total).
   paragraphLimit: z.number().int().positive().optional(),
@@ -466,6 +504,10 @@ export const EnqueueChaptersTtsRequestSchema = z.object({
   voiceBindingId: IdSchema.optional(),
   quality: z.enum(["draft", "standard", "high"]).default("standard"),
   useExpressiveNarration: z.boolean().default(false),
+  generationLanguage: NonEmptyStringSchema.optional(),
+  modelSettings: TtsModelSettingsSchema,
+  seed: TtsGenerationSeedSchema.optional(),
+  seedFixed: z.boolean().default(false),
 });
 export type EnqueueChaptersTtsRequest = z.infer<
   typeof EnqueueChaptersTtsRequestSchema

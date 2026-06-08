@@ -8,6 +8,7 @@ import {
   VoiceProfileSchema,
   VoiceSampleSchema,
   type NarrationPlan,
+  type TtsModelSettings,
   type VoiceEngineBinding,
   type VoiceProfile,
   type VoiceSample
@@ -73,11 +74,14 @@ export type SidecarSynthesisInput = {
   jobId: string
   modelPath: string
   outputDirectory: string
+  generationLanguage?: string
+  modelSettings: TtsModelSettings
   plan: NarrationPlan
   quality: "draft" | "standard" | "high"
   referenceAudioPath?: string
   referenceText?: string
   runtimeManifest: SidecarRuntimeManifest
+  seed?: number
   signal?: AbortSignal
   voiceBinding?: VoiceEngineBinding
   voiceProfile?: VoiceProfile
@@ -107,13 +111,16 @@ export class SidecarTtsAdapter {
       jobId: input.jobId,
       modelPath: input.modelPath,
       outputDirectory: input.outputDirectory,
+      generationLanguage: input.generationLanguage,
+      modelSettings: input.modelSettings,
       plan: NarrationPlanSchema.parse(input.plan),
       quality: input.quality,
       referenceAudioPath: input.referenceAudioPath,
       referenceText: input.referenceText,
       voiceProfile: input.voiceProfile ? VoiceProfileSchema.parse(input.voiceProfile) : undefined,
       voiceBinding: input.voiceBinding ? VoiceEngineBindingSchema.parse(input.voiceBinding) : undefined,
-      voiceSamples: input.voiceSamples.map((sample) => VoiceSampleSchema.parse(sample))
+      voiceSamples: input.voiceSamples.map((sample) => VoiceSampleSchema.parse(sample)),
+      seed: input.seed
     }
 
     const raw = await runSidecarProcess({

@@ -192,6 +192,34 @@ describe("shared contracts", () => {
     });
   });
 
+  it("validates TTS model settings and seed on enqueue", () => {
+    const parsed = IpcContractSchemas["tts.enqueueChapter"].request.parse({
+      bookId: "book-1",
+      chapterHref: "chapter-1.xhtml",
+      engineId: "qwen3-tts-17b-mlx",
+      generationLanguage: "Portuguese",
+      modelSettings: {
+        temperature: 0.9,
+        topK: 50,
+        topP: 1,
+      },
+      seed: 1234,
+      seedFixed: true,
+    });
+
+    expect(parsed.modelSettings.temperature).toBe(0.9);
+    expect(parsed.seed).toBe(1234);
+    expect(parsed.seedFixed).toBe(true);
+
+    expect(
+      IpcContractSchemas["tts.enqueueChapter"].request.safeParse({
+        bookId: "book-1",
+        chapterHref: "chapter-1.xhtml",
+        modelSettings: { temperature: -1 },
+      }).success,
+    ).toBe(false);
+  });
+
   it("validates annotations and settings defaults", () => {
     expect(
       AnnotationSchema.safeParse({
@@ -215,6 +243,8 @@ describe("shared contracts", () => {
     });
 
     expect(settings.ui.locale).toBe("pt-BR");
+    expect(settings.audio.modelSettingsByEngineId).toEqual({});
+    expect(settings.audio.seedFixed).toBe(false);
     expect(settings.privacy.mode).toBe("offline_only");
   });
 });
