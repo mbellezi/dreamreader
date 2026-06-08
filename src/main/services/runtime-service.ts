@@ -1,11 +1,24 @@
+import { spawn } from "node:child_process"
 import { createWriteStream } from "node:fs"
-import { mkdir, readdir, rename, stat, unlink } from "node:fs/promises"
+import { mkdir, readdir, rename, rm, stat, symlink, unlink } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { eq } from "drizzle-orm"
-import { ModelAssetSchema, ModelDownloadJobSchema, type ModelAsset, type ModelDownloadJob } from "@shared/contracts/ai"
+import { desc, eq } from "drizzle-orm"
+import {
+  ModelAssetSchema,
+  ModelDownloadJobSchema,
+  HuggingFaceTokenStatusSchema,
+  RuntimeOperationJobSchema,
+  RuntimeSidecarSchema,
+  type HuggingFaceTokenStatus,
+  type ModelAsset,
+  type ModelDownloadJob,
+  type RuntimeOperationJob,
+  type RuntimeOperationKind,
+  type RuntimeSidecar
+} from "@shared/contracts/ai"
 import type { AppDatabase } from "@main/db/client"
-import { modelAssets, modelDownloadJobs, runtimeManifests, ttsEngines } from "@main/db/schema"
+import { modelAssets, modelDownloadJobs, runtimeManifests, settings as settingsTable, ttsEngines } from "@main/db/schema"
 import { AppError } from "@main/lib/errors"
 import { createId } from "@main/lib/ids"
 import type { AppPaths } from "@main/lib/paths"
@@ -23,6 +36,8 @@ export type RuntimeDiagnostic = {
   status: "available" | "not_configured"
   detail: string
 }
+
+const HUGGING_FACE_TOKEN_SETTINGS_KEY = "secrets.huggingFaceToken"
 
 type RecommendedModel = {
   acceleratorPreference: string
@@ -166,6 +181,8 @@ const recommendedRuntimeManifests = [
 
 export class RuntimeService {
   private readonly activeDownloads = new Map<string, string>()
+  private readonly activeOperations = new Map<string, string>()
+  private readonly operations = new Map<string, RuntimeOperationJob>()
   private readyPromise: Promise<void> | undefined
 
   constructor(
@@ -177,9 +194,27 @@ export class RuntimeService {
     await this.ensureCatalog()
     const rows = await this.db.query.modelAssets.findMany()
     const order = new Map(recommendedModels.map((model, index) => [model.id, index]))
-    return rows
-      .map(toModelAsset)
-      .sort((a, b) => (order.get(a.id) ?? 1000) - (order.get(b.id) ?? 1000) || a.name.localeCompare(b.name))
+    const models: ModelAsset[] = []
+
+    for (const row of rows) {
+      const model = toModelAsset(row)
+      const currentSize = model.path ? await pathSize(model.path) : undefined
+      if (currentSize !== undefined) {
+        model.sizeBytes = currentSize
+        if (row.sizeBytes !== currentSize) {
+          await this.db
+            .update(modelAssets)
+            .set({
+              sizeBytes: currentSize,
+              updatedAt: new Date()
+            })
+            .where(eq(modelAssets.id, row.id))
+        }
+      }
+      models.push(model)
+    }
+
+    return models.sort((a, b) => (order.get(a.id) ?? 1000) - (order.get(b.id) ?? 1000) || a.name.localeCompare(b.name))
   }
 
   async diagnostics(): Promise<RuntimeDiagnostic[]> {
@@ -240,6 +275,193 @@ export class RuntimeService {
         detail: appleSilicon ? "MLX/Metal/MPS targets enabled by policy" : "Using portable fallback policy"
       }
     ]
+  }
+
+  async listModelDownloadJobs(): Promise<ModelDownloadJob[]> {
+    await this.ensureReady()
+    const rows = await this.db.query.modelDownloadJobs.findMany({
+      orderBy: [desc(modelDownloadJobs.updatedAt)],
+      limit: 30
+    })
+    return rows.map(toModelDownloadJob)
+  }
+
+  async listOperations(): Promise<RuntimeOperationJob[]> {
+    return [...this.operations.values()]
+      .map((operation) => RuntimeOperationJobSchema.parse(operation))
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .slice(0, 30)
+  }
+
+  async getHuggingFaceTokenStatus(): Promise<HuggingFaceTokenStatus> {
+    const row = await this.db.query.settings.findFirst({ where: eq(settingsTable.key, HUGGING_FACE_TOKEN_SETTINGS_KEY) })
+    return HuggingFaceTokenStatusSchema.parse({
+      configured: Boolean(row?.valueJson.encryptedToken),
+      storage: row?.valueJson.storage === "electron-safe-storage" ? "electron-safe-storage" : undefined,
+      updatedAt: optionalDate(row?.updatedAt)
+    })
+  }
+
+  async updateHuggingFaceToken(token: string): Promise<HuggingFaceTokenStatus> {
+    const normalizedToken = token.trim()
+    if (!normalizedToken) {
+      await this.db.delete(settingsTable).where(eq(settingsTable.key, HUGGING_FACE_TOKEN_SETTINGS_KEY))
+      return this.getHuggingFaceTokenStatus()
+    }
+
+    const encryptedToken = await encryptSecret(normalizedToken)
+    await this.db
+      .insert(settingsTable)
+      .values({
+        key: HUGGING_FACE_TOKEN_SETTINGS_KEY,
+        valueJson: {
+          encryptedToken,
+          storage: "electron-safe-storage"
+        },
+        updatedAt: new Date()
+      })
+      .onConflictDoUpdate({
+        target: settingsTable.key,
+        set: {
+          valueJson: {
+            encryptedToken,
+            storage: "electron-safe-storage"
+          },
+          updatedAt: new Date()
+        }
+      })
+    return this.getHuggingFaceTokenStatus()
+  }
+
+  private async readHuggingFaceToken(): Promise<string | undefined> {
+    const row = await this.db.query.settings.findFirst({ where: eq(settingsTable.key, HUGGING_FACE_TOKEN_SETTINGS_KEY) })
+    const encryptedToken = typeof row?.valueJson.encryptedToken === "string" ? row.valueJson.encryptedToken : undefined
+    if (!encryptedToken) {
+      return undefined
+    }
+    return decryptSecret(encryptedToken)
+  }
+
+  async listSidecars(): Promise<RuntimeSidecar[]> {
+    await this.ensureReady()
+    const manifests = await this.db.query.runtimeManifests.findMany()
+    const rows: RuntimeSidecar[] = []
+
+    for (const definition of recommendedRuntimeManifests) {
+      const manifest = manifests.find((item) => item.id === definition.id)
+      const scriptPath = sidecarScriptForAdapter(definition.adapterId)
+      const executablePath = manifest?.executablePath ?? undefined
+      const runtimeSize = executablePath && isManagedProjectPath(executablePath) ? await pathSize(path.join(projectLocalRoot(), "python")) : undefined
+      rows.push(
+        RuntimeSidecarSchema.parse({
+          id: definition.id,
+          adapterId: definition.adapterId,
+          name: sidecarName(definition.adapterId),
+          runtime: definition.runtime,
+          status: executablePath ? "available" : "not_configured",
+          executablePath,
+          scriptPath,
+          healthcheckCommand: manifest?.healthcheckCommand ?? undefined,
+          sizeBytes: runtimeSize,
+          modelEngineIds: definition.capabilities.engines,
+          createdAt: toIso(manifest?.createdAt ?? new Date()),
+          updatedAt: toIso(manifest?.updatedAt ?? new Date())
+        })
+      )
+    }
+
+    return rows
+  }
+
+  async installRecommendedModel(modelId: string): Promise<RuntimeOperationJob> {
+    await this.ensureReady()
+    const model = recommendedModelById(modelId)
+    const operation = this.createOperation("model_install", "model", modelId)
+    void this.runRecommendedModelInstall(operation.id, model)
+    return operation
+  }
+
+  async deleteModel(modelId: string, deleteFiles = true): Promise<ModelAsset> {
+    await this.ensureReady()
+    const model = await this.db.query.modelAssets.findFirst({ where: eq(modelAssets.id, modelId) })
+    if (!model) {
+      throw new AppError("model_not_found", "Model not found")
+    }
+
+    const operation = this.createOperation("model_delete", "model", modelId)
+    this.updateOperation(operation.id, {
+      status: "running",
+      startedAt: new Date().toISOString(),
+      progress: 0.2,
+      progressLabelKey: "modelManager.progress.deleting"
+    })
+    this.appendOperationLog(operation.id, "info", "modelManager.log.modelDeleteStarted", { target: model.name })
+
+    try {
+      if (deleteFiles && model.path && isSafeManagedModelPath(model.path, this.paths.modelsDir)) {
+        await rm(model.path, { force: true, recursive: true })
+        await removeEmptyParentModelDir(model.path, this.paths.modelsDir)
+        this.appendOperationLog(operation.id, "info", "modelManager.log.modelFilesDeleted", { path: model.path })
+      } else if (deleteFiles && model.path) {
+        this.appendOperationLog(operation.id, "warning", "modelManager.log.modelExternalPathPreserved", { path: model.path })
+      }
+
+      const now = new Date()
+      const [updated] = await this.db
+        .update(modelAssets)
+        .set({
+          path: null,
+          sizeBytes: null,
+          installStatus: "not_configured",
+          downloadProgress: 0,
+          installedAt: null,
+          updatedAt: now
+        })
+        .where(eq(modelAssets.id, modelId))
+        .returning()
+      await this.markTtsEngineUninstalled(getString(model.metadataJson.engineId))
+      this.updateOperation(operation.id, {
+        status: "completed",
+        progress: 1,
+        progressLabelKey: "modelManager.progress.completed",
+        finishedAt: new Date().toISOString()
+      })
+      this.appendOperationLog(operation.id, "info", "modelManager.log.modelDeleted", { target: model.name })
+      return toModelAsset(updated)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Model deletion failed"
+      this.updateOperation(operation.id, {
+        status: "failed",
+        progress: 1,
+        errorCode: "model_delete_failed",
+        errorMessage: message,
+        finishedAt: new Date().toISOString()
+      })
+      this.appendOperationLog(operation.id, "error", "modelManager.log.operationFailed", { message })
+      throw error
+    }
+  }
+
+  async installSidecar(sidecarId: string): Promise<RuntimeOperationJob> {
+    await this.ensureReady()
+    const sidecar = recommendedRuntimeManifests.find((item) => item.id === sidecarId)
+    if (!sidecar) {
+      throw new AppError("sidecar_not_found", "Sidecar not found")
+    }
+    const operation = this.createOperation("sidecar_install", "sidecar", sidecarId)
+    void this.runSidecarInstall(operation.id, sidecar)
+    return operation
+  }
+
+  async uninstallSidecar(sidecarId: string): Promise<RuntimeOperationJob> {
+    await this.ensureReady()
+    const sidecar = recommendedRuntimeManifests.find((item) => item.id === sidecarId)
+    if (!sidecar) {
+      throw new AppError("sidecar_not_found", "Sidecar not found")
+    }
+    const operation = this.createOperation("sidecar_uninstall", "sidecar", sidecarId)
+    void this.runSidecarUninstall(operation.id, sidecar)
+    return operation
   }
 
   async installFromPath(modelPath: string): Promise<ModelAsset> {
@@ -333,13 +555,23 @@ export class RuntimeService {
 
     await this.updateModelDownloadState(modelId, "queued", 0)
     this.activeDownloads.set(modelId, job.id)
-    void this.runDownload(toModelDownloadJob(job), modelId)
+    const operation = this.createOperation("model_download", "model", modelId)
+    void this.runDownload(toModelDownloadJob(job), modelId, operation.id)
     return toModelDownloadJob(job)
   }
 
-  private async runDownload(job: ModelDownloadJob, modelId: string): Promise<void> {
+  private async runDownload(job: ModelDownloadJob, modelId: string, operationId?: string): Promise<void> {
     const tempPath = `${job.targetPath}.part`
     try {
+      if (operationId) {
+        this.updateOperation(operationId, {
+          status: "running",
+          startedAt: new Date().toISOString(),
+          progress: 0,
+          progressLabelKey: "modelManager.progress.downloading"
+        })
+        this.appendOperationLog(operationId, "info", "modelManager.log.downloadStarted", { target: path.basename(job.targetPath) })
+      }
       await mkdir(path.dirname(job.targetPath), { recursive: true })
       await this.updateDownloadJob(job.id, {
         status: "downloading",
@@ -348,7 +580,10 @@ export class RuntimeService {
       })
       await this.updateModelDownloadState(modelId, "downloading", 0)
 
-      const response = await fetch(job.sourceUrl)
+      const huggingFaceToken = await this.readHuggingFaceToken()
+      const response = await fetch(job.sourceUrl, {
+        headers: huggingFaceToken ? { Authorization: `Bearer ${huggingFaceToken}` } : undefined
+      })
       if (!response.ok || !response.body) {
         throw new Error(`download_failed_${response.status}`)
       }
@@ -371,6 +606,16 @@ export class RuntimeService {
           lastUpdate = now
           await this.updateDownloadJob(job.id, { progress, receivedBytes, totalBytes })
           await this.updateModelDownloadState(modelId, "downloading", progress)
+          if (operationId) {
+            this.updateOperation(operationId, {
+              progress,
+              progressLabelKey: "modelManager.progress.downloadBytes",
+              progressLabelValues: {
+                received: receivedBytes,
+                total: totalBytes ?? 0
+              }
+            })
+          }
         }
       }
 
@@ -400,6 +645,15 @@ export class RuntimeService {
       if (recommended?.engineId) {
         await this.markTtsEngineInstalled(recommended, job.targetPath)
       }
+      if (operationId) {
+        this.updateOperation(operationId, {
+          status: "completed",
+          progress: 1,
+          progressLabelKey: "modelManager.progress.completed",
+          finishedAt: new Date().toISOString()
+        })
+        this.appendOperationLog(operationId, "info", "modelManager.log.downloadCompleted", { target: path.basename(job.targetPath) })
+      }
     } catch (error) {
       await unlink(tempPath).catch(() => undefined)
       const message = error instanceof Error ? error.message : "Model download failed"
@@ -411,6 +665,16 @@ export class RuntimeService {
         finishedAt: new Date()
       })
       await this.updateModelDownloadState(modelId, "failed", 1)
+      if (operationId) {
+        this.updateOperation(operationId, {
+          status: "failed",
+          progress: 1,
+          errorCode: "model_download_failed",
+          errorMessage: message,
+          finishedAt: new Date().toISOString()
+        })
+        this.appendOperationLog(operationId, "error", "modelManager.log.operationFailed", { message })
+      }
     } finally {
       this.activeDownloads.delete(modelId)
     }
@@ -487,11 +751,14 @@ export class RuntimeService {
     for (const manifest of recommendedRuntimeManifests) {
       const existing = await this.db.query.runtimeManifests.findFirst({ where: eq(runtimeManifests.id, manifest.id) })
       const detectedRuntime = await detectedRuntimeForManifest(manifest.adapterId)
-      const executablePath = existing?.executablePath ?? detectedRuntime?.executablePath
-      const environmentJson = existing?.executablePath
+      const disabled = existing?.environmentJson?.disabled === true
+      const executablePath = disabled ? undefined : existing?.executablePath ?? detectedRuntime?.executablePath
+      const environmentJson = disabled
+        ? { disabled: true }
+        : existing?.executablePath
         ? existing.environmentJson
         : detectedRuntime?.environmentJson ?? existing?.environmentJson ?? {}
-      const healthcheckCommand = existing?.healthcheckCommand ?? detectedRuntime?.healthcheckCommand
+      const healthcheckCommand = disabled ? undefined : existing?.healthcheckCommand ?? detectedRuntime?.healthcheckCommand
       await this.db
         .insert(runtimeManifests)
         .values({
@@ -576,6 +843,585 @@ export class RuntimeService {
         }
       })
   }
+
+  private async markTtsEngineUninstalled(engineId: string | undefined): Promise<void> {
+    if (!engineId) {
+      return
+    }
+
+    await this.db
+      .update(ttsEngines)
+      .set({
+        installed: false,
+        installPath: null,
+        updatedAt: new Date()
+      })
+      .where(eq(ttsEngines.id, engineId))
+  }
+
+  private createOperation(kind: RuntimeOperationKind, targetKind: "model" | "sidecar", targetId: string): RuntimeOperationJob {
+    const activeKey = `${kind}:${targetKind}:${targetId}`
+    const activeOperationId = this.activeOperations.get(activeKey)
+    const activeOperation = activeOperationId ? this.operations.get(activeOperationId) : undefined
+    if (activeOperation && activeOperation.status !== "completed" && activeOperation.status !== "failed") {
+      return RuntimeOperationJobSchema.parse(activeOperation)
+    }
+
+    const now = new Date().toISOString()
+    const operation = RuntimeOperationJobSchema.parse({
+      id: createId("runtime_operation"),
+      kind,
+      targetKind,
+      targetId,
+      status: "queued",
+      progress: 0,
+      progressLabelKey: "modelManager.progress.queued",
+      progressLabelValues: {},
+      logs: [],
+      createdAt: now,
+      updatedAt: now
+    })
+    this.operations.set(operation.id, operation)
+    this.activeOperations.set(activeKey, operation.id)
+    this.appendOperationLog(operation.id, "info", "modelManager.log.operationQueued", { target: targetId })
+    return operation
+  }
+
+  private updateOperation(id: string, patch: Partial<RuntimeOperationJob>): RuntimeOperationJob | undefined {
+    const current = this.operations.get(id)
+    if (!current) {
+      return undefined
+    }
+
+    const next = RuntimeOperationJobSchema.parse({
+      ...current,
+      ...patch,
+      updatedAt: new Date().toISOString()
+    })
+    this.operations.set(id, next)
+    if (next.status === "completed" || next.status === "failed") {
+      this.activeOperations.delete(`${next.kind}:${next.targetKind}:${next.targetId}`)
+    }
+    return next
+  }
+
+  private appendOperationLog(
+    operationId: string,
+    level: "info" | "warning" | "error",
+    messageKey: string,
+    values: Record<string, string | number> = {}
+  ): void {
+    const current = this.operations.get(operationId)
+    if (!current) {
+      return
+    }
+
+    const now = new Date().toISOString()
+    this.operations.set(
+      operationId,
+      RuntimeOperationJobSchema.parse({
+        ...current,
+        logs: [
+          ...current.logs,
+          {
+            id: createId("runtime_log"),
+            level,
+            messageKey,
+            values,
+            createdAt: now
+          }
+        ].slice(-300),
+        updatedAt: now
+      })
+    )
+  }
+
+  private async runRecommendedModelInstall(operationId: string, model: RecommendedModel): Promise<void> {
+    try {
+      this.updateOperation(operationId, {
+        status: "running",
+        startedAt: new Date().toISOString(),
+        progress: 0.05,
+        progressLabelKey: "modelManager.progress.preparing"
+      })
+      const repoId = getString(model.metadata.huggingFaceRepo)
+      const localFolder = getString(model.metadata.localFolder)
+      if (!repoId || !localFolder) {
+        throw new AppError("model_install_unavailable", "This model does not expose an automatic installer")
+      }
+
+      const pythonExecutable = await this.ensureLocalPython(operationId, 0.05, 0.35)
+      await this.ensurePythonPackage(operationId, pythonExecutable, "huggingface_hub", 0.35, 0.45)
+      const localDir = path.join(projectRoot(), localFolder)
+      await mkdir(localDir, { recursive: true })
+      const huggingFaceToken = await this.readHuggingFaceToken()
+      this.appendOperationLog(operationId, "info", "modelManager.log.modelSnapshotStarted", { repo: repoId, path: localFolder })
+      this.updateOperation(operationId, {
+        progress: 0.5,
+        progressLabelKey: "modelManager.progress.downloading"
+      })
+      await this.runProcess(
+        operationId,
+        pythonExecutable,
+        [
+          "-c",
+          [
+            "import os, sys",
+            "from huggingface_hub import snapshot_download",
+            "repo_id = sys.argv[1]",
+            "local_dir = sys.argv[2]",
+            "token = os.environ.get('HF_TOKEN') or None",
+            "snapshot_download(repo_id=repo_id, local_dir=local_dir, token=token)"
+          ].join("; "),
+          repoId,
+          localDir
+        ],
+        {
+          cwd: projectRoot(),
+          env: {
+            ...process.env,
+            HF_HOME: path.join(projectLocalRoot(), "huggingface"),
+            ...(huggingFaceToken ? { HF_TOKEN: huggingFaceToken } : {})
+          },
+          progressStart: 0.5,
+          progressEnd: 0.9,
+          progressLabelKey: "modelManager.progress.downloading"
+        }
+      )
+      await this.ensureCatalog()
+      const installed = await this.db.query.modelAssets.findFirst({ where: eq(modelAssets.id, model.id) })
+      if (!installed || installed.installStatus !== "available") {
+        throw new AppError("model_install_incomplete", "Downloaded model folder did not pass readiness checks")
+      }
+      this.updateOperation(operationId, {
+        status: "completed",
+        progress: 1,
+        progressLabelKey: "modelManager.progress.completed",
+        finishedAt: new Date().toISOString()
+      })
+      this.appendOperationLog(operationId, "info", "modelManager.log.modelSnapshotCompleted", { target: model.name })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Model installation failed"
+      await this.updateModelDownloadState(model.id, "failed", 1).catch(() => undefined)
+      this.updateOperation(operationId, {
+        status: "failed",
+        progress: 1,
+        errorCode: "model_install_failed",
+        errorMessage: message,
+        finishedAt: new Date().toISOString()
+      })
+      this.appendOperationLog(operationId, "error", "modelManager.log.operationFailed", { message })
+    }
+  }
+
+  private async runSidecarInstall(
+    operationId: string,
+    sidecar: (typeof recommendedRuntimeManifests)[number]
+  ): Promise<void> {
+    try {
+      this.updateOperation(operationId, {
+        status: "running",
+        startedAt: new Date().toISOString(),
+        progress: 0.05,
+        progressLabelKey: "modelManager.progress.preparing"
+      })
+      const pythonExecutable = await this.ensureLocalPython(operationId, 0.05, 0.45)
+      const requirementsPath = requirementsPathForAdapter(sidecar.adapterId)
+      if (!requirementsPath) {
+        throw new AppError("sidecar_install_unavailable", "Sidecar installer is not configured")
+      }
+      this.appendOperationLog(operationId, "info", "modelManager.log.pipInstalling", { target: path.basename(requirementsPath) })
+      await this.runProcess(operationId, pythonExecutable, ["-m", "pip", "install", "-r", requirementsPath], {
+        cwd: projectRoot(),
+        env: process.env,
+        progressStart: 0.45,
+        progressEnd: 0.92,
+        progressLabelKey: "modelManager.progress.installingDependencies"
+      })
+      const detectedRuntime = await detectedRuntimeForManifest(sidecar.adapterId)
+      if (!detectedRuntime) {
+        throw new AppError("sidecar_runtime_not_detected", "Sidecar runtime could not be detected after installation")
+      }
+      await this.db
+        .update(runtimeManifests)
+        .set({
+          executablePath: detectedRuntime.executablePath,
+          environmentJson: detectedRuntime.environmentJson,
+          healthcheckCommand: detectedRuntime.healthcheckCommand,
+          updatedAt: new Date()
+        })
+        .where(eq(runtimeManifests.id, sidecar.id))
+      await this.ensureCatalog()
+      this.updateOperation(operationId, {
+        status: "completed",
+        progress: 1,
+        progressLabelKey: "modelManager.progress.completed",
+        finishedAt: new Date().toISOString()
+      })
+      this.appendOperationLog(operationId, "info", "modelManager.log.sidecarRegistered", { target: sidecarName(sidecar.adapterId) })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Sidecar installation failed"
+      this.updateOperation(operationId, {
+        status: "failed",
+        progress: 1,
+        errorCode: "sidecar_install_failed",
+        errorMessage: message,
+        finishedAt: new Date().toISOString()
+      })
+      this.appendOperationLog(operationId, "error", "modelManager.log.operationFailed", { message })
+    }
+  }
+
+  private async runSidecarUninstall(
+    operationId: string,
+    sidecar: (typeof recommendedRuntimeManifests)[number]
+  ): Promise<void> {
+    try {
+      this.updateOperation(operationId, {
+        status: "running",
+        startedAt: new Date().toISOString(),
+        progress: 0.4,
+        progressLabelKey: "modelManager.progress.uninstalling"
+      })
+      await this.db
+        .update(runtimeManifests)
+        .set({
+          executablePath: null,
+          environmentJson: { disabled: true },
+          healthcheckCommand: null,
+          updatedAt: new Date()
+        })
+        .where(eq(runtimeManifests.id, sidecar.id))
+      this.updateOperation(operationId, {
+        status: "completed",
+        progress: 1,
+        progressLabelKey: "modelManager.progress.completed",
+        finishedAt: new Date().toISOString()
+      })
+      this.appendOperationLog(operationId, "info", "modelManager.log.sidecarUninstalled", { target: sidecarName(sidecar.adapterId) })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Sidecar uninstall failed"
+      this.updateOperation(operationId, {
+        status: "failed",
+        progress: 1,
+        errorCode: "sidecar_uninstall_failed",
+        errorMessage: message,
+        finishedAt: new Date().toISOString()
+      })
+      this.appendOperationLog(operationId, "error", "modelManager.log.operationFailed", { message })
+    }
+  }
+
+  private async ensureLocalPython(operationId: string, progressStart: number, progressEnd: number): Promise<string> {
+    const localRoot = projectLocalRoot()
+    const pythonDir = path.join(localRoot, "python")
+    const pythonExecutable = path.join(pythonDir, "bin", "python")
+    const python3Executable = path.join(pythonDir, "bin", "python3")
+    if (await exists(pythonExecutable)) {
+      this.appendOperationLog(operationId, "info", "modelManager.log.pythonDetected", { path: pythonExecutable })
+      this.updateOperation(operationId, {
+        progress: progressEnd,
+        progressLabelKey: "modelManager.progress.pythonReady"
+      })
+      return pythonExecutable
+    }
+
+    await mkdir(path.join(localRoot, "downloads"), { recursive: true })
+    const target = standalonePythonTarget()
+    this.appendOperationLog(operationId, "info", "modelManager.log.pythonFinding", { target })
+    const asset = await findStandalonePythonAsset(target)
+    const archivePath = path.join(localRoot, "downloads", asset.name)
+    const extractDir = path.join(localRoot, "downloads", "python-extract")
+    await rm(extractDir, { force: true, recursive: true })
+    await mkdir(extractDir, { recursive: true })
+
+    if (!(await exists(archivePath))) {
+      this.appendOperationLog(operationId, "info", "modelManager.log.pythonDownloadStarted", { target: asset.name })
+      await this.downloadFileWithProgress(operationId, asset.url, archivePath, progressStart, Math.max(progressStart, progressEnd - 0.22))
+    } else {
+      this.appendOperationLog(operationId, "info", "modelManager.log.pythonArchiveCached", { path: archivePath })
+    }
+
+    this.appendOperationLog(operationId, "info", "modelManager.log.pythonExtracting", { path: archivePath })
+    await rm(pythonDir, { force: true, recursive: true })
+    await this.runProcess(operationId, "tar", ["-xzf", archivePath, "-C", extractDir], {
+      cwd: projectRoot(),
+      env: process.env,
+      progressStart: Math.max(progressStart, progressEnd - 0.2),
+      progressEnd: Math.max(progressStart, progressEnd - 0.06),
+      progressLabelKey: "modelManager.progress.extracting"
+    })
+    const extractedPythonDir = path.join(extractDir, "python")
+    if (!(await exists(extractedPythonDir))) {
+      throw new AppError("python_archive_invalid", "Standalone Python archive did not contain a python directory")
+    }
+    await rename(extractedPythonDir, pythonDir)
+    if (!(await exists(pythonExecutable))) {
+      if (!(await exists(python3Executable))) {
+        throw new AppError("python_archive_invalid", "Standalone Python did not provide a python executable")
+      }
+      await symlink("python3", pythonExecutable)
+    }
+    await rm(extractDir, { force: true, recursive: true })
+    this.updateOperation(operationId, {
+      progress: progressEnd,
+      progressLabelKey: "modelManager.progress.pythonReady"
+    })
+    this.appendOperationLog(operationId, "info", "modelManager.log.pythonReady", { path: pythonExecutable })
+    return pythonExecutable
+  }
+
+  private async ensurePythonPackage(
+    operationId: string,
+    pythonExecutable: string,
+    packageName: string,
+    progressStart: number,
+    progressEnd: number
+  ): Promise<void> {
+    this.appendOperationLog(operationId, "info", "modelManager.log.pipInstalling", { target: packageName })
+    await this.runProcess(operationId, pythonExecutable, ["-m", "pip", "install", packageName], {
+      cwd: projectRoot(),
+      env: process.env,
+      progressStart,
+      progressEnd,
+      progressLabelKey: "modelManager.progress.installingDependencies"
+    })
+  }
+
+  private async downloadFileWithProgress(
+    operationId: string,
+    url: string,
+    targetPath: string,
+    progressStart: number,
+    progressEnd: number
+  ): Promise<void> {
+    const tempPath = `${targetPath}.part`
+    await mkdir(path.dirname(targetPath), { recursive: true })
+    const response = await fetch(url)
+    if (!response.ok || !response.body) {
+      throw new Error(`download_failed_${response.status}`)
+    }
+    const totalBytes = Number(response.headers.get("content-length") ?? 0) || undefined
+    const reader = response.body.getReader()
+    const stream = createWriteStream(tempPath)
+    let receivedBytes = 0
+    let lastUpdate = 0
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) {
+          break
+        }
+        receivedBytes += value.byteLength
+        await writeChunk(stream, value)
+        const ratio = totalBytes ? receivedBytes / totalBytes : 0
+        const progress = totalBytes ? progressStart + Math.min(ratio, 1) * (progressEnd - progressStart) : progressStart
+        const now = Date.now()
+        if (now - lastUpdate > 400) {
+          lastUpdate = now
+          this.updateOperation(operationId, {
+            progress,
+            progressLabelKey: "modelManager.progress.downloadBytes",
+            progressLabelValues: {
+              received: receivedBytes,
+              total: totalBytes ?? 0
+            }
+          })
+        }
+      }
+      await closeStream(stream)
+      await rename(tempPath, targetPath)
+      this.updateOperation(operationId, {
+        progress: progressEnd,
+        progressLabelKey: "modelManager.progress.downloadBytes",
+        progressLabelValues: {
+          received: receivedBytes,
+          total: totalBytes ?? receivedBytes
+        }
+      })
+    } catch (error) {
+      await unlink(tempPath).catch(() => undefined)
+      throw error
+    }
+  }
+
+  private runProcess(
+    operationId: string,
+    command: string,
+    args: string[],
+    options: {
+      cwd: string
+      env: NodeJS.ProcessEnv
+      progressStart: number
+      progressEnd: number
+      progressLabelKey: string
+    }
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const child = spawn(command, args, {
+        cwd: options.cwd,
+        env: options.env
+      })
+      let lastProgressTick = Date.now()
+      let progress = options.progressStart
+
+      const handleOutput = (chunk: Buffer) => {
+        const text = chunk.toString("utf8")
+        for (const line of text.split(/\r?\n/)) {
+          const trimmed = line.trim()
+          if (trimmed) {
+            this.appendOperationLog(operationId, "info", "modelManager.log.processOutput", { message: trimmed.slice(0, 700) })
+          }
+        }
+        const now = Date.now()
+        if (now - lastProgressTick > 800) {
+          lastProgressTick = now
+          progress = Math.min(options.progressEnd - 0.02, progress + (options.progressEnd - options.progressStart) / 20)
+          this.updateOperation(operationId, {
+            progress,
+            progressLabelKey: options.progressLabelKey
+          })
+        }
+      }
+
+      child.stdout.on("data", handleOutput)
+      child.stderr.on("data", handleOutput)
+      child.on("error", reject)
+      child.on("close", (code) => {
+        if (code && code !== 0) {
+          reject(new Error(`${command} exited with code ${code}`))
+          return
+        }
+        this.updateOperation(operationId, {
+          progress: options.progressEnd,
+          progressLabelKey: options.progressLabelKey
+        })
+        resolve()
+      })
+    })
+  }
+}
+
+async function pathSize(filePath: string): Promise<number | undefined> {
+  try {
+    const info = await stat(filePath)
+    if (info.isFile()) {
+      return info.size
+    }
+    if (!info.isDirectory()) {
+      return 0
+    }
+
+    let total = 0
+    const entries = await readdir(filePath, { withFileTypes: true })
+    for (const entry of entries) {
+      const childSize = await pathSize(path.join(filePath, entry.name))
+      total += childSize ?? 0
+    }
+    return total
+  } catch {
+    return undefined
+  }
+}
+
+function isSafeManagedModelPath(modelPath: string, userModelsDir: string): boolean {
+  return isPathInside(modelPath, userModelsDir) || isPathInside(modelPath, path.join(projectLocalRoot(), "models"))
+}
+
+function isManagedProjectPath(candidatePath: string): boolean {
+  return isPathInside(candidatePath, projectLocalRoot())
+}
+
+function isPathInside(candidatePath: string, rootPath: string): boolean {
+  const relative = path.relative(path.resolve(rootPath), path.resolve(candidatePath))
+  return Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative)
+}
+
+async function removeEmptyParentModelDir(modelPath: string, userModelsDir: string): Promise<void> {
+  const parent = path.dirname(modelPath)
+  if (!isPathInside(parent, userModelsDir)) {
+    return
+  }
+  const entries = await readdir(parent).catch(() => [])
+  if (!entries.length) {
+    await rm(parent, { force: true, recursive: true })
+  }
+}
+
+function sidecarName(adapterId: string): string {
+  if (adapterId === "qwen3-tts-mlx") {
+    return "Qwen3-TTS MLX"
+  }
+  if (adapterId === "f5-tts-pt-br") {
+    return "F5-TTS PT-BR PyTorch"
+  }
+  return adapterId
+}
+
+function requirementsPathForAdapter(adapterId: string): string | undefined {
+  if (adapterId === "qwen3-tts-mlx") {
+    return path.join(projectRoot(), "sidecars", "tts", "requirements-qwen3-tts-mlx.txt")
+  }
+  if (adapterId === "f5-tts-pt-br") {
+    return path.join(projectRoot(), "sidecars", "tts", "requirements-f5-tts-ptbr.txt")
+  }
+  return undefined
+}
+
+function standalonePythonTarget(): string {
+  if (process.platform === "darwin" && process.arch === "arm64") {
+    return "aarch64-apple-darwin"
+  }
+  if (process.platform === "darwin" && process.arch === "x64") {
+    return "x86_64-apple-darwin"
+  }
+  if (process.platform === "linux" && process.arch === "arm64") {
+    return "aarch64-unknown-linux-gnu"
+  }
+  if (process.platform === "linux" && process.arch === "x64") {
+    return "x86_64-unknown-linux-gnu"
+  }
+  throw new AppError("python_runtime_unsupported", `Unsupported platform for standalone Python: ${process.platform}/${process.arch}`)
+}
+
+async function findStandalonePythonAsset(target: string): Promise<{ name: string; url: string }> {
+  const response = await fetch("https://api.github.com/repos/astral-sh/python-build-standalone/releases?per_page=1")
+  if (!response.ok) {
+    throw new Error(`python_asset_lookup_failed_${response.status}`)
+  }
+  const releases = (await response.json()) as Array<{ assets?: Array<{ name?: unknown; browser_download_url?: unknown }> }>
+  const assets = releases.flatMap((release) => release.assets ?? [])
+  const asset = assets.find((item) => {
+    const name = String(item.name ?? "")
+    return (
+      name.startsWith("cpython-3.12.") &&
+      name.includes(target) &&
+      name.endsWith("install_only_stripped.tar.gz") &&
+      !name.includes("freethreaded") &&
+      !name.includes("debug")
+    )
+  })
+  if (!asset?.browser_download_url || !asset.name) {
+    throw new Error(`Could not find a CPython 3.12 standalone asset for ${target}`)
+  }
+  return { name: String(asset.name), url: String(asset.browser_download_url) }
+}
+
+async function encryptSecret(secret: string): Promise<string> {
+  const { safeStorage } = await import("electron")
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new AppError("secret_storage_unavailable", "Secure storage is not available")
+  }
+  return safeStorage.encryptString(secret).toString("base64")
+}
+
+async function decryptSecret(encryptedSecret: string): Promise<string | undefined> {
+  const { safeStorage } = await import("electron")
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new AppError("secret_storage_unavailable", "Secure storage is not available")
+  }
+  return safeStorage.decryptString(Buffer.from(encryptedSecret, "base64"))
 }
 
 function modelForPath(modelPath: string): RecommendedModel {

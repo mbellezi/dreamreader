@@ -71,6 +71,14 @@ export function registerIpc(services: Services): void {
   handle("settings.update", contract["settings.update"].request, (input) => services.library.updateSettings(input))
   handle("models.list", contract["models.list"].request, () => services.runtime.listModels())
   handle("models.diagnostics", contract["models.diagnostics"].request, () => services.runtime.diagnostics())
+  handle("models.downloads", contract["models.downloads"].request, () => services.runtime.listModelDownloadJobs())
+  handle("models.operations", contract["models.operations"].request, () => services.runtime.listOperations())
+  handle("models.huggingFaceToken", contract["models.huggingFaceToken"].request, () =>
+    services.runtime.getHuggingFaceTokenStatus()
+  )
+  handle("models.updateHuggingFaceToken", contract["models.updateHuggingFaceToken"].request, (input) =>
+    services.runtime.updateHuggingFaceToken(input.token)
+  )
   handle("models.installFromPath", contract["models.installFromPath"].request, async (input) => {
     const selectedPath =
       input.path ??
@@ -81,7 +89,18 @@ export function registerIpc(services: Services): void {
       ).filePaths[0]
     return selectedPath ? services.runtime.installFromPath(selectedPath) : null
   })
+  handle("models.installRecommended", contract["models.installRecommended"].request, (input) =>
+    services.runtime.installRecommendedModel(input.modelId)
+  )
   handle("models.download", contract["models.download"].request, (input) => services.runtime.downloadModel(input.modelId))
+  handle("models.delete", contract["models.delete"].request, (input) =>
+    services.runtime.deleteModel(input.modelId, input.deleteFiles)
+  )
+  handle("sidecars.list", contract["sidecars.list"].request, () => services.runtime.listSidecars())
+  handle("sidecars.install", contract["sidecars.install"].request, (input) => services.runtime.installSidecar(input.sidecarId))
+  handle("sidecars.uninstall", contract["sidecars.uninstall"].request, (input) =>
+    services.runtime.uninstallSidecar(input.sidecarId)
+  )
   handle("pronunciation.list", contract["pronunciation.list"].request, (input) => services.pronunciation.list(input))
   handle("pronunciation.create", contract["pronunciation.create"].request, (input) => services.pronunciation.create(input))
   handle("pronunciation.update", contract["pronunciation.update"].request, (input) => services.pronunciation.update(input))

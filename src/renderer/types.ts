@@ -247,6 +247,57 @@ export type RuntimeDiagnostic = {
   detail: string
 }
 
+export type RuntimeSidecar = {
+  id: string
+  adapterId: string
+  name: string
+  runtime: string
+  status: "available" | "not_configured" | "failed"
+  executablePath?: string
+  scriptPath?: string
+  healthcheckCommand?: string
+  sizeBytes?: number
+  modelEngineIds: string[]
+  createdAt: string
+  updatedAt: string
+}
+
+export type RuntimeOperationStatus = "queued" | "running" | "completed" | "failed"
+
+export type RuntimeOperationKind = "model_download" | "model_install" | "model_delete" | "sidecar_install" | "sidecar_uninstall"
+
+export type RuntimeOperationLogEntry = {
+  id: string
+  level: "info" | "warning" | "error"
+  messageKey: string
+  values: Record<string, string | number>
+  createdAt: string
+}
+
+export type RuntimeOperationJob = {
+  id: string
+  kind: RuntimeOperationKind
+  targetKind: "model" | "sidecar"
+  targetId: string
+  status: RuntimeOperationStatus
+  progress: number
+  progressLabelKey?: string
+  progressLabelValues: Record<string, string | number>
+  errorCode?: string
+  errorMessage?: string
+  logs: RuntimeOperationLogEntry[]
+  createdAt: string
+  startedAt?: string
+  finishedAt?: string
+  updatedAt: string
+}
+
+export type HuggingFaceTokenStatus = {
+  configured: boolean
+  storage?: "electron-safe-storage"
+  updatedAt?: string
+}
+
 export type ModelInstallStatus = "not_configured" | "queued" | "downloading" | "available" | "failed"
 
 export type RuntimeModel = {
@@ -340,8 +391,19 @@ export type DreamReaderBridge = {
   models?: {
     list?: () => Promise<unknown[]>
     diagnostics?: () => Promise<unknown[]>
+    downloads?: () => Promise<unknown[]>
+    operations?: () => Promise<unknown[]>
+    huggingFaceToken?: () => Promise<unknown>
+    updateHuggingFaceToken?: (token: string) => Promise<unknown>
     installFromPath?: (modelPath?: string) => Promise<unknown>
+    installRecommended?: (modelId: string) => Promise<unknown>
+    delete?: (modelId: string, deleteFiles?: boolean) => Promise<unknown>
     download?: (modelId: string) => Promise<unknown>
+  }
+  sidecars?: {
+    list?: () => Promise<unknown[]>
+    install?: (sidecarId: string) => Promise<unknown>
+    uninstall?: (sidecarId: string) => Promise<unknown>
   }
   tts?: {
     enqueueChapter?: (input: Record<string, unknown>) => Promise<unknown>

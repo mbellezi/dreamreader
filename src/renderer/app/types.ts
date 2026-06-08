@@ -2,7 +2,7 @@ import type { ReaderPreferences } from "@renderer/types"
 
 export type TranslationFn = (key: string, values?: Record<string, string | number>) => string
 
-export type AppView = "library" | "reader" | "audio" | "settings"
+export type AppView = "library" | "reader" | "audio" | "models" | "settings"
 
 export type LibraryMode = "grid" | "list"
 

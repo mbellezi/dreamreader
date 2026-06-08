@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { PGlite } from "@electric-sql/pglite"
@@ -45,8 +45,18 @@ describe("RuntimeService", () => {
       expect(installed.downloadProgress).toBe(1)
       expect(installed.path).toBe(modelPath)
 
+      const refreshedModels = await service.listModels()
+      expect(refreshedModels.find((model) => model.id === QWEN_PROSODY_MODEL_ID)?.sizeBytes).toBe(4)
+
       const diagnostics = await service.diagnostics()
       expect(diagnostics.find((item) => item.id === "qwen-prosody-gguf")?.status).toBe("available")
+
+      const deleted = await service.deleteModel(QWEN_PROSODY_MODEL_ID)
+      expect(deleted.installStatus).toBe("not_configured")
+      expect(deleted.path).toBeUndefined()
+      await expect(access(modelPath)).rejects.toThrow()
+      const operations = await service.listOperations()
+      expect(operations.find((operation) => operation.kind === "model_delete" && operation.targetId === QWEN_PROSODY_MODEL_ID)?.status).toBe("completed")
 
       const qwenTtsPath = path.join(paths.modelsDir, "Qwen3-TTS-12Hz-1.7B-CustomVoice")
       await mkdir(qwenTtsPath, { recursive: true })
@@ -136,6 +146,10 @@ describe("RuntimeService", () => {
         expect(qwenManifest?.environmentJson).toMatchObject({ args: [qwenSidecarPath] })
         expect(f5Manifest?.executablePath).toBe(pythonExecutable)
         expect(f5Manifest?.environmentJson).toMatchObject({ args: [f5SidecarPath] })
+
+        const sidecars = await service.listSidecars()
+        expect(sidecars.find((sidecar) => sidecar.id === "runtime_qwen3_tts_mlx_sidecar")?.status).toBe("available")
+        expect(sidecars.find((sidecar) => sidecar.id === "runtime_f5_tts_pt_br_pytorch_sidecar")?.status).toBe("available")
 
         const diagnostics = await service.diagnostics()
         expect(diagnostics.find((item) => item.id === "qwen3-tts-sidecar")?.status).toBe("available")

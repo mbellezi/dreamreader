@@ -192,6 +192,22 @@ describe("shared contracts", () => {
     });
   });
 
+  it("validates model management IPC requests", () => {
+    expect(IpcContractSchemas["models.installRecommended"].request.parse({ modelId: "model_qwen3_tts_06b_base_mlx" })).toEqual({
+      modelId: "model_qwen3_tts_06b_base_mlx",
+    });
+    expect(IpcContractSchemas["models.delete"].request.parse({ modelId: "model_f5_tts_ptbr_pytorch" })).toEqual({
+      modelId: "model_f5_tts_ptbr_pytorch",
+      deleteFiles: true,
+    });
+    expect(IpcContractSchemas["sidecars.install"].request.parse({ sidecarId: "runtime_qwen3_tts_mlx_sidecar" })).toEqual({
+      sidecarId: "runtime_qwen3_tts_mlx_sidecar",
+    });
+    expect(IpcContractSchemas["models.updateHuggingFaceToken"].request.parse({ token: "hf_example" })).toEqual({
+      token: "hf_example",
+    });
+  });
+
   it("validates TTS model settings and seed on enqueue", () => {
     const parsed = IpcContractSchemas["tts.enqueueChapter"].request.parse({
       bookId: "book-1",

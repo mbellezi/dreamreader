@@ -1,4 +1,4 @@
-import { CircleHelp, Cpu, Download, FolderOpen, HardDrive, Pause, Play, Plus, RefreshCw, RotateCcw, SlidersHorizontal, Square, Trash2, Volume2, Wand2 } from "lucide-react"
+import { CircleHelp, Plus, RefreshCw, RotateCcw, SlidersHorizontal, Square, Trash2, Volume2, Wand2 } from "lucide-react"
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { SelectField } from "@renderer/components/common/Controls"
@@ -16,7 +16,7 @@ import {
   type AudioModelSettingField
 } from "@renderer/lib/audioModelSettings"
 import { cn } from "@renderer/lib/utils"
-import type { AudioSettings, AudiobookExport, BookDetails, PronunciationEntry, RuntimeDiagnostic, RuntimeModel, TtsJob, TtsModelSettings, TtsSegment, VoiceProfile } from "@renderer/types"
+import type { AudioSettings, AudiobookExport, BookDetails, PronunciationEntry, RuntimeModel, TtsJob, TtsModelSettings, TtsSegment, VoiceProfile } from "@renderer/types"
 
 const defaultEngineId = "dreamreader-local-tts"
 
@@ -25,7 +25,6 @@ export function AudioPanel({
   audioSettings,
   book,
   chapterIndex,
-  diagnostics,
   jobs,
   loading,
   models,
@@ -37,10 +36,8 @@ export function AudioPanel({
   onClearTerminalJobs,
   onCreatePronunciationEntry,
   onDeletePronunciationEntry,
-  onDownloadModel,
   onGenerateChapter,
   onGenerateChapters,
-  onInstallModelFromPath,
   onListSegments,
   onPauseJob,
   onRebuildAudiobook,
@@ -53,7 +50,6 @@ export function AudioPanel({
   audioSettings: AudioSettings
   book: BookDetails | null
   chapterIndex: number
-  diagnostics: RuntimeDiagnostic[]
   jobs: TtsJob[]
   loading: boolean
   models: RuntimeModel[]
@@ -65,7 +61,6 @@ export function AudioPanel({
   onClearTerminalJobs: () => Promise<void> | void
   onCreatePronunciationEntry: (input: { pattern: string; replacement: string; scope: "global" | "book" }) => Promise<void> | void
   onDeletePronunciationEntry: (id: string) => Promise<void> | void
-  onDownloadModel: (modelId: string) => Promise<void> | void
   onGenerateChapter: (input: {
     chapterHref: string
     engineId: string
@@ -89,7 +84,6 @@ export function AudioPanel({
     useExpressiveNarration: boolean
     voiceProfileId?: string
   }) => Promise<void> | void
-  onInstallModelFromPath: () => Promise<void> | void
   onListSegments: (jobId: string) => Promise<TtsSegment[]>
   onPauseJob: (jobId: string) => Promise<void> | void
   onRebuildAudiobook: () => Promise<void> | void
@@ -560,19 +554,6 @@ export function AudioPanel({
       </section>
 
       <section className="space-y-2">
-        <h3 className="text-sm font-semibold">{t("audio.models")}</h3>
-        {models.length ? (
-          <div className="space-y-2">
-            {models.map((model) => (
-              <ModelCard key={model.id} model={model} t={t} onDownloadModel={onDownloadModel} onInstallModelFromPath={onInstallModelFromPath} />
-            ))}
-          </div>
-        ) : (
-          <p className="rounded-md border bg-card p-3 text-sm text-muted-foreground">{t("audio.models.empty")}</p>
-        )}
-      </section>
-
-      <section className="space-y-2">
         <h3 className="text-sm font-semibold">{t("audio.comparison")}</h3>
         <div className="grid grid-cols-1 gap-2">
           <ComparisonCard job={neutralComparisonJob} label={t("audio.comparison.neutral")} t={t} />
@@ -631,21 +612,6 @@ export function AudioPanel({
         ) : (
           <p className="rounded-md border bg-card p-3 text-sm text-muted-foreground">{t("audio.emptyQueue")}</p>
         )}
-      </section>
-
-      <section className="space-y-2">
-        <h3 className="text-sm font-semibold">{t("audio.diagnostics")}</h3>
-        {diagnostics.map((diagnostic) => (
-          <div key={diagnostic.id} className="rounded-md border bg-card p-3">
-            <div className="flex items-center justify-between gap-3 text-xs">
-              <span className="font-medium">{diagnosticLabel(diagnostic, t)}</span>
-              <span className={diagnostic.status === "available" ? "text-primary" : "text-muted-foreground"}>
-                {t(`audio.diagnosticStatus.${diagnostic.status}`)}
-              </span>
-            </div>
-            <p className="mt-1 text-xs text-muted-foreground">{diagnosticDetail(diagnostic, t)}</p>
-          </div>
-        ))}
       </section>
 
       {modelSettingsDialogOpen ? (
@@ -868,92 +834,6 @@ function ParameterHelp({ label, text }: { label: string; text: string }) {
   )
 }
 
-function ModelCard({
-  model,
-  t,
-  onDownloadModel,
-  onInstallModelFromPath
-}: {
-  model: RuntimeModel
-  t: TranslationFn
-  onDownloadModel: (modelId: string) => Promise<void> | void
-  onInstallModelFromPath: () => Promise<void> | void
-}) {
-  const isDownloading = model.installStatus === "queued" || model.installStatus === "downloading"
-  const canDownload = model.canDownload && !isDownloading && model.installStatus !== "available"
-  const canInstallLocal = !isDownloading && model.installStatus !== "available"
-  const progress = Math.round(model.downloadProgress * 100)
-
-  return (
-    <div className="rounded-md border bg-card p-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex min-w-0 items-center gap-2">
-            {model.kind === "tts" ? (
-              <Volume2 className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-            ) : (
-              <Cpu className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-            )}
-            <p className="truncate text-sm font-medium">{model.name}</p>
-          </div>
-          <p className="mt-1 truncate text-xs text-muted-foreground">
-            {t(`audio.modelKind.${model.kind}`)} · {model.runtime} · {model.format}
-          </p>
-        </div>
-        <span className={cn("shrink-0 text-xs", model.installStatus === "available" ? "text-primary" : model.installStatus === "failed" ? "text-destructive" : "text-muted-foreground")}>
-          {t(`audio.modelStatus.${model.installStatus}`)}
-        </span>
-      </div>
-
-      {isDownloading ? (
-        <div className="mt-3">
-          <div className="mb-1 flex items-center justify-between gap-2 text-xs text-muted-foreground">
-            <span>{t("audio.model.progress")}</span>
-            <span>{progress}%</span>
-          </div>
-          <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-            <div className="h-full bg-primary transition-[width]" style={{ width: `${progress}%` }} />
-          </div>
-        </div>
-      ) : null}
-
-      {model.installStatus === "available" && model.path ? (
-        <p className="mt-2 flex items-center gap-1.5 truncate text-xs text-muted-foreground">
-          <HardDrive className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          <span className="truncate">{model.path}</span>
-        </p>
-      ) : null}
-
-      {model.installStatus !== "available" && !model.canDownload ? (
-        <p className="mt-2 text-xs text-muted-foreground">{t("audio.model.localInstallHint")}</p>
-      ) : null}
-
-      {canDownload || canInstallLocal ? (
-        <div className="mt-3 grid grid-cols-1 gap-2">
-          {canDownload ? (
-            <button
-              className="inline-flex h-9 min-w-0 items-center justify-center gap-2 rounded-md border bg-background px-3 text-sm"
-              onClick={() => onDownloadModel(model.id)}
-            >
-              <Download className="h-4 w-4 shrink-0" aria-hidden="true" />
-              <span className="truncate">{t(model.installStatus === "failed" ? "audio.model.retryDownload" : "audio.model.download")}</span>
-            </button>
-          ) : null}
-          {canInstallLocal ? (
-            <button
-              className="inline-flex h-9 min-w-0 items-center justify-center gap-2 rounded-md border bg-background px-3 text-sm"
-              onClick={onInstallModelFromPath}
-            >
-              <FolderOpen className="h-4 w-4 shrink-0" aria-hidden="true" />
-              <span className="truncate">{t("audio.model.installLocal")}</span>
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
 function ComparisonCard({ job, label, t }: { job?: TtsJob; label: string; t: TranslationFn }) {
   const audioAssetId = jobAudioAssetId(job)
   const durationMs = jobDurationMs(job)
@@ -1000,27 +880,6 @@ function jobAudioAssetId(job: TtsJob | undefined): string | undefined {
 
 function jobDurationMs(job: TtsJob | undefined): number | undefined {
   return typeof job?.settings.chapterDurationMs === "number" ? job.settings.chapterDurationMs : undefined
-}
-
-function diagnosticLabel(diagnostic: RuntimeDiagnostic, t: TranslationFn): string {
-  return translatedOrFallback(t, `audio.diagnostic.${diagnostic.id}.label`, diagnostic.label)
-}
-
-function diagnosticDetail(diagnostic: RuntimeDiagnostic, t: TranslationFn): string {
-  if (diagnostic.id === "apple-silicon") {
-    return t(`audio.diagnostic.apple-silicon.detail.${diagnostic.status === "available" ? "available" : "fallback"}`)
-  }
-  return translatedOrFallback(t, `audio.diagnostic.${diagnostic.id}.detail`, diagnostic.detail, { detail: diagnostic.detail })
-}
-
-function translatedOrFallback(
-  t: TranslationFn,
-  key: string,
-  fallback: string,
-  values?: Record<string, string | number>
-): string {
-  const value = t(key, values)
-  return value === key ? fallback : value
 }
 
 function chapterTitleFor(book: BookDetails, chapterHref: string): string {

@@ -9,11 +9,15 @@ import type {
   ImportBooksResult,
   LibraryAudioStatus,
   LibraryQuery,
+  HuggingFaceTokenStatus,
   ModelDownloadJob,
   PronunciationEntry,
   ReaderLocator,
   RuntimeDiagnostic,
   RuntimeModel,
+  RuntimeOperationJob,
+  RuntimeOperationLogEntry,
+  RuntimeSidecar,
   TtsJob,
   TtsSegment,
   VoiceProfile
@@ -502,6 +506,58 @@ export const dreamreaderClient = {
     return fallbackRuntimeModels()
   },
 
+  async listModelDownloadJobs(): Promise<ModelDownloadJob[]> {
+    const bridgeList = window.dreamreader?.models?.downloads
+
+    if (bridgeList) {
+      return (await bridgeList()).map(toModelDownloadJob)
+    }
+
+    return []
+  },
+
+  async listRuntimeOperations(): Promise<RuntimeOperationJob[]> {
+    const bridgeList = window.dreamreader?.models?.operations
+
+    if (bridgeList) {
+      return (await bridgeList()).map(toRuntimeOperation)
+    }
+
+    return []
+  },
+
+  async getHuggingFaceTokenStatus(): Promise<HuggingFaceTokenStatus> {
+    const bridgeStatus = window.dreamreader?.models?.huggingFaceToken
+
+    if (bridgeStatus) {
+      return toHuggingFaceTokenStatus(await bridgeStatus())
+    }
+
+    return { configured: false }
+  },
+
+  async updateHuggingFaceToken(token: string): Promise<HuggingFaceTokenStatus> {
+    const bridgeUpdate = window.dreamreader?.models?.updateHuggingFaceToken
+
+    if (bridgeUpdate) {
+      return toHuggingFaceTokenStatus(await bridgeUpdate(token))
+    }
+
+    throw Object.assign(new Error("Hugging Face token storage requires the Electron bridge"), {
+      code: "hf_token_requires_app_bridge"
+    })
+  },
+
+  async listSidecars(): Promise<RuntimeSidecar[]> {
+    const bridgeList = window.dreamreader?.sidecars?.list
+
+    if (bridgeList) {
+      return (await bridgeList()).map(toRuntimeSidecar)
+    }
+
+    return []
+  },
+
   async downloadModel(modelId: string): Promise<ModelDownloadJob> {
     const bridgeDownload = window.dreamreader?.models?.download
 
@@ -511,6 +567,18 @@ export const dreamreaderClient = {
 
     throw Object.assign(new Error("Model downloads require the Electron bridge"), {
       code: "model_download_requires_app_bridge"
+    })
+  },
+
+  async installRecommendedModel(modelId: string): Promise<RuntimeOperationJob> {
+    const bridgeInstall = window.dreamreader?.models?.installRecommended
+
+    if (bridgeInstall) {
+      return toRuntimeOperation(await bridgeInstall(modelId))
+    }
+
+    throw Object.assign(new Error("Model installation requires the Electron bridge"), {
+      code: "model_install_requires_app_bridge"
     })
   },
 
@@ -524,6 +592,42 @@ export const dreamreaderClient = {
 
     throw Object.assign(new Error("Model installation requires the Electron bridge"), {
       code: "model_install_requires_app_bridge"
+    })
+  },
+
+  async deleteModel(modelId: string, deleteFiles = true): Promise<RuntimeModel> {
+    const bridgeDelete = window.dreamreader?.models?.delete
+
+    if (bridgeDelete) {
+      return toRuntimeModel(await bridgeDelete(modelId, deleteFiles))
+    }
+
+    throw Object.assign(new Error("Model deletion requires the Electron bridge"), {
+      code: "model_delete_requires_app_bridge"
+    })
+  },
+
+  async installSidecar(sidecarId: string): Promise<RuntimeOperationJob> {
+    const bridgeInstall = window.dreamreader?.sidecars?.install
+
+    if (bridgeInstall) {
+      return toRuntimeOperation(await bridgeInstall(sidecarId))
+    }
+
+    throw Object.assign(new Error("Sidecar installation requires the Electron bridge"), {
+      code: "sidecar_install_requires_app_bridge"
+    })
+  },
+
+  async uninstallSidecar(sidecarId: string): Promise<RuntimeOperationJob> {
+    const bridgeUninstall = window.dreamreader?.sidecars?.uninstall
+
+    if (bridgeUninstall) {
+      return toRuntimeOperation(await bridgeUninstall(sidecarId))
+    }
+
+    throw Object.assign(new Error("Sidecar uninstall requires the Electron bridge"), {
+      code: "sidecar_uninstall_requires_app_bridge"
     })
   },
 
@@ -809,6 +913,65 @@ function toModelDownloadJob(input: unknown): ModelDownloadJob {
   }
 }
 
+function toRuntimeSidecar(input: unknown): RuntimeSidecar {
+  const item = (input ?? {}) as Record<string, unknown>
+  return {
+    id: String(item.id ?? ""),
+    adapterId: String(item.adapterId ?? ""),
+    name: String(item.name ?? item.adapterId ?? ""),
+    runtime: String(item.runtime ?? ""),
+    status: toRuntimeSidecarStatus(item.status),
+    executablePath: optionalString(item.executablePath),
+    scriptPath: optionalString(item.scriptPath),
+    healthcheckCommand: optionalString(item.healthcheckCommand),
+    sizeBytes: optionalNumber(item.sizeBytes),
+    modelEngineIds: toArray(item.modelEngineIds).map(String),
+    createdAt: String(item.createdAt ?? new Date().toISOString()),
+    updatedAt: String(item.updatedAt ?? new Date().toISOString())
+  }
+}
+
+function toRuntimeOperation(input: unknown): RuntimeOperationJob {
+  const item = (input ?? {}) as Record<string, unknown>
+  return {
+    id: String(item.id ?? ""),
+    kind: toRuntimeOperationKind(item.kind),
+    targetKind: item.targetKind === "sidecar" ? "sidecar" : "model",
+    targetId: String(item.targetId ?? ""),
+    status: toRuntimeOperationStatus(item.status),
+    progress: clampProgress(item.progress),
+    progressLabelKey: optionalString(item.progressLabelKey),
+    progressLabelValues: stringNumberRecord(item.progressLabelValues),
+    errorCode: optionalString(item.errorCode),
+    errorMessage: optionalString(item.errorMessage),
+    logs: toArray(item.logs).map(toRuntimeOperationLog),
+    createdAt: String(item.createdAt ?? new Date().toISOString()),
+    startedAt: optionalString(item.startedAt),
+    finishedAt: optionalString(item.finishedAt),
+    updatedAt: String(item.updatedAt ?? new Date().toISOString())
+  }
+}
+
+function toRuntimeOperationLog(input: unknown): RuntimeOperationLogEntry {
+  const item = (input ?? {}) as Record<string, unknown>
+  return {
+    id: String(item.id ?? crypto.randomUUID()),
+    level: item.level === "warning" || item.level === "error" ? item.level : "info",
+    messageKey: String(item.messageKey ?? "modelManager.log.processOutput"),
+    values: stringNumberRecord(item.values),
+    createdAt: String(item.createdAt ?? new Date().toISOString())
+  }
+}
+
+function toHuggingFaceTokenStatus(input: unknown): HuggingFaceTokenStatus {
+  const item = (input ?? {}) as Record<string, unknown>
+  return {
+    configured: Boolean(item.configured),
+    storage: item.storage === "electron-safe-storage" ? "electron-safe-storage" : undefined,
+    updatedAt: optionalString(item.updatedAt)
+  }
+}
+
 function toVoiceProfile(input: unknown): VoiceProfile {
   const voice = (input ?? {}) as Record<string, unknown>
   return {
@@ -903,6 +1066,36 @@ function toModelInstallStatus(value: unknown): RuntimeModel["installStatus"] {
   return "not_configured"
 }
 
+function toRuntimeSidecarStatus(value: unknown): RuntimeSidecar["status"] {
+  const status = String(value ?? "not_configured")
+  if (status === "available" || status === "failed") {
+    return status
+  }
+  return "not_configured"
+}
+
+function toRuntimeOperationStatus(value: unknown): RuntimeOperationJob["status"] {
+  const status = String(value ?? "queued")
+  if (status === "running" || status === "completed" || status === "failed") {
+    return status
+  }
+  return "queued"
+}
+
+function toRuntimeOperationKind(value: unknown): RuntimeOperationJob["kind"] {
+  const kind = String(value ?? "model_download")
+  if (
+    kind === "model_download" ||
+    kind === "model_install" ||
+    kind === "model_delete" ||
+    kind === "sidecar_install" ||
+    kind === "sidecar_uninstall"
+  ) {
+    return kind
+  }
+  return "model_download"
+}
+
 function toTtsJobStatus(value: unknown): TtsJob["status"] {
   const status = String(value ?? "queued")
   if (
@@ -966,4 +1159,12 @@ function clampProgress(value: unknown): number {
 
 function jsonObject(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
+}
+
+function stringNumberRecord(value: unknown): Record<string, string | number> {
+  return Object.fromEntries(
+    Object.entries(jsonObject(value)).flatMap(([key, entry]) =>
+      typeof entry === "string" || typeof entry === "number" ? [[key, entry]] : []
+    )
+  )
 }

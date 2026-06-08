@@ -153,8 +153,19 @@ const api = {
   models: {
     list: () => invoke("models.list"),
     diagnostics: () => invoke("models.diagnostics"),
+    downloads: () => invoke("models.downloads"),
+    operations: () => invoke("models.operations"),
+    huggingFaceToken: () => invoke("models.huggingFaceToken"),
+    updateHuggingFaceToken: (token: string) => invoke("models.updateHuggingFaceToken", { token }),
     installFromPath: (modelPath?: string) => invoke("models.installFromPath", modelPath ? { path: modelPath } : {}),
+    installRecommended: (modelId: string) => invoke("models.installRecommended", { modelId }),
+    delete: (modelId: string, deleteFiles = true) => invoke("models.delete", { modelId, deleteFiles }),
     download: (modelId: string) => invoke("models.download", { modelId })
+  },
+  sidecars: {
+    list: () => invoke("sidecars.list"),
+    install: (sidecarId: string) => invoke("sidecars.install", { sidecarId }),
+    uninstall: (sidecarId: string) => invoke("sidecars.uninstall", { sidecarId })
   },
   tts: {
     enqueueChapter: (input: Record<string, unknown>) => invoke("tts.enqueueChapter", input),

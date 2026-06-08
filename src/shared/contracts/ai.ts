@@ -196,6 +196,115 @@ export const DownloadModelRequestSchema = z.object({
 });
 export type DownloadModelRequest = z.infer<typeof DownloadModelRequestSchema>;
 
+export const RuntimeDiagnosticSchema = z.object({
+  id: IdSchema,
+  label: NonEmptyStringSchema,
+  status: z.enum(["available", "not_configured"]),
+  detail: z.string().trim(),
+});
+export type RuntimeDiagnostic = z.infer<typeof RuntimeDiagnosticSchema>;
+
+export const RuntimeSidecarSchema = z.object({
+  id: IdSchema,
+  adapterId: IdSchema,
+  name: NonEmptyStringSchema,
+  runtime: NonEmptyStringSchema,
+  status: z.enum(["available", "not_configured", "failed"]),
+  executablePath: z.string().trim().optional(),
+  scriptPath: z.string().trim().optional(),
+  healthcheckCommand: z.string().trim().optional(),
+  sizeBytes: z.number().int().nonnegative().optional(),
+  modelEngineIds: z.array(IdSchema).default([]),
+  createdAt: IsoDateTimeStringSchema,
+  updatedAt: IsoDateTimeStringSchema,
+});
+export type RuntimeSidecar = z.infer<typeof RuntimeSidecarSchema>;
+
+export const RuntimeOperationStatusSchema = z.enum([
+  "queued",
+  "running",
+  "completed",
+  "failed",
+]);
+export type RuntimeOperationStatus = z.infer<
+  typeof RuntimeOperationStatusSchema
+>;
+
+export const RuntimeOperationKindSchema = z.enum([
+  "model_download",
+  "model_install",
+  "model_delete",
+  "sidecar_install",
+  "sidecar_uninstall",
+]);
+export type RuntimeOperationKind = z.infer<typeof RuntimeOperationKindSchema>;
+
+export const RuntimeOperationLogEntrySchema = z.object({
+  id: IdSchema,
+  level: z.enum(["info", "warning", "error"]),
+  messageKey: NonEmptyStringSchema,
+  values: z.record(z.string(), z.union([z.string(), z.number()])).default({}),
+  createdAt: IsoDateTimeStringSchema,
+});
+export type RuntimeOperationLogEntry = z.infer<
+  typeof RuntimeOperationLogEntrySchema
+>;
+
+export const RuntimeOperationJobSchema = z.object({
+  id: IdSchema,
+  kind: RuntimeOperationKindSchema,
+  targetKind: z.enum(["model", "sidecar"]),
+  targetId: IdSchema,
+  status: RuntimeOperationStatusSchema,
+  progress: ProgressSchema.default(0),
+  progressLabelKey: NonEmptyStringSchema.optional(),
+  progressLabelValues: z
+    .record(z.string(), z.union([z.string(), z.number()]))
+    .default({}),
+  errorCode: z.string().trim().optional(),
+  errorMessage: z.string().trim().optional(),
+  logs: z.array(RuntimeOperationLogEntrySchema).default([]),
+  createdAt: IsoDateTimeStringSchema,
+  startedAt: IsoDateTimeStringSchema.optional(),
+  finishedAt: IsoDateTimeStringSchema.optional(),
+  updatedAt: IsoDateTimeStringSchema,
+});
+export type RuntimeOperationJob = z.infer<typeof RuntimeOperationJobSchema>;
+
+export const InstallRecommendedModelRequestSchema = z.object({
+  modelId: IdSchema,
+});
+export type InstallRecommendedModelRequest = z.infer<
+  typeof InstallRecommendedModelRequestSchema
+>;
+
+export const DeleteModelRequestSchema = z.object({
+  modelId: IdSchema,
+  deleteFiles: z.boolean().default(true),
+});
+export type DeleteModelRequest = z.infer<typeof DeleteModelRequestSchema>;
+
+export const SidecarRequestSchema = z.object({
+  sidecarId: IdSchema,
+});
+export type SidecarRequest = z.infer<typeof SidecarRequestSchema>;
+
+export const HuggingFaceTokenStatusSchema = z.object({
+  configured: z.boolean(),
+  storage: z.enum(["electron-safe-storage"]).optional(),
+  updatedAt: IsoDateTimeStringSchema.optional(),
+});
+export type HuggingFaceTokenStatus = z.infer<
+  typeof HuggingFaceTokenStatusSchema
+>;
+
+export const UpdateHuggingFaceTokenRequestSchema = z.object({
+  token: z.string().trim().max(4096),
+});
+export type UpdateHuggingFaceTokenRequest = z.infer<
+  typeof UpdateHuggingFaceTokenRequestSchema
+>;
+
 export const TtsGenerationSeedSchema = z
   .number()
   .int()
