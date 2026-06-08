@@ -367,7 +367,7 @@ export class VoiceService {
         sourceBytes: buffer.byteLength,
         sampleRate: sampleRate ?? null,
         converted,
-        durationEstimate: probe.durationMs ? "ffprobe" : "container-header-or-fallback"
+        durationEstimate: probe.durationMs ? "metadata" : "container-header-or-fallback"
       }
     }
   }

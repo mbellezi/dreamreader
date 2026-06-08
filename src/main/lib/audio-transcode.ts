@@ -1,6 +1,8 @@
 import { execFile } from "node:child_process"
-import { readFile } from "node:fs/promises"
+import { access, readFile } from "node:fs/promises"
 import { promisify } from "node:util"
+import ffmpegStaticPath from "ffmpeg-static"
+import { parseFile } from "music-metadata"
 
 const execFileAsync = promisify(execFile)
 
@@ -13,32 +15,17 @@ export type AudioProbe = {
 }
 
 /**
- * Probe an audio file with ffprobe, falling back to a minimal WAV header parse
- * when ffprobe is not available. Never throws.
+ * Probe audio metadata in-process, falling back to a minimal WAV header parse.
+ * Never throws.
  */
 export async function probeAudio(filePath: string): Promise<AudioProbe> {
   try {
-    const { stdout } = await execFileAsync("ffprobe", [
-      "-v",
-      "error",
-      "-select_streams",
-      "a:0",
-      "-show_entries",
-      "stream=sample_rate,channels:format=duration",
-      "-of",
-      "json",
-      filePath
-    ])
-    const parsed = JSON.parse(stdout) as {
-      streams?: Array<{ sample_rate?: string; channels?: number }>
-      format?: { duration?: string }
-    }
-    const stream = parsed.streams?.[0]
-    const durationSec = parsed.format?.duration ? Number(parsed.format.duration) : undefined
+    const metadata = await parseFile(filePath, { duration: true })
+    const durationSec = metadata.format.duration
     return {
       durationMs: durationSec && Number.isFinite(durationSec) ? Math.round(durationSec * 1000) : undefined,
-      sampleRate: stream?.sample_rate ? Number(stream.sample_rate) : undefined,
-      channels: typeof stream?.channels === "number" ? stream.channels : undefined
+      sampleRate: metadata.format.sampleRate,
+      channels: metadata.format.numberOfChannels
     }
   } catch {
     return probeWavHeader(filePath)
@@ -46,12 +33,44 @@ export async function probeAudio(filePath: string): Promise<AudioProbe> {
 }
 
 /**
- * Resample an audio file to the target sample rate using ffmpeg. Returns false
- * when ffmpeg is unavailable or the conversion fails (caller keeps the original).
+ * Resample an audio file to the target sample rate using the bundled FFmpeg
+ * binary. Returns false when the binary is unavailable or conversion fails.
  */
 export async function resampleAudio(srcPath: string, destPath: string, sampleRate = TARGET_SAMPLE_RATE): Promise<boolean> {
+  const ffmpegPath = await bundledFfmpegPath()
+  if (!ffmpegPath) {
+    return false
+  }
+
   try {
-    await execFileAsync("ffmpeg", ["-y", "-i", srcPath, "-ar", String(sampleRate), destPath])
+    await execFileAsync(ffmpegPath, ["-y", "-i", srcPath, "-ar", String(sampleRate), destPath])
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function bundledFfmpegPath(): Promise<string | undefined> {
+  if (!ffmpegStaticPath) {
+    return undefined
+  }
+
+  const candidate = ffmpegStaticPath
+  if (await fileExists(candidate)) {
+    return candidate
+  }
+
+  const unpackedCandidate = candidate.replace(`${pathSeparator()}app.asar${pathSeparator()}`, `${pathSeparator()}app.asar.unpacked${pathSeparator()}`)
+  return (await fileExists(unpackedCandidate)) ? unpackedCandidate : undefined
+}
+
+function pathSeparator(): string {
+  return process.platform === "win32" ? "\\" : "/"
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await access(filePath)
     return true
   } catch {
     return false

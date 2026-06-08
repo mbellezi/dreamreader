@@ -39,6 +39,12 @@ npm run db:generate
 npm run db:migrate
 ```
 
+## Empacotamento de audio
+
+O backend usa `music-metadata` para checar duracao/sample rate/canais de audio sem depender de `ffprobe` no `PATH`. Para reamostrar audio de referencia de voz, usa o binario de `ffmpeg-static`, tambem sem depender de `ffmpeg` instalado no sistema.
+
+Ao gerar bundles Electron, o binario de `ffmpeg-static` precisa ser empacotado e ficar fora do ASAR para poder ser executado. A configuracao atual de `electron-builder` usa `asarUnpack` para `node_modules/ffmpeg-static/**`; mantenha essa regra em qualquer configuracao futura de empacotamento. Antes de distribuir publicamente, revisar tambem o impacto de licenca do `ffmpeg-static` (`GPL-3.0-or-later`).
+
 ## Direcao inicial
 
 A stack proposta faz sentido, com tres cuidados importantes desde o inicio:

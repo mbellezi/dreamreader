@@ -270,6 +270,9 @@ Pontos de atencao:
 - `node-llama-cpp` nao deve ser bundleado pelo Vite.
 - Binarios nativos precisam manter estrutura de arquivos.
 - Modelos devem ficar fora do ASAR.
+- Metadados de audio devem ser lidos por biblioteca Node (`music-metadata`), sem depender de `ffprobe` no `PATH`.
+- Conversao/reamostragem de audio usa `ffmpeg-static`; ao gerar bundles Electron, empacotar esse binario e mante-lo fora do ASAR (`asarUnpack: node_modules/ffmpeg-static/**`) para que o main process consiga executa-lo.
+- Antes de distribuicao publica/comercial, revisar o impacto de licenca do binario `ffmpeg-static` (`GPL-3.0-or-later`) ou substituir por uma build/licenca compativel.
 - Python/PyTorch/TTS/MLX provavelmente exigem empacotamento por plataforma.
 - MLX e modelos MLX devem ser instalados em `userData/models` ou em pasta escolhida pelo usuario, nunca dentro do ASAR.
 - O MVP pode exigir instalacao manual de modelos, com um gerenciador local simples que aponta para pastas ja baixadas.

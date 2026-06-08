@@ -54,6 +54,7 @@ export function App(): ReactElement {
   const [audioJobs, setAudioJobs] = useState<TtsJob[]>([])
   const [audiobookExport, setAudiobookExport] = useState<AudiobookExport | null>(null)
   const [audioLoading, setAudioLoading] = useState(false)
+  const [modelManagementLoading, setModelManagementLoading] = useState(false)
   const [libraryAudioStatus, setLibraryAudioStatus] = useState<LibraryAudioStatus[]>([])
   const [audioBook, setAudioBook] = useState<BookDetails | null>(null)
   const [diagnostics, setDiagnostics] = useState<RuntimeDiagnostic[]>([])
@@ -82,6 +83,7 @@ export function App(): ReactElement {
   const stableChapterIndexRef = useRef<number | null>(null)
   const pendingSettingsSignatureRef = useRef("")
   const settingsSaveTimerRef = useRef<number | null>(null)
+  const modelManagementRefreshIdRef = useRef(0)
 
   const locale = settings?.locale ?? "pt-BR"
   const t = useCallback((key: string, values?: Record<string, string | number>) => translate(locale, key, values), [locale])
@@ -138,20 +140,30 @@ export function App(): ReactElement {
   }, [audioBook, refreshAudioDashboard, refreshAudioState])
 
   const refreshModelManagement = useCallback(async () => {
-    const [nextDiagnostics, nextModels, nextDownloads, nextOperations, nextSidecars, nextHuggingFaceTokenStatus] = await Promise.all([
-      dreamreaderClient.listModelDiagnostics(),
-      dreamreaderClient.listModels(),
-      dreamreaderClient.listModelDownloadJobs(),
-      dreamreaderClient.listRuntimeOperations(),
-      dreamreaderClient.listSidecars(),
-      dreamreaderClient.getHuggingFaceTokenStatus()
-    ])
-    setDiagnostics(nextDiagnostics)
-    setRuntimeModels(nextModels)
-    setModelDownloadJobs(nextDownloads)
-    setRuntimeOperations(nextOperations)
-    setRuntimeSidecars(nextSidecars)
-    setHuggingFaceTokenStatus(nextHuggingFaceTokenStatus)
+    const refreshId = modelManagementRefreshIdRef.current + 1
+    modelManagementRefreshIdRef.current = refreshId
+    setModelManagementLoading(true)
+
+    try {
+      const [nextDiagnostics, nextModels, nextDownloads, nextOperations, nextSidecars, nextHuggingFaceTokenStatus] = await Promise.all([
+        dreamreaderClient.listModelDiagnostics(),
+        dreamreaderClient.listModels(),
+        dreamreaderClient.listModelDownloadJobs(),
+        dreamreaderClient.listRuntimeOperations(),
+        dreamreaderClient.listSidecars(),
+        dreamreaderClient.getHuggingFaceTokenStatus()
+      ])
+      setDiagnostics(nextDiagnostics)
+      setRuntimeModels(nextModels)
+      setModelDownloadJobs(nextDownloads)
+      setRuntimeOperations(nextOperations)
+      setRuntimeSidecars(nextSidecars)
+      setHuggingFaceTokenStatus(nextHuggingFaceTokenStatus)
+    } finally {
+      if (modelManagementRefreshIdRef.current === refreshId) {
+        setModelManagementLoading(false)
+      }
+    }
   }, [])
 
   const loadInitialData = useCallback(async () => {
@@ -876,7 +888,7 @@ export function App(): ReactElement {
               diagnostics={diagnostics}
               downloadJobs={modelDownloadJobs}
               huggingFaceTokenStatus={huggingFaceTokenStatus}
-              loading={audioLoading}
+              loading={modelManagementLoading}
               models={runtimeModels}
               operations={runtimeOperations}
               sidecars={runtimeSidecars}

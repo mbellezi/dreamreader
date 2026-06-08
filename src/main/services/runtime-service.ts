@@ -154,6 +154,8 @@ const recommendedModels: RecommendedModel[] = [
   }
 ]
 
+const recommendedModelIds = new Set(recommendedModels.map((model) => model.id))
+
 const recommendedRuntimeManifests = [
   {
     id: "runtime_qwen3_tts_mlx_sidecar",
@@ -225,12 +227,6 @@ export class RuntimeService {
     const qwenTtsReady = sidecarReady(models, manifests, "qwen3-tts-mlx")
     const f5Ready = sidecarReady(models, manifests, "f5-tts-pt-br")
     return [
-      {
-        id: "local-tts-adapter",
-        label: "DreamReader Local TTS",
-        status: "available",
-        detail: "Deterministic local WAV adapter is installed for queue, cache, and player workflows"
-      },
       {
         id: "qwen-prosody-gguf",
         label: "Qwen GGUF Prosody",
@@ -687,6 +683,7 @@ export class RuntimeService {
 
   private async ensureCatalog(): Promise<void> {
     await mkdir(this.paths.modelsDir, { recursive: true })
+    await this.removeDeprecatedDreamReaderCatalogEntries()
     for (const model of recommendedModels) {
       const existing = await this.db.query.modelAssets.findFirst({ where: eq(modelAssets.id, model.id) })
       const possiblePath = model.fileName ? path.join(this.paths.modelsDir, model.id, model.fileName) : projectLocalModelPathFor(model)
@@ -785,6 +782,22 @@ export class RuntimeService {
             updatedAt: new Date()
           }
         })
+    }
+  }
+
+  private async removeDeprecatedDreamReaderCatalogEntries(): Promise<void> {
+    const rows = await this.db.query.modelAssets.findMany()
+    for (const row of rows) {
+      if (isDeprecatedDreamReaderLocalModelAsset(row)) {
+        await this.db.delete(modelAssets).where(eq(modelAssets.id, row.id))
+      }
+    }
+
+    const manifests = await this.db.query.runtimeManifests.findMany()
+    for (const manifest of manifests) {
+      if (isDeprecatedDreamReaderLocalRuntimeManifest(manifest)) {
+        await this.db.delete(runtimeManifests).where(eq(runtimeManifests.id, manifest.id))
+      }
     }
   }
 
@@ -1444,20 +1457,7 @@ function modelForPath(modelPath: string): RecommendedModel {
   if (normalized.includes("f5") || normalized.endsWith(".safetensors")) {
     return recommendedModelById("model_f5_tts_ptbr_pytorch")
   }
-  return {
-    id: createId("model"),
-    kind: "runtime",
-    name: path.basename(modelPath),
-    provider: "local",
-    version: "local",
-    runtime: "external",
-    format: "unknown",
-    acceleratorPreference: "cpu",
-    license: "unknown",
-    metadata: {
-      role: "runtime"
-    }
-  }
+  throw new AppError("model_path_unrecognized", "The selected path does not match a supported DreamReader model")
 }
 
 function recommendedModelById(id: string): RecommendedModel {
@@ -1494,6 +1494,50 @@ function toModelAsset(row: typeof modelAssets.$inferSelect): ModelAsset {
     createdAt: toIso(row.createdAt),
     updatedAt: toIso(row.updatedAt)
   })
+}
+
+function isDeprecatedDreamReaderLocalModelAsset(row: typeof modelAssets.$inferSelect): boolean {
+  if (recommendedModelIds.has(row.id)) {
+    return false
+  }
+
+  const metadata = row.metadataJson ?? {}
+  const text = [
+    row.id,
+    row.kind,
+    row.name,
+    row.provider,
+    row.runtime,
+    row.format,
+    row.path,
+    getString(metadata.engineId),
+    getString(metadata.adapterId),
+    getString(metadata.registeredFrom),
+    getString(metadata.role)
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase()
+
+  return (
+    text.includes("dreamreader-local-tts") ||
+    text.includes("dreamreader-local-wav") ||
+    (row.kind === "tts" && text.includes("dreamreader") && (text.includes("local") || text.includes("wav") || text.includes("tts"))) ||
+    (row.kind === "runtime" &&
+      row.provider === "local" &&
+      row.runtime === "external" &&
+      row.format === "unknown" &&
+      (getString(metadata.role) === "runtime" || getString(metadata.registeredFrom) === "local-path" || text.includes("dreamreader")))
+  )
+}
+
+function isDeprecatedDreamReaderLocalRuntimeManifest(row: typeof runtimeManifests.$inferSelect): boolean {
+  const text = [row.id, row.adapterId, row.runtime, row.version].join(" ").toLowerCase()
+  return (
+    text.includes("dreamreader-local-tts") ||
+    text.includes("dreamreader-local-wav") ||
+    (text.includes("dreamreader") && (text.includes("local") || text.includes("wav") || text.includes("tts")))
+  )
 }
 
 function toModelDownloadJob(row: typeof modelDownloadJobs.$inferSelect): ModelDownloadJob {

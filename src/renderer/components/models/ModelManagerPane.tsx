@@ -48,6 +48,10 @@ export function ModelManagerPane({
   const activeOperations = operations.filter((operation) => ACTIVE_OPERATION_STATUSES.includes(operation.status))
   const availableModels = models.filter((model) => model.installStatus === "available")
   const availableSidecars = sidecars.filter((sidecar) => sidecar.status === "available")
+  const showMetricSkeletons = loading && models.length === 0 && sidecars.length === 0
+  const showModelSkeletons = loading && models.length === 0
+  const showSidecarSkeletons = loading && sidecars.length === 0
+  const embeddedDiagnostics = useMemo(() => embeddedDiagnosticsForCards(models, sidecars, diagnostics), [diagnostics, models, sidecars])
 
   const operationFor = (targetKind: RuntimeOperationJob["targetKind"], targetId: string) =>
     operations.find((operation) => operation.targetKind === targetKind && operation.targetId === targetId && ACTIVE_OPERATION_STATUSES.includes(operation.status))
@@ -55,7 +59,7 @@ export function ModelManagerPane({
   const downloadJobFor = (modelId: string) => downloadJobs.find((job) => job.modelAssetId === modelId && (job.status === "queued" || job.status === "downloading"))
 
   return (
-    <div className="h-full min-h-0 overflow-auto">
+    <div className="h-full min-h-0 overflow-auto" aria-busy={loading}>
       <div className="mx-auto w-full max-w-6xl space-y-6 px-6 py-6">
         <header className="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -69,10 +73,16 @@ export function ModelManagerPane({
         </header>
 
         <section className="grid grid-cols-1 gap-3 md:grid-cols-4">
-          <MetricCard icon={Cpu} label={t("modelManager.metric.models")} value={`${availableModels.length}/${models.length}`} />
-          <MetricCard icon={ServerCog} label={t("modelManager.metric.sidecars")} value={`${availableSidecars.length}/${sidecars.length}`} />
-          <MetricCard icon={HardDrive} label={t("modelManager.metric.storage")} value={formatBytes(modelBytes)} />
-          <MetricCard icon={TerminalSquare} label={t("modelManager.metric.operations")} value={String(activeOperations.length)} />
+          {showMetricSkeletons ? (
+            <MetricCardSkeletons />
+          ) : (
+            <>
+              <MetricCard icon={Cpu} label={t("modelManager.metric.models")} value={`${availableModels.length}/${models.length}`} />
+              <MetricCard icon={ServerCog} label={t("modelManager.metric.sidecars")} value={`${availableSidecars.length}/${sidecars.length}`} />
+              <MetricCard icon={HardDrive} label={t("modelManager.metric.storage")} value={formatBytes(modelBytes)} />
+              <MetricCard icon={TerminalSquare} label={t("modelManager.metric.operations")} value={String(activeOperations.length)} />
+            </>
+          )}
         </section>
 
         <section className="rounded-md border bg-card p-4">
@@ -118,11 +128,14 @@ export function ModelManagerPane({
 
         <section className="space-y-3">
           <SectionTitle title={t("modelManager.sidecars.title")} count={sidecars.length} />
-          {sidecars.length ? (
+          {showSidecarSkeletons ? (
+            <SidecarCardSkeletons />
+          ) : sidecars.length ? (
             <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
               {sidecars.map((sidecar) => (
                 <SidecarCard
                   key={sidecar.id}
+                  diagnostics={embeddedDiagnostics.sidecars.get(sidecar.id) ?? []}
                   operation={operationFor("sidecar", sidecar.id)}
                   sidecar={sidecar}
                   t={t}
@@ -139,11 +152,14 @@ export function ModelManagerPane({
 
         <section className="space-y-3">
           <SectionTitle title={t("modelManager.models.title")} count={models.length} />
-          {models.length ? (
+          {showModelSkeletons ? (
+            <ModelCardSkeletons />
+          ) : models.length ? (
             <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
               {models.map((model) => (
                 <ModelCard
                   key={model.id}
+                  diagnostics={embeddedDiagnostics.models.get(model.id) ?? []}
                   downloadJob={downloadJobFor(model.id)}
                   model={model}
                   operation={operationFor("model", model.id)}
@@ -159,21 +175,6 @@ export function ModelManagerPane({
           ) : (
             <EmptyState icon={CircleSlash} message={t("modelManager.models.empty")} />
           )}
-        </section>
-
-        <section className="space-y-3">
-          <SectionTitle title={t("modelManager.diagnostics.title")} count={diagnostics.length} />
-          <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
-            {diagnostics.map((diagnostic) => (
-              <div key={diagnostic.id} className="rounded-md border bg-card p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="truncate text-sm font-medium">{diagnosticLabel(diagnostic, t)}</span>
-                  <StatusBadge status={diagnostic.status} t={t} />
-                </div>
-                <p className="mt-1 text-xs text-muted-foreground">{diagnosticDetail(diagnostic, t)}</p>
-              </div>
-            ))}
-          </div>
         </section>
 
         <section className="space-y-3">
@@ -228,6 +229,20 @@ function MetricCard({ icon: Icon, label, value }: { icon: typeof Cpu; label: str
   )
 }
 
+function MetricCardSkeletons() {
+  return Array.from({ length: 4 }, (_, index) => (
+    <div key={index} className="rounded-md border bg-card p-3" aria-hidden="true">
+      <div className="animate-pulse">
+        <div className="flex items-center justify-between gap-3">
+          <SkeletonLine className="h-3 w-24" />
+          <SkeletonLine className="h-4 w-4 rounded-full" />
+        </div>
+        <SkeletonLine className="mt-3 h-6 w-14" />
+      </div>
+    </div>
+  ))
+}
+
 function SectionTitle({ count, title }: { count: number; title: string }) {
   return (
     <div className="flex items-center justify-between gap-2">
@@ -237,7 +252,20 @@ function SectionTitle({ count, title }: { count: number; title: string }) {
   )
 }
 
+function SidecarCardSkeletons() {
+  return (
+    <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+      {Array.from({ length: 2 }, (_, index) => (
+        <div key={index} className="rounded-md border bg-card p-3" aria-hidden="true">
+          <CardSkeleton showModelActions={false} />
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function SidecarCard({
+  diagnostics,
   operation,
   sidecar,
   t,
@@ -245,6 +273,7 @@ function SidecarCard({
   onOpenLogs,
   onUninstallSidecar
 }: {
+  diagnostics: RuntimeDiagnostic[]
   operation?: RuntimeOperationJob
   sidecar: RuntimeSidecar
   t: TranslationFn
@@ -267,6 +296,7 @@ function SidecarCard({
       </div>
       {sidecar.executablePath ? <PathLine path={sidecar.executablePath} /> : null}
       {sidecar.sizeBytes ? <p className="mt-2 text-xs text-muted-foreground">{t("modelManager.size", { size: formatBytes(sidecar.sizeBytes) })}</p> : null}
+      <DiagnosticsBlock diagnostics={diagnostics} t={t} />
       <ProgressBlock operation={operation} t={t} />
       <div className="mt-3 grid grid-cols-2 gap-2">
         {sidecar.status === "available" ? (
@@ -289,7 +319,51 @@ function SidecarCard({
   )
 }
 
+function ModelCardSkeletons() {
+  return (
+    <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+      {Array.from({ length: 4 }, (_, index) => (
+        <div key={index} className="rounded-md border bg-card p-3" aria-hidden="true">
+          <CardSkeleton showModelActions />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function CardSkeleton({ showModelActions }: { showModelActions: boolean }) {
+  return (
+    <div className="animate-pulse">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <SkeletonLine className="h-4 w-4 rounded-full" />
+            <SkeletonLine className="h-4 w-48 max-w-full" />
+          </div>
+          <SkeletonLine className="mt-2 h-3 w-64 max-w-full" />
+        </div>
+        <SkeletonLine className="h-6 w-24" />
+      </div>
+      <SkeletonLine className="mt-3 h-3 w-full" />
+      <div className="mt-3 space-y-2 border-t pt-3">
+        <SkeletonLine className="h-3 w-20" />
+        <div className="flex items-center justify-between gap-3">
+          <SkeletonLine className="h-3 w-44 max-w-full" />
+          <SkeletonLine className="h-5 w-20" />
+        </div>
+        <SkeletonLine className="h-3 w-full" />
+      </div>
+      <div className={cn("mt-3 grid gap-2", showModelActions ? "grid-cols-2 md:grid-cols-4" : "grid-cols-2")}>
+        {Array.from({ length: showModelActions ? 4 : 2 }, (_, index) => (
+          <SkeletonLine key={index} className="h-9 w-full" />
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function ModelCard({
+  diagnostics,
   downloadJob,
   model,
   operation,
@@ -300,6 +374,7 @@ function ModelCard({
   onInstallModelFromPath,
   onOpenLogs
 }: {
+  diagnostics: RuntimeDiagnostic[]
   downloadJob?: ModelDownloadJob
   model: RuntimeModel
   operation?: RuntimeOperationJob
@@ -332,6 +407,7 @@ function ModelCard({
         {model.memoryEstimateMb ? <span>{t("modelManager.memory", { memory: formatBytes(model.memoryEstimateMb * 1024 * 1024) })}</span> : null}
         <span>{model.license}</span>
       </div>
+      <DiagnosticsBlock diagnostics={diagnostics} t={t} />
       <ProgressBlock downloadJob={downloadJob} operation={operation} t={t} />
       <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
         {model.canDownload && model.installStatus !== "available" ? (
@@ -369,6 +445,32 @@ function ModelCard({
           <TerminalSquare className="h-4 w-4 shrink-0" aria-hidden="true" />
           <span className="truncate">{t("modelManager.logs.open")}</span>
         </button>
+      </div>
+    </div>
+  )
+}
+
+function DiagnosticsBlock({ diagnostics, t }: { diagnostics: RuntimeDiagnostic[]; t: TranslationFn }) {
+  if (!diagnostics.length) {
+    return null
+  }
+
+  return (
+    <div className="mt-3 space-y-2 border-t pt-3">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs font-medium text-muted-foreground">{t("modelManager.diagnostics.title")}</span>
+        <span className="text-xs text-muted-foreground">{diagnostics.length}</span>
+      </div>
+      <div className="space-y-2">
+        {diagnostics.map((diagnostic) => (
+          <div key={diagnostic.id} className="min-w-0">
+            <div className="flex items-center justify-between gap-3">
+              <span className="truncate text-xs font-medium">{diagnosticLabel(diagnostic, t)}</span>
+              <StatusBadge status={diagnostic.status} t={t} />
+            </div>
+            <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{diagnosticDetail(diagnostic, t)}</p>
+          </div>
+        ))}
       </div>
     </div>
   )
@@ -471,6 +573,95 @@ function EmptyState({ icon: Icon, message }: { icon: typeof CircleSlash; message
       </div>
     </div>
   )
+}
+
+function SkeletonLine({ className }: { className: string }) {
+  return <div className={cn("rounded-sm bg-muted", className)} />
+}
+
+function embeddedDiagnosticsForCards(
+  models: RuntimeModel[],
+  sidecars: RuntimeSidecar[],
+  diagnostics: RuntimeDiagnostic[]
+): { models: Map<string, RuntimeDiagnostic[]>; sidecars: Map<string, RuntimeDiagnostic[]> } {
+  const modelDiagnostics = new Map<string, RuntimeDiagnostic[]>()
+  const sidecarDiagnostics = new Map<string, RuntimeDiagnostic[]>()
+  const assignedIds = new Set<string>()
+
+  for (const model of models) {
+    const items = diagnosticsForModel(model, diagnostics)
+    modelDiagnostics.set(model.id, items)
+    items.forEach((diagnostic) => assignedIds.add(diagnostic.id))
+  }
+
+  for (const sidecar of sidecars) {
+    const items = diagnosticsForSidecar(sidecar, diagnostics)
+    sidecarDiagnostics.set(sidecar.id, items)
+    items.forEach((diagnostic) => assignedIds.add(diagnostic.id))
+  }
+
+  const unassignedDiagnostics = diagnostics.filter((diagnostic) => !assignedIds.has(diagnostic.id))
+  if (!unassignedDiagnostics.length) {
+    return { models: modelDiagnostics, sidecars: sidecarDiagnostics }
+  }
+
+  const firstSidecar = sidecars[0]
+  if (firstSidecar) {
+    sidecarDiagnostics.set(firstSidecar.id, mergeUniqueDiagnostics(sidecarDiagnostics.get(firstSidecar.id) ?? [], unassignedDiagnostics))
+    return { models: modelDiagnostics, sidecars: sidecarDiagnostics }
+  }
+
+  const firstModel = models[0]
+  if (firstModel) {
+    modelDiagnostics.set(firstModel.id, mergeUniqueDiagnostics(modelDiagnostics.get(firstModel.id) ?? [], unassignedDiagnostics))
+  }
+
+  return { models: modelDiagnostics, sidecars: sidecarDiagnostics }
+}
+
+function mergeUniqueDiagnostics(current: RuntimeDiagnostic[], next: RuntimeDiagnostic[]): RuntimeDiagnostic[] {
+  const seenIds = new Set(current.map((diagnostic) => diagnostic.id))
+  return [...current, ...next.filter((diagnostic) => !seenIds.has(diagnostic.id))]
+}
+
+function diagnosticsForModel(model: RuntimeModel, diagnostics: RuntimeDiagnostic[]): RuntimeDiagnostic[] {
+  const diagnosticIds = new Set<string>()
+  const engineId = model.engineId ?? ""
+  const provider = model.provider.toLowerCase()
+
+  if (metadataRole(model) === "prosody" || model.kind === "llm") {
+    diagnosticIds.add("qwen-prosody-gguf")
+    diagnosticIds.add("local-prosody-analyzer")
+  }
+
+  if (engineId.startsWith("qwen3-tts") || provider.includes("qwen")) {
+    diagnosticIds.add("qwen3-tts-sidecar")
+  }
+
+  if (engineId.startsWith("f5-tts") || provider.includes("firstpixel")) {
+    diagnosticIds.add("f5-tts-sidecar")
+  }
+
+  return diagnostics.filter((diagnostic) => diagnosticIds.has(diagnostic.id))
+}
+
+function diagnosticsForSidecar(sidecar: RuntimeSidecar, diagnostics: RuntimeDiagnostic[]): RuntimeDiagnostic[] {
+  const diagnosticIds = new Set(["device", "apple-silicon"])
+
+  if (sidecar.adapterId === "qwen3-tts-mlx") {
+    diagnosticIds.add("qwen3-tts-sidecar")
+  }
+
+  if (sidecar.adapterId === "f5-tts-pt-br") {
+    diagnosticIds.add("f5-tts-sidecar")
+  }
+
+  return diagnostics.filter((diagnostic) => diagnosticIds.has(diagnostic.id))
+}
+
+function metadataRole(model: RuntimeModel): string | undefined {
+  const role = model.metadata.role
+  return typeof role === "string" ? role : undefined
 }
 
 function diagnosticLabel(diagnostic: RuntimeDiagnostic, t: TranslationFn): string {

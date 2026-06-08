@@ -165,6 +165,92 @@ describe("RuntimeService", () => {
       }
     }
   })
+
+  it("removes deprecated DreamReader local model and sidecar catalog entries", async () => {
+    const { client, db, paths, service } = await createRuntimeService()
+    try {
+      await db.insert(schema.modelAssets).values({
+        id: "model_dreamreader_local_tts",
+        kind: "tts",
+        name: "DreamReader Local TTS",
+        provider: "DreamReader",
+        version: "0.1.0",
+        license: "internal",
+        runtime: "local",
+        format: "wav",
+        acceleratorPreference: "cpu",
+        installStatus: "available",
+        downloadProgress: 1,
+        metadataJson: {
+          engineId: "dreamreader-local-tts",
+          adapterId: "dreamreader-local-wav"
+        }
+      })
+      await db.insert(schema.modelAssets).values({
+        id: "model_generic_models_dreamreader",
+        kind: "runtime",
+        name: "models - dreamreader",
+        provider: "local",
+        version: "local",
+        path: path.join(paths.userData, "models - dreamreader"),
+        license: "unknown",
+        runtime: "external",
+        format: "unknown",
+        acceleratorPreference: "cpu",
+        installStatus: "available",
+        downloadProgress: 1,
+        metadataJson: {
+          role: "runtime",
+          registeredFrom: "local-path"
+        }
+      })
+      await db.insert(schema.runtimeManifests).values({
+        id: "runtime_dreamreader_local_tts",
+        adapterId: "dreamreader-local-wav",
+        runtime: "local",
+        version: "0.1.0",
+        capabilitiesJson: {
+          engines: ["dreamreader-local-tts"]
+        }
+      })
+
+      const models = await service.listModels()
+      expect(models.map((model) => model.id)).not.toContain("model_dreamreader_local_tts")
+      expect(models.map((model) => model.id)).not.toContain("model_generic_models_dreamreader")
+      expect(models.some((model) => model.provider === "DreamReader")).toBe(false)
+      expect(models.some((model) => model.name === "models - dreamreader")).toBe(false)
+
+      const legacyModel = await db.query.modelAssets.findFirst({
+        where: (table, { eq }) => eq(table.id, "model_dreamreader_local_tts")
+      })
+      const legacyGenericModel = await db.query.modelAssets.findFirst({
+        where: (table, { eq }) => eq(table.id, "model_generic_models_dreamreader")
+      })
+      const legacyRuntime = await db.query.runtimeManifests.findFirst({
+        where: (table, { eq }) => eq(table.id, "runtime_dreamreader_local_tts")
+      })
+      expect(legacyModel).toBeUndefined()
+      expect(legacyGenericModel).toBeUndefined()
+      expect(legacyRuntime).toBeUndefined()
+
+      const diagnostics = await service.diagnostics()
+      expect(diagnostics.map((diagnostic) => diagnostic.id)).not.toContain("local-tts-adapter")
+    } finally {
+      await client.close()
+    }
+  })
+
+  it("rejects unknown folders instead of registering generic runtime models", async () => {
+    const { client, paths, service } = await createRuntimeService()
+    try {
+      const unknownPath = path.join(paths.userData, "models - dreamreader")
+      await mkdir(unknownPath, { recursive: true })
+
+      await expect(service.installFromPath(unknownPath)).rejects.toThrow("The selected path does not match a supported DreamReader model")
+    } finally {
+      await client.close()
+    }
+  })
 })
 
 async function createRuntimeService() {

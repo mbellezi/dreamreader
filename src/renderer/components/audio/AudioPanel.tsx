@@ -18,8 +18,6 @@ import {
 import { cn } from "@renderer/lib/utils"
 import type { AudioSettings, AudiobookExport, BookDetails, PronunciationEntry, RuntimeModel, TtsJob, TtsModelSettings, TtsSegment, VoiceProfile } from "@renderer/types"
 
-const defaultEngineId = "dreamreader-local-tts"
-
 export function AudioPanel({
   audiobook,
   audioSettings,
@@ -96,7 +94,7 @@ export function AudioPanel({
   const [generationScope, setGenerationScope] = useState<"total" | "partial">("total")
   const [paragraphCount, setParagraphCount] = useState(3)
   const [selectedChapters, setSelectedChapters] = useState<Set<string>>(new Set())
-  const [selectedEngineId, setSelectedEngineId] = useState(defaultEngineId)
+  const [selectedEngineId, setSelectedEngineId] = useState("")
   const [selectedVoiceId, setSelectedVoiceId] = useState("")
   const [pronunciationPattern, setPronunciationPattern] = useState("")
   const [pronunciationReplacement, setPronunciationReplacement] = useState("")
@@ -122,15 +120,16 @@ export function AudioPanel({
     [models]
   )
   const engineOptions = useMemo(() => {
-    return [
-      { label: t("audio.engine.local"), value: defaultEngineId },
-      ...installedTtsModels.map((model) => ({
-        label: model.name,
-        value: model.engineId ?? model.id
-      }))
-    ]
+    const options = installedTtsModels.map((model) => ({
+      label: model.name,
+      value: model.engineId ?? model.id
+    }))
+    return options.length ? options : [{ label: t("audio.models.empty"), value: "" }]
   }, [installedTtsModels, t])
   const voiceOptions = useMemo(() => {
+    if (!selectedEngineId) {
+      return [{ label: t("audio.voiceUnavailable"), value: "" }]
+    }
     const compatible = voices.filter((voice) => {
       const engineIds = voice.settings?.compatibleEngineIds
       return !Array.isArray(engineIds) || engineIds.includes(selectedEngineId)
@@ -202,7 +201,7 @@ export function AudioPanel({
 
   useEffect(() => {
     if (!engineOptions.some((option) => option.value === selectedEngineId)) {
-      setSelectedEngineId(defaultEngineId)
+      setSelectedEngineId(engineOptions[0]?.value ?? "")
     }
   }, [engineOptions, selectedEngineId])
 
@@ -272,6 +271,7 @@ export function AudioPanel({
           />
           <button
             className="inline-flex h-10 w-10 items-center justify-center rounded-md border bg-card text-muted-foreground hover:text-foreground"
+            disabled={!selectedEngineId}
             title={t("audio.modelSettings.open")}
             onClick={openModelSettings}
           >
@@ -377,7 +377,7 @@ export function AudioPanel({
         <div className="grid grid-cols-2 gap-2">
           <button
             className="inline-flex h-10 min-w-0 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground"
-            disabled={Boolean(activeJob) || loading || !hasCompatibleVoice}
+            disabled={Boolean(activeJob) || loading || !selectedEngineId || !hasCompatibleVoice}
             onClick={() =>
               onGenerateChapter({
                 chapterHref: chapter.id,
@@ -448,7 +448,7 @@ export function AudioPanel({
           <div className="grid grid-cols-2 gap-2">
             <button
               className="inline-flex h-9 min-w-0 items-center justify-center gap-2 rounded-md border bg-background px-3 text-sm"
-              disabled={!selectedChapters.size || loading || !hasCompatibleVoice}
+              disabled={!selectedChapters.size || loading || !selectedEngineId || !hasCompatibleVoice}
               onClick={() =>
                 onGenerateChapters({
                   chapterHrefs: [...selectedChapters],
@@ -468,7 +468,7 @@ export function AudioPanel({
             </button>
             <button
               className="inline-flex h-9 min-w-0 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground"
-              disabled={loading || !hasCompatibleVoice}
+              disabled={loading || !selectedEngineId || !hasCompatibleVoice}
               onClick={() =>
                 onGenerateChapters({
                   engineId: selectedEngineId,
