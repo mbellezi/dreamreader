@@ -9,3 +9,4 @@ release/
 .env.*
 coverage/
 *.epub
+.dreamreader-local/
