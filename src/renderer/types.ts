@@ -169,6 +169,20 @@ export type TtsJobStatus =
   | "failed"
   | "cancelled"
 
+export type ProsodyEmotion = "neutral" | "warm" | "tense" | "sad" | "joyful" | "angry" | "suspense" | "formal"
+export type ProsodyPace = "slow" | "normal" | "fast"
+export type ProsodyPitch = "low" | "neutral" | "high"
+
+export type SegmentProsody = {
+  emotion: ProsodyEmotion
+  intensity: number
+  pace: ProsodyPace
+  pitch: ProsodyPitch
+  pauseBeforeMs: number
+  pauseAfterMs: number
+  instructionPtBr: string
+}
+
 export type TtsSegment = {
   id: string
   jobId: string
@@ -177,6 +191,8 @@ export type TtsSegment = {
   textPreview: string
   audioAssetId?: string
   durationMs?: number
+  prosody?: SegmentProsody
+  prosodyMode?: "expressive" | "neutral"
 }
 
 export type TtsJob = {

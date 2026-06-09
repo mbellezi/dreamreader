@@ -2,6 +2,7 @@ import { mkdir, rm, unlink, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { and, asc, eq, inArray } from "drizzle-orm"
 import {
+  NarrationProsodySchema,
   PronunciationEntrySchema,
   VoiceEngineBindingSchema,
   VoiceProfileSchema,
@@ -405,15 +406,22 @@ export class TtsService {
       where: eq(ttsSegments.jobId, jobId),
       orderBy: [asc(ttsSegments.segmentIndex)]
     })
-    return rows.map((row) => ({
-      id: row.id,
-      jobId: row.jobId,
-      segmentIndex: row.segmentIndex,
-      status: row.status,
-      textPreview: row.originalText.slice(0, 160),
-      audioAssetId: row.audioAssetId ?? undefined,
-      durationMs: typeof row.durationMs === "number" ? row.durationMs : undefined
-    }))
+    return rows.map((row) => {
+      const prosody = NarrationProsodySchema.safeParse(row.prosodyJson)
+      const rawMode = (row.adapterPayloadJson as { prosodyMode?: unknown }).prosodyMode
+      const prosodyMode = rawMode === "expressive" || rawMode === "neutral" ? rawMode : undefined
+      return {
+        id: row.id,
+        jobId: row.jobId,
+        segmentIndex: row.segmentIndex,
+        status: row.status,
+        textPreview: row.originalText.slice(0, 160),
+        audioAssetId: row.audioAssetId ?? undefined,
+        durationMs: typeof row.durationMs === "number" ? row.durationMs : undefined,
+        prosody: prosody.success ? prosody.data : undefined,
+        prosodyMode
+      }
+    })
   }
 
   async retryJob(id: string): Promise<TtsJob> {

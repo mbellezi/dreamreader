@@ -1,5 +1,5 @@
-import { BookOpen, Headphones, Library, Loader2, Settings } from "lucide-react"
-import { useCallback, useEffect, useRef, useState, type ReactElement } from "react"
+import { BookOpen, Headphones, Library, Loader2, PanelRightOpen, Settings } from "lucide-react"
+import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactElement } from "react"
 import { NavButton } from "@renderer/components/common/Controls"
 import { StudioPane } from "@renderer/components/audio/StudioPane"
 import { BookStudioPane } from "@renderer/components/audio/BookStudioPane"
@@ -15,6 +15,13 @@ import {
   libraryImportStatusForError,
   libraryImportStatusForResult
 } from "@renderer/lib/appState"
+import {
+  clampSidebarWidth,
+  loadReaderSidebarState,
+  READER_SIDEBAR_DEFAULT_WIDTH,
+  saveReaderSidebarState,
+  type ReaderSidebarState
+} from "@renderer/lib/readerSidebar"
 import { clamp, cn } from "@renderer/lib/utils"
 import type {
   AppView,
@@ -75,10 +82,12 @@ export function App(): ReactElement {
   const [exportContent, setExportContent] = useState("")
   const [settingsSaved, setSettingsSaved] = useState(false)
   const [cleanReading, setCleanReading] = useState(false)
+  const [sidebar, setSidebar] = useState<ReaderSidebarState>(() => loadReaderSidebarState())
   const [activeAnnotationId, setActiveAnnotationId] = useState<string | null>(null)
   const [annotationFocusTick, setAnnotationFocusTick] = useState(0)
   const [returnChapterIndex, setReturnChapterIndex] = useState<number | null>(null)
   const stableChapterIndexRef = useRef<number | null>(null)
+  const readerLayoutRef = useRef<HTMLDivElement | null>(null)
   const pendingSettingsSignatureRef = useRef("")
   const settingsSaveTimerRef = useRef<number | null>(null)
   const modelManagementRefreshIdRef = useRef(0)
@@ -699,6 +708,33 @@ export function App(): ReactElement {
     }, delay)
   }
 
+  useEffect(() => {
+    saveReaderSidebarState(sidebar)
+  }, [sidebar])
+
+  // Drag the divider to resize the inspector. Width is measured from the layout's
+  // right edge so the handle tracks the cursor regardless of the reader's width.
+  const startSidebarResize = useCallback((event: ReactMouseEvent) => {
+    event.preventDefault()
+    const onMove = (moveEvent: MouseEvent) => {
+      const rect = readerLayoutRef.current?.getBoundingClientRect()
+      if (!rect) {
+        return
+      }
+      setSidebar((current) => ({ ...current, width: clampSidebarWidth(rect.right - moveEvent.clientX) }))
+    }
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove)
+      window.removeEventListener("mouseup", onUp)
+      document.body.style.userSelect = ""
+      document.body.style.cursor = ""
+    }
+    window.addEventListener("mousemove", onMove)
+    window.addEventListener("mouseup", onUp)
+    document.body.style.userSelect = "none"
+    document.body.style.cursor = "col-resize"
+  }, [])
+
   const updateReaderPreference = <Key extends keyof ReaderPreferences>(key: Key, value: ReaderPreferences[Key]) => {
     if (!settings) {
       return
@@ -903,47 +939,77 @@ export function App(): ReactElement {
             )}
           </div>
         ) : (
-          <div className={cn("grid min-h-0 flex-1 grid-cols-1 overflow-hidden", !cleanReading && "lg:grid-cols-[minmax(0,1fr)_340px]")}>
-            <ReaderPane
-              activeAnnotationId={activeAnnotationId}
-              annotationFocusTick={annotationFocusTick}
-              annotations={annotations}
-              book={selectedBook}
-              chapter={currentChapter}
-              chapterIndex={chapterIndex}
-              cleanReading={cleanReading}
-              canReturn={returnChapterIndex !== null}
-              preferences={settings.reader}
-              t={t}
-              onCreateAnnotation={createAnnotation}
-              onDeleteAnnotation={deleteAnnotation}
-              onFocusAnnotation={(annotation) => setActiveAnnotationId(annotation.id)}
-              onJumpToAnnotation={jumpToAnnotation}
-              onNext={() => changeChapter(1)}
-              onPrevious={() => changeChapter(-1)}
-              onReturn={returnToPreviousPosition}
-              onSavePosition={saveReadingPosition}
-              onToggleClean={() => setCleanReading((current) => !current)}
-              onUpdateAnnotationColor={updateAnnotationColor}
-            />
-
-            {!cleanReading ? (
-              <InspectorPane
-                activeTab={inspectorTab}
+          <div ref={readerLayoutRef} className="flex min-h-0 flex-1 overflow-hidden">
+            <div className="min-w-0 flex-1">
+              <ReaderPane
                 activeAnnotationId={activeAnnotationId}
+                annotationFocusTick={annotationFocusTick}
                 annotations={annotations}
                 book={selectedBook}
+                chapter={currentChapter}
                 chapterIndex={chapterIndex}
-                exportContent={exportContent}
+                cleanReading={cleanReading}
+                canReturn={returnChapterIndex !== null}
                 preferences={settings.reader}
                 t={t}
-                onChangePreference={updateReaderPreference}
-                onChangeTab={setInspectorTab}
+                onCreateAnnotation={createAnnotation}
                 onDeleteAnnotation={deleteAnnotation}
-                onExportNotes={exportNotes}
+                onFocusAnnotation={(annotation) => setActiveAnnotationId(annotation.id)}
                 onJumpToAnnotation={jumpToAnnotation}
-                onJumpToChapter={jumpToChapter}
+                onNext={() => changeChapter(1)}
+                onPrevious={() => changeChapter(-1)}
+                onReturn={returnToPreviousPosition}
+                onSavePosition={saveReadingPosition}
+                onToggleClean={() => setCleanReading((current) => !current)}
+                onUpdateAnnotationColor={updateAnnotationColor}
               />
+            </div>
+
+            {!cleanReading ? (
+              sidebar.collapsed ? (
+                <div className="flex shrink-0 flex-col items-center border-l bg-sidebar py-2">
+                  <button
+                    className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-card hover:text-foreground"
+                    title={t("reader.expandSidebar")}
+                    aria-label={t("reader.expandSidebar")}
+                    onClick={() => setSidebar((current) => ({ ...current, collapsed: false }))}
+                  >
+                    <PanelRightOpen className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div
+                    role="separator"
+                    aria-orientation="vertical"
+                    className="group relative z-10 w-1 shrink-0 cursor-col-resize bg-transparent transition-colors hover:bg-primary/40"
+                    title={t("reader.resizeSidebar")}
+                    onMouseDown={startSidebarResize}
+                    onDoubleClick={() => setSidebar((current) => ({ ...current, width: READER_SIDEBAR_DEFAULT_WIDTH }))}
+                  >
+                    <span className="absolute inset-y-0 -left-1.5 -right-1.5" aria-hidden="true" />
+                  </div>
+                  <div className="shrink-0" style={{ width: sidebar.width }}>
+                    <InspectorPane
+                      activeTab={inspectorTab}
+                      activeAnnotationId={activeAnnotationId}
+                      annotations={annotations}
+                      book={selectedBook}
+                      chapterIndex={chapterIndex}
+                      exportContent={exportContent}
+                      preferences={settings.reader}
+                      t={t}
+                      onChangePreference={updateReaderPreference}
+                      onChangeTab={setInspectorTab}
+                      onCollapse={() => setSidebar((current) => ({ ...current, collapsed: true }))}
+                      onDeleteAnnotation={deleteAnnotation}
+                      onExportNotes={exportNotes}
+                      onJumpToAnnotation={jumpToAnnotation}
+                      onJumpToChapter={jumpToChapter}
+                    />
+                  </div>
+                </>
+              )
             ) : null}
           </div>
         )}

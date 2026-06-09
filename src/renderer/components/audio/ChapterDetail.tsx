@@ -1,6 +1,7 @@
 import { ChevronDown, ChevronRight, RotateCcw, Square, Trash2, Volume2, Wand2 } from "lucide-react"
 import { useMemo, useState } from "react"
 import { GenerationProgress } from "@renderer/components/audio/GenerationProgress"
+import { ProsodyInspector } from "@renderer/components/audio/ProsodyInspector"
 import type { TranslationFn } from "@renderer/app/types"
 import { isPartialTtsJob, isTerminalJobStatus } from "@renderer/lib/jobQueue"
 import { formatDuration } from "@renderer/lib/formatDuration"
@@ -48,6 +49,7 @@ export function ChapterDetail({
   const hasChapterGeneration = Boolean(chapterAudio || chapterJobs.length)
   const neutralComparisonJob = comparisonJobFor(jobs, chapter?.id, false)
   const expressiveComparisonJob = comparisonJobFor(jobs, chapter?.id, true)
+  const latestExpressiveJob = useMemo(() => latestExpressiveJobFor(jobs, chapter?.id), [chapter?.id, jobs])
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [previewParagraphs, setPreviewParagraphs] = useState(3)
 
@@ -164,6 +166,8 @@ export function ChapterDetail({
                 <ComparisonCard job={expressiveComparisonJob} label={t("audio.comparison.expressive")} t={t} />
               </div>
             </div>
+
+            <ProsodyInspector job={latestExpressiveJob} t={t} onListSegments={onListSegments} />
           </div>
         ) : null}
       </section>
@@ -205,6 +209,14 @@ function comparisonJobFor(jobs: TtsJob[], chapterHref: string | undefined, expre
         Boolean(jobAudioAssetId(job))
       )
     })
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
+}
+
+// Latest expressive job for the chapter regardless of status, so the prosody
+// monitor reflects the most recent LLM run even while it is still generating.
+function latestExpressiveJobFor(jobs: TtsJob[], chapterHref: string | undefined): TtsJob | undefined {
+  return jobs
+    .filter((job) => job.chapterHref === chapterHref && Boolean(job.settings.useExpressiveNarration))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
 }
 

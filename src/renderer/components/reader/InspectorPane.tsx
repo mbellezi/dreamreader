@@ -6,6 +6,7 @@ import {
   Highlighter,
   List,
   PanelRight,
+  PanelRightClose,
   SlidersHorizontal,
   TextAlignJustify,
   TextAlignStart,
@@ -29,6 +30,7 @@ export function InspectorPane({
   t,
   onChangePreference,
   onChangeTab,
+  onCollapse,
   onDeleteAnnotation,
   onExportNotes,
   onJumpToAnnotation,
@@ -44,6 +46,7 @@ export function InspectorPane({
   t: TranslationFn
   onChangePreference: ReaderPreferenceChangeHandler
   onChangeTab: (tab: InspectorTab) => void
+  onCollapse: () => void
   onDeleteAnnotation: (annotationId: string) => void
   onExportNotes: () => void
   onJumpToAnnotation: (annotation: Annotation) => void
@@ -51,10 +54,20 @@ export function InspectorPane({
 }) {
   return (
     <aside className="flex h-full min-h-0 flex-col overflow-hidden border-l bg-sidebar">
-      <div className="grid shrink-0 grid-cols-3 border-b p-2">
-        <IconToggle active={activeTab === "summary"} icon={PanelRight} label={t("reader.summary")} onClick={() => onChangeTab("summary")} />
-        <IconToggle active={activeTab === "annotations"} icon={Highlighter} label={t("reader.annotations")} onClick={() => onChangeTab("annotations")} />
-        <IconToggle active={activeTab === "preferences"} icon={SlidersHorizontal} label={t("reader.preferences")} onClick={() => onChangeTab("preferences")} />
+      <div className="flex shrink-0 items-center gap-1 border-b p-2">
+        <div className="grid flex-1 grid-cols-3 gap-1">
+          <IconToggle active={activeTab === "summary"} icon={PanelRight} label={t("reader.summary")} onClick={() => onChangeTab("summary")} />
+          <IconToggle active={activeTab === "annotations"} icon={Highlighter} label={t("reader.annotations")} onClick={() => onChangeTab("annotations")} />
+          <IconToggle active={activeTab === "preferences"} icon={SlidersHorizontal} label={t("reader.preferences")} onClick={() => onChangeTab("preferences")} />
+        </div>
+        <button
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-card hover:text-foreground"
+          title={t("reader.collapseSidebar")}
+          aria-label={t("reader.collapseSidebar")}
+          onClick={onCollapse}
+        >
+          <PanelRightClose className="h-4 w-4" aria-hidden="true" />
+        </button>
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden p-4">

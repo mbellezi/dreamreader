@@ -630,6 +630,8 @@ export const TtsSegmentSummarySchema = z.object({
   textPreview: z.string(),
   audioAssetId: IdSchema.optional(),
   durationMs: z.number().int().nonnegative().optional(),
+  prosody: NarrationProsodySchema.optional(),
+  prosodyMode: z.enum(["expressive", "neutral"]).optional(),
 });
 export type TtsSegmentSummary = z.infer<typeof TtsSegmentSummarySchema>;
 
