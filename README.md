@@ -35,6 +35,20 @@ npm run setup:python-tts -- --backend=vulkan --install-sidecars
 npm run download:tts-models -- --backend=cuda
 ```
 
+## Importacao de vozes
+
+Os pacotes de vozes ficam em `voices/` como arquivos `.zip` compatíveis com o formato `DreamReader Voice`, por exemplo `voices/Lucas_PT-BR_curto_.zip` e `voices/Tiago_PT-BR_longo_.zip`.
+
+Para importar pela interface:
+
+1. Abra o app com `npm run dev`.
+2. Entre em **Estúdio** e abra a aba **Vozes**.
+3. Na seção **Vozes cadastradas**, clique em **Importar vozes**.
+4. No seletor de arquivos, abra a pasta `voices/` do projeto e selecione um ou mais arquivos `.zip`.
+5. Confirme a importação. As vozes importadas aparecem em **Vozes cadastradas** e ficam disponíveis nos motores compatíveis instalados.
+
+Para ouvir prévias ou usar essas vozes na geração de áudio, instale antes o modelo e o sidecar do motor desejado em **Estúdio > Motores**. Pacotes com áudio de referência criam bindings para motores com clonagem de voz instalados; pacotes com prompt de voz ficam disponíveis para o Qwen VoiceDesign quando esse motor estiver instalado.
+
 ## Comandos principais
 
 ```bash
