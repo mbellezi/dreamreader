@@ -12,7 +12,6 @@ Se houver conflito entre este arquivo e uma etapa de algum comando dado ao agent
 - Preserve as ideias documentadas, mesmo quando estiverem fora da etapa atual.
 - Evite refactors amplos que nao sejam necessarios para a etapa.
 - Nao reverta alteracoes do usuario ou de outros agentes sem pedido explicito.
-- Nao faca commit final automaticamente.
 - Ao concluir uma etapa, informe arquivos alterados, testes executados, migrations aplicadas e pendencias.
 - Consulte os documentos em `docs/` antes de implementar uma decisao de produto, arquitetura, TTS, LLM, banco, voz ou M4B.
 - Quando houver duvida entre uma implementacao rapida e uma que preserve os contratos documentados, preserve os contratos.
@@ -173,6 +172,3 @@ Ao terminar uma etapa, informe:
 - migrations geradas;
 - verificacao pos-migration feita;
 - pendencias;
-- se esta pronto para commit.
-
-Nao faca commit automaticamente.
