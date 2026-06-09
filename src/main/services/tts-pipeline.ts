@@ -7,7 +7,7 @@ export const DICTIONARY_VERSION = "builtin-pt-br-v1"
 export const PROSODY_ANALYZER_ID = "neutral-rule-prosody"
 export const PROSODY_VERSION = "1.0.0"
 export const NARRATION_PLAN_VERSION = "narration-plan/v1"
-const MAX_TTS_SEGMENT_CHARS = 420
+export const MAX_TTS_SEGMENT_CHARS = 420
 
 const commonAbbreviations: Record<string, string> = {
   "Dr.": "doutor",
@@ -50,7 +50,7 @@ export type ChapterNarrationInput = {
 export function buildNarrationPlan(input: ChapterNarrationInput): NarrationPlan {
   const fullText = htmlToReadableText(input.html)
   const text = input.paragraphLimit ? limitParagraphs(fullText, input.paragraphLimit) : fullText
-  const chunks = segmentTextForTts(text)
+  const chunks = segmentTextForTts(text, input.pronunciationEntries)
   const dictionaryVersion = dictionaryVersionFor(input.pronunciationEntries ?? [])
   const segments = chunks.map((chunk, index): NarrationSegment => {
     const segmentHash = hashBuffer(`${input.bookId}:${input.chapterHref}:${index}:${chunk}`)
@@ -124,7 +124,7 @@ export function limitParagraphs(text: string, limit: number): string {
   return paragraphs.slice(0, Math.floor(limit)).join("\n\n")
 }
 
-export function segmentTextForTts(text: string): string[] {
+export function segmentTextForTts(text: string, pronunciationEntries: PronunciationEntry[] = []): string[] {
   const paragraphs = sanitizeReadableText(text)
     .split(/\n{2,}/)
     .map((paragraph) => paragraph.replace(/\s+/g, " ").trim())
@@ -132,14 +132,36 @@ export function segmentTextForTts(text: string): string[] {
   const segments: string[] = []
 
   for (const paragraph of paragraphs) {
-    segments.push(...chunkSentencesForTts(splitSentences(paragraph)))
+    segments.push(...chunkSentencesForTts(splitSentences(paragraph), pronunciationEntries))
   }
 
   return segments.length ? segments : [text.replace(/\s+/g, " ").trim()].filter(Boolean)
 }
 
-function splitLongSentence(sentence: string): string[] {
-  if (sentence.length <= MAX_TTS_SEGMENT_CHARS) {
+// The engine synthesizes normalizedText, which expands numbers/dates/abbreviations,
+// so chunks must fit the limit both before and after normalization.
+function fitsTtsLimit(text: string, pronunciationEntries: PronunciationEntry[]): boolean {
+  return (
+    text.length <= MAX_TTS_SEGMENT_CHARS && normalizePtBr(text, pronunciationEntries).length <= MAX_TTS_SEGMENT_CHARS
+  )
+}
+
+function splitOversizedWord(word: string, pronunciationEntries: PronunciationEntry[]): string[] {
+  const pieces: string[] = []
+  let rest = word
+  while (rest.length > 0) {
+    let piece = rest.slice(0, MAX_TTS_SEGMENT_CHARS)
+    while (piece.length > 1 && !fitsTtsLimit(piece, pronunciationEntries)) {
+      piece = piece.slice(0, Math.ceil(piece.length / 2))
+    }
+    pieces.push(piece)
+    rest = rest.slice(piece.length)
+  }
+  return pieces
+}
+
+function splitLongSentence(sentence: string, pronunciationEntries: PronunciationEntry[]): string[] {
+  if (fitsTtsLimit(sentence, pronunciationEntries)) {
     return [sentence]
   }
   const words = sentence.split(/\s+/)
@@ -147,11 +169,18 @@ function splitLongSentence(sentence: string): string[] {
   let current = ""
   for (const word of words) {
     const candidate = current ? `${current} ${word}` : word
-    if (candidate.length > MAX_TTS_SEGMENT_CHARS && current) {
+    if (fitsTtsLimit(candidate, pronunciationEntries)) {
+      current = candidate
+      continue
+    }
+    if (current) {
       chunks.push(current)
+      current = ""
+    }
+    if (fitsTtsLimit(word, pronunciationEntries)) {
       current = word
     } else {
-      current = candidate
+      chunks.push(...splitOversizedWord(word, pronunciationEntries))
     }
   }
   if (current) {
@@ -160,24 +189,24 @@ function splitLongSentence(sentence: string): string[] {
   return chunks
 }
 
-function chunkSentencesForTts(sentences: string[]): string[] {
+function chunkSentencesForTts(sentences: string[], pronunciationEntries: PronunciationEntry[]): string[] {
   const chunks: string[] = []
   let current = ""
 
   for (const sentence of sentences) {
     const candidate = current ? `${current} ${sentence}` : sentence
-    if (candidate.length <= MAX_TTS_SEGMENT_CHARS) {
+    if (fitsTtsLimit(candidate, pronunciationEntries)) {
       current = candidate
       continue
     }
     if (current) {
-      chunks.push(...splitLongSentence(current))
+      chunks.push(...splitLongSentence(current, pronunciationEntries))
     }
     current = sentence
   }
 
   if (current) {
-    chunks.push(...splitLongSentence(current))
+    chunks.push(...splitLongSentence(current, pronunciationEntries))
   }
   return chunks
 }

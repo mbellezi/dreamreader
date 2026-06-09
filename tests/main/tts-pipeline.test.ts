@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest"
-import { buildNarrationPlan, dictionaryVersionFor, limitParagraphs, normalizePtBr, segmentTextForTts } from "../../src/main/services/tts-pipeline"
+import {
+  buildNarrationPlan,
+  dictionaryVersionFor,
+  limitParagraphs,
+  MAX_TTS_SEGMENT_CHARS,
+  normalizePtBr,
+  segmentTextForTts
+} from "../../src/main/services/tts-pipeline"
 
 describe("TTS pipeline", () => {
   it("limits a narration plan to the first N paragraphs", () => {
@@ -64,6 +71,69 @@ describe("TTS pipeline", () => {
 
   it("removes invisible EPUB control characters before TTS", () => {
     expect(segmentTextForTts("A infor\u00admação está\u200b aqui.")).toEqual(["A informação está aqui."])
+  })
+
+  it("keeps normalizedText within the TTS limit when normalization expands numbers", () => {
+    const sentence = "O valor foi de R$ 999,99 em 25/12/1999 às 23h59 com 99% de desconto."
+    const paragraph = Array.from({ length: 8 }, () => sentence).join(" ")
+    expect(normalizePtBr(sentence).length).toBeGreaterThan(sentence.length)
+
+    const plan = buildNarrationPlan({
+      bookId: "b",
+      chapterHref: "c",
+      contentHash: "h",
+      html: `<article><p>${paragraph}</p></article>`,
+      language: "pt-BR"
+    })
+
+    expect(plan.segments.length).toBeGreaterThan(1)
+    for (const segment of plan.segments) {
+      expect(segment.normalizedText.length).toBeLessThanOrEqual(MAX_TTS_SEGMENT_CHARS)
+    }
+    expect(plan.segments.map((segment) => segment.originalText).join(" ")).toBe(paragraph)
+  })
+
+  it("accounts for pronunciation entry expansion when chunking", () => {
+    const entry = {
+      id: "pronunciation-1",
+      scope: "global" as const,
+      pattern: "X9",
+      replacement: "xis nove da série especial limitada",
+      matchKind: "word" as const,
+      caseSensitive: false,
+      createdAt: "2026-06-06T12:00:00.000Z",
+      updatedAt: "2026-06-06T12:00:00.000Z"
+    }
+    const sentence = "O modelo X9 superou o X9 anterior e o X9 reserva em todos os testes do X9 base."
+    const paragraph = Array.from({ length: 6 }, () => sentence).join(" ")
+
+    const withoutEntries = segmentTextForTts(paragraph)
+    const withEntries = segmentTextForTts(paragraph, [entry])
+
+    expect(withEntries.length).toBeGreaterThan(withoutEntries.length)
+    for (const segment of withEntries) {
+      expect(normalizePtBr(segment, [entry]).length).toBeLessThanOrEqual(MAX_TTS_SEGMENT_CHARS)
+    }
+    expect(withEntries.join(" ")).toBe(paragraph)
+  })
+
+  it("splits a single oversized word without dropping characters", () => {
+    const word = "x".repeat(1000)
+    const segments = segmentTextForTts(`Antes. ${word} depois.`)
+
+    for (const segment of segments) {
+      expect(segment.length).toBeLessThanOrEqual(MAX_TTS_SEGMENT_CHARS)
+    }
+    expect(segments.join("")).toBe(`Antes. ${word} depois.`.replace(/\s+/g, ""))
+  })
+
+  it("preserves every word across paragraph chunking", () => {
+    const sentence = "Era uma vez um leitor que ouvia capítulos inteiros sem perder uma única palavra do texto original."
+    const paragraph = Array.from({ length: 12 }, () => sentence).join(" ")
+    const segments = segmentTextForTts(paragraph)
+
+    expect(segments.length).toBeGreaterThan(1)
+    expect(segments.join(" ")).toBe(paragraph)
   })
 
   it("applies pronunciation entries and versions the dictionary in narration plans", () => {
