@@ -3,9 +3,11 @@ import { z } from "zod"
 import { IpcContractSchemas, type IpcChannel } from "@shared/contracts/ipc"
 import { AudiobookService } from "@main/services/audiobook-service"
 import { LibraryService } from "@main/services/library-service"
+import { PronunciationService } from "@main/services/pronunciation-service"
 import { RuntimeService } from "@main/services/runtime-service"
 import { TtsService } from "@main/services/tts-service"
 import { VoiceService } from "@main/services/voice-service"
+import { probeAudio } from "@main/lib/audio-transcode"
 import { toIpcError } from "@main/lib/errors"
 
 type Services = {
@@ -14,6 +16,7 @@ type Services = {
   tts: TtsService
   voices: VoiceService
   audiobook: AudiobookService
+  pronunciation: PronunciationService
 }
 
 const contract = IpcContractSchemas
@@ -54,20 +57,76 @@ export function registerIpc(services: Services): void {
   handle("annotations.export", contract["annotations.export"].request, (input) => services.library.exportAnnotations(input))
   handle("bookmarks.create", contract["bookmarks.create"].request, (input) => services.library.createBookmark(input))
   handle("tts.enqueueChapter", contract["tts.enqueueChapter"].request, (input) => services.tts.enqueueChapter(input))
+  handle("tts.enqueueChapters", contract["tts.enqueueChapters"].request, (input) => services.tts.enqueueChapters(input))
   handle("tts.cancelJob", contract["tts.cancelJob"].request, (input) => services.tts.cancelJob(input.id))
+  handle("tts.pauseJob", contract["tts.pauseJob"].request, (input) => services.tts.pauseJob(input.id))
+  handle("tts.resumeJob", contract["tts.resumeJob"].request, (input) => services.tts.resumeJob(input.id))
+  handle("tts.retryJob", contract["tts.retryJob"].request, (input) => services.tts.retryJob(input.id))
   handle("tts.getJob", contract["tts.getJob"].request, (input) => services.tts.getJob(input.id))
   handle("tts.listJobs", contract["tts.listJobs"].request, (input) => services.tts.listJobs(input))
+  handle("tts.listSegments", contract["tts.listSegments"].request, (input) => services.tts.listSegments(input.jobId))
+  handle("tts.clearChapterAudio", contract["tts.clearChapterAudio"].request, (input) => services.tts.clearChapterAudio(input))
+  handle("tts.clearTerminalJobs", contract["tts.clearTerminalJobs"].request, (input) => services.tts.clearTerminalJobs(input))
   handle("settings.get", contract["settings.get"].request, () => services.library.getSettings())
   handle("settings.update", contract["settings.update"].request, (input) => services.library.updateSettings(input))
   handle("models.list", contract["models.list"].request, () => services.runtime.listModels())
   handle("models.diagnostics", contract["models.diagnostics"].request, () => services.runtime.diagnostics())
-  handle("models.installFromPath", contract["models.installFromPath"].request, (input) =>
-    services.runtime.installFromPath(input.path)
+  handle("models.downloads", contract["models.downloads"].request, () => services.runtime.listModelDownloadJobs())
+  handle("models.operations", contract["models.operations"].request, () => services.runtime.listOperations())
+  handle("models.huggingFaceToken", contract["models.huggingFaceToken"].request, () =>
+    services.runtime.getHuggingFaceTokenStatus()
   )
+  handle("models.updateHuggingFaceToken", contract["models.updateHuggingFaceToken"].request, (input) =>
+    services.runtime.updateHuggingFaceToken(input.token)
+  )
+  handle("models.installFromPath", contract["models.installFromPath"].request, async (input) => {
+    const selectedPath =
+      input.path ??
+      (
+        await dialog.showOpenDialog({
+          properties: ["openDirectory"]
+        })
+      ).filePaths[0]
+    return selectedPath ? services.runtime.installFromPath(selectedPath) : null
+  })
+  handle("models.installRecommended", contract["models.installRecommended"].request, (input) =>
+    services.runtime.installRecommendedModel(input.modelId)
+  )
+  handle("models.download", contract["models.download"].request, (input) => services.runtime.downloadModel(input.modelId))
+  handle("models.delete", contract["models.delete"].request, (input) =>
+    services.runtime.deleteModel(input.modelId, input.deleteFiles)
+  )
+  handle("sidecars.list", contract["sidecars.list"].request, () => services.runtime.listSidecars())
+  handle("sidecars.install", contract["sidecars.install"].request, (input) => services.runtime.installSidecar(input.sidecarId))
+  handle("sidecars.uninstall", contract["sidecars.uninstall"].request, (input) =>
+    services.runtime.uninstallSidecar(input.sidecarId)
+  )
+  handle("pronunciation.list", contract["pronunciation.list"].request, (input) => services.pronunciation.list(input))
+  handle("pronunciation.create", contract["pronunciation.create"].request, (input) => services.pronunciation.create(input))
+  handle("pronunciation.update", contract["pronunciation.update"].request, (input) => services.pronunciation.update(input))
+  handle("pronunciation.delete", contract["pronunciation.delete"].request, (input) => services.pronunciation.delete(input.id))
   handle("voices.list", contract["voices.list"].request, (input) => services.voices.list(input))
   handle("voices.createFromReference", contract["voices.createFromReference"].request, (input) =>
     services.voices.createFromReference(input)
   )
+  handle("voices.createFromDesignPrompt", contract["voices.createFromDesignPrompt"].request, (input) =>
+    services.voices.createFromDesignPrompt(input)
+  )
+  handle("voices.selectReferenceAudio", contract["voices.selectReferenceAudio"].request, async () => {
+    const selectedPath = (
+      await dialog.showOpenDialog({
+        properties: ["openFile"],
+        filters: [
+          { name: "Audio", extensions: ["wav", "mp3", "m4a", "flac", "ogg"] }
+        ]
+      })
+    ).filePaths[0]
+    if (!selectedPath) {
+      return {}
+    }
+    const probe = await probeAudio(selectedPath)
+    return { path: selectedPath, durationMs: probe.durationMs, sampleRate: probe.sampleRate }
+  })
   handle("voices.preview", contract["voices.preview"].request, (input) => services.voices.preview(input))
   handle("voices.update", contract["voices.update"].request, (input) => services.voices.update(input))
   handle("voices.delete", contract["voices.delete"].request, (input) => services.voices.delete(input))
@@ -75,6 +134,9 @@ export function registerIpc(services: Services): void {
     services.voices.listCompatible(input.engineId)
   )
   handle("audiobook.getExport", contract["audiobook.getExport"].request, (input) => services.audiobook.getExport(input.bookId))
+  handle("audiobook.listLibraryStatus", contract["audiobook.listLibraryStatus"].request, () =>
+    services.audiobook.listLibraryStatus()
+  )
   handle("audiobook.enableAutoBuild", contract["audiobook.enableAutoBuild"].request, (input) =>
     services.audiobook.setAutoBuild(input.bookId, input.enabled)
   )

@@ -1,6 +1,6 @@
 # Roadmap
 
-Este roadmap descreve o estado atual do repositorio e o escopo planejado. As fases 0 e 1 estao implementadas no codigo atual; as fases seguintes continuam planejadas.
+Este roadmap descreve o estado atual do repositorio e o escopo planejado. As fases 0, 1, 2 e 3 estao implementadas no codigo atual; as fases seguintes continuam planejadas.
 
 ## Fase 0: Fundacao Tecnica - Implementada
 
@@ -24,7 +24,7 @@ Escopo preparado, mas sem execucao real ainda:
 
 - Contratos de `NarrationPlan`, adapters TTS, voice cloning, jobs TTS, diagnosticos de runtime e M4B.
 - Stubs de TTS, vozes, modelos e audiobook para validar fronteiras IPC e UI futura.
-- A inferencia real de LLM/TTS, processamento de voz e montagem M4B ficam nas fases 2 a 4.
+- A inferencia real de TTS neural, processamento de voz e montagem M4B ficam nas fases 4 e 5.
 
 ## Fase 1: MVP Leitor - Implementada
 
@@ -55,40 +55,73 @@ Limites conhecidos do MVP leitor:
 - O leitor usa extracao/renderizacao propria de HTML/texto; Readium/epub.js nao foram adotados no MVP atual.
 - Conteudo EPUB/HTML e convertido para texto no renderer atual; isolamento de iframe/sandbox para conteudo rico permanece como endurecimento futuro.
 
-## Fase 2: Audio Local Basico - Proxima
+## Fase 2: Audio Local Basico - Implementada
 
-- Persistir jobs de TTS no banco em vez de apenas em memoria.
-- Criar fila de jobs de TTS por capitulo.
-- Implementar adapter inicial para uma engine TTS usando o contrato canonico.
-- Segmentacao e normalizacao PT-BR basicas.
-- Player de audio por capitulo.
-- Cache de audio por capitulo.
-- Cancelamento, retomada e retry de jobs.
-- Tela de diagnostico de modelos baseada nos contratos existentes.
-- Processo TTS long-lived com warmup e timeout de desalocacao.
-- M4B parcial por livro usando capitulos ja gerados.
+Implementado:
 
-## Fase 3: Prosodia com LLM
+- Jobs de TTS persistidos no banco em `tts_jobs`.
+- Segmentos de TTS persistidos em `tts_segments`.
+- Fila serial de jobs por capitulo, retomando jobs interrompidos ao abrir o app.
+- Adapter inicial `dreamreader-local-wav` usando `NarrationPlan` canonico.
+- Segmentacao por bloco/frase e normalizacao PT-BR basica: abreviacoes, datas, horas, moeda e porcentagem.
+- Player de audio por capitulo na aba de audio do inspetor.
+- Cache de audio por capitulo em `audio-cache/`, com metadata em `assets` e `audiobook_chapters`.
+- Cancelamento, retry e reutilizacao de cache para jobs repetidos.
+- Diagnostico de modelos/runtimes exibindo o adapter local disponivel e engines futuras nao configuradas.
+- Ciclo long-lived do adapter local com warmup e timeout de desalocacao.
+- Manifesto parcial de audiobook por livro em `audiobook_exports` e `audiobook_chapters`; rebuild gera asset JSON manifest-only enquanto o encoder M4B real nao existe.
 
-- LLM local para gerar instrucoes estruturadas por segmento.
-- Schema Zod para `NarrationPlan` e prosodia ja existe; implementar geracao e cache.
-- Fallback neutro quando o LLM falhar.
-- UI para ligar/desligar "narracao expressiva".
-- Comparacao de qualidade entre audio neutro e audio com instrucoes.
-- Cache da analise de prosodia por segmento.
+Limites conhecidos da fase 2:
 
-## Fase 4: Multi-engine TTS e Vozes
+- O adapter atual gera WAV local deterministico para validar fila/cache/player; nao e uma engine neural Qwen/F5 nem sintetiza voz natural.
+- O export M4B ainda e manifest-only; encoder AAC/M4B real fica para empacotamento/engines futuras.
 
-- Adapter Qwen3-TTS 0.6B.
-- Adapter Qwen3-TTS 1.7B.
-- Adapter F5-TTS-pt-br.
-- Tabela de capacidades por adapter e runtime: MLX, PyTorch MPS, CPU fallback.
-- Seletor de motor por livro/capitulo.
-- Persistencia completa de perfis de voz, samples e bindings.
-- Gerenciador de vozes clonadas com consentimento, samples, previews e bindings por engine.
-- Dicionario de pronuncia global e por livro.
-- Exclusao e limpeza de audio/cache.
-- Reconstrucao M4B quando voz, motor ou capitulo mudarem.
+## Fase 3: Prosodia com LLM - Implementada
+
+Implementado:
+
+- `ProsodyService` no main process para aplicar prosodia neutra ou expressiva sobre `NarrationPlan`.
+- Analisador local estruturado `llm-prosody-local`, validado por Zod, para gerar instrucoes de emocao, ritmo, pitch, intensidade, pausas e papel de voz por segmento.
+- Cache persistente de analise em `prosody_analyses`, com chave por hash de segmento, analyzer, versao e prompt/schema.
+- Fallback neutro por segmento quando a analise falha, retorna JSON invalido ou nao cobre todos os segmentos.
+- UI para ligar/desligar narracao expressiva no painel de audio.
+- Comparacao entre audio neutro e audio expressivo quando ambos existem para o capitulo.
+- Metadados de job com modo de prosodia, cache hits, analises geradas e fallbacks.
+- Adapter WAV local usando a prosodia do plano para produzir diferenca audivel deterministica entre neutro e expressivo.
+
+Limites conhecidos da fase 3:
+
+- O analisador deterministico continua disponivel como fallback quando o runtime real nao esta instalado.
+- A qualidade expressiva ainda e conservadora e serve para validar fluxo, persistencia e comparacao na UI.
+
+## Fase 4: Multi-engine TTS e Vozes - Implementada
+
+- Catalogo persistente de modelos em `model_assets`.
+- Jobs persistentes de download em `model_download_jobs`, com progresso salvo e exibido no painel de audio.
+- UI de modelos locais com estado visual `na fila`, `baixando`, `disponivel` e `falhou`.
+- Download direto do `Qwen3-4B-Instruct-2507 GGUF Q4_K_M` recomendado para prosodia.
+- Provider real de prosodia GGUF via `node-llama-cpp`, ativado quando o arquivo local e o runtime opcional estao disponiveis.
+- Fallback automatico para o analisador local estruturado quando o Qwen GGUF ou `node-llama-cpp` nao estao instalados.
+- Registro dos motores `qwen3-tts-06b-mlx`, `qwen3-tts-17b-mlx`, `qwen3-tts-17b-base-mlx` e `f5-tts-pt-br` em `tts_engines`.
+- Registro de manifests de runtime em `runtime_manifests` para futuros sidecars Python/Swift/MLX/PyTorch.
+- Adapters sidecar `qwen3-tts-mlx` e `f5-tts-pt-br` por protocolo supervisionado pelo main process.
+- Sintese neural habilitada quando o modelo TTS esta instalado e o `runtime_manifest` aponta para um executavel local compativel.
+- Runtime Python local standalone em `.dreamreader-local/`, ignorada pelo git, para sidecars Qwen3-TTS/F5-TTS-pt-br e pesos de modelo por pasta local.
+- Validacao de caminhos de saida do sidecar dentro do diretorio do job antes de importar assets.
+- Seletor de motor, voz, qualidade e narracao expressiva no painel de audio por capitulo.
+- Persistencia de perfis de voz, amostras autorizadas e bindings por engine em `voice_profiles`, `voice_samples` e `voice_engine_bindings`.
+- Qwen3-TTS Base (`0.6B` e `1.7B Base`) exige voz clonada com audio de referencia e transcricao; presets por prompt ficam restritos ao `1.7B VoiceDesign`.
+- Gerenciador local de vozes clonadas no main process, com consentimento obrigatorio, copia da amostra para `voices/`, binding compativel e preview WAV local.
+- Dicionario de pronuncia global e por livro em `pronunciation_entries`, aplicado ao `NarrationPlan` e versionado na chave de cache.
+- Exclusao de audio/cache por capitulo, removendo jobs, segmentos, assets de audio e entrada de audiobook.
+- Rebuild/invalidacao de manifesto M4B quando audio de capitulo e regenerado, removido, ou muda voz/motor/prosodia/dicionario.
+- Falha de rebuild M4B nao invalida o audio de capitulo ja gerado.
+
+Limites conhecidos da fase 4:
+
+- Os sidecars Qwen3-TTS/F5-TTS sao executaveis locais configuraveis; o repositorio nao empacota Python/MLX/PyTorch nem pesos de modelo.
+- Downloads multi-arquivo de snapshots TTS continuam como instalacao por pasta local.
+- O export M4B ainda e manifest-only ate a fase de empacotamento/encoder.
 
 ## Fase 5: Empacotamento Alpha
 

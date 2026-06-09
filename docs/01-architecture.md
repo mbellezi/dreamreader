@@ -15,7 +15,7 @@
 
 ## Estado Atual Implementado
 
-As fases 0 e 1 estao implementadas com esta arquitetura:
+As fases 0, 1, 2 e 3 estao implementadas com esta arquitetura:
 
 - `src/main/index.ts` cria a janela Electron com `sandbox`, `contextIsolation` e `nodeIntegration: false`.
 - `src/preload/index.ts` expoe `window.dreamreader` via `contextBridge` e traduz respostas IPC tipadas para a UI.
@@ -25,7 +25,10 @@ As fases 0 e 1 estao implementadas com esta arquitetura:
 - `src/main/protocol/asset-protocol.ts` serve assets registrados via `dreamreader://asset/:assetId`.
 - `src/renderer/App.tsx` orquestra estado e navegacao; componentes ficam em `src/renderer/components/`, tipos de UI em `src/renderer/app/` e helpers puros em `src/renderer/lib/`.
 - `src/renderer/lib/dreamreader.ts` atua como cliente usado pelo renderer; quando a bridge Electron nao existe, usa fallback local com dados de exemplo em `localStorage`.
-- Servicos de TTS, vozes, modelos e audiobook existem como stubs/contratos para fases futuras; eles nao executam inferencia local, processamento real de voz nem montagem M4B ainda.
+- `src/main/services/tts-service.ts` implementa fila TTS persistente por capitulo, segmentacao/normalizacao basica, adapter local WAV e cache de audio por capitulo.
+- `src/main/services/prosody-service.ts` aplica prosodia neutra ou expressiva sobre `NarrationPlan`, valida a resposta estruturada por Zod e persiste cache por segmento em `prosody_analyses`.
+- `src/main/services/audiobook-service.ts` persiste capitulos prontos, manifestos parciais e build jobs de audiobook. O rebuild atual gera manifesto JSON manifest-only enquanto o encoder M4B real nao existe.
+- Servicos de vozes e modelos ainda mantem parte do comportamento como stub/diagnostico para fases futuras; runtime GGUF/MLX real de prosodia, engines neurais, voice cloning e montagem M4B real ainda nao executam inferencia/processamento externo.
 
 ## Limites Entre Processos
 
@@ -61,8 +64,8 @@ Responsavel por:
 - Importacao, extracao e armazenamento de livros.
 - Protocolo local seguro para recursos de livros.
 - Persistencia de posicao, anotacoes, bookmarks e settings.
-- Gerenciamento inicial/stub de modelos locais, jobs TTS, perfis de voz e export M4B.
-- Futuramente: fila persistente de jobs, supervisao de workers Node e subprocessos Python, execucao real de runtimes LLM/TTS, governador de recursos, voice cloning completo e montagem incremental de audiobooks M4B.
+- Gerenciamento inicial/stub de modelos locais, jobs TTS, prosodia estruturada, perfis de voz e export M4B.
+- Futuramente: supervisao de workers Node e subprocessos Python, execucao real de runtimes LLM/TTS neurais, governador de recursos, voice cloning completo e montagem incremental de audiobooks M4B reais.
 
 ### Workers
 
@@ -255,6 +258,11 @@ Modelos candidatos iniciais:
 
 O output do LLM deve ser validado e normalizado. Se falhar, usar prosodia neutra.
 
+Estado atual:
+
+- A fase 3 implementa o contrato com um analisador local estruturado `llm-prosody-local`, cache persistente e fallback neutro.
+- A integracao com modelo GGUF via `node-llama-cpp` ou MLX permanece planejada para a etapa de runtime/modelos.
+
 ## Empacotamento
 
 Pontos de atencao:
@@ -262,6 +270,9 @@ Pontos de atencao:
 - `node-llama-cpp` nao deve ser bundleado pelo Vite.
 - Binarios nativos precisam manter estrutura de arquivos.
 - Modelos devem ficar fora do ASAR.
+- Metadados de audio devem ser lidos por biblioteca Node (`music-metadata`), sem depender de `ffprobe` no `PATH`.
+- Conversao/reamostragem de audio usa `ffmpeg-static`; ao gerar bundles Electron, empacotar esse binario e mante-lo fora do ASAR (`asarUnpack: node_modules/ffmpeg-static/**`) para que o main process consiga executa-lo.
+- Antes de distribuicao publica/comercial, revisar o impacto de licenca do binario `ffmpeg-static` (`GPL-3.0-or-later`) ou substituir por uma build/licenca compativel.
 - Python/PyTorch/TTS/MLX provavelmente exigem empacotamento por plataforma.
 - MLX e modelos MLX devem ser instalados em `userData/models` ou em pasta escolhida pelo usuario, nunca dentro do ASAR.
 - O MVP pode exigir instalacao manual de modelos, com um gerenciador local simples que aponta para pastas ja baixadas.

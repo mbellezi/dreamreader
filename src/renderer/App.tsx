@@ -1,7 +1,10 @@
-import { BookOpen, Library, Loader2, Settings } from "lucide-react"
+import { BookOpen, Headphones, Library, Loader2, Settings } from "lucide-react"
 import { useCallback, useEffect, useRef, useState, type ReactElement } from "react"
 import { NavButton } from "@renderer/components/common/Controls"
+import { StudioPane } from "@renderer/components/audio/StudioPane"
+import { BookStudioPane } from "@renderer/components/audio/BookStudioPane"
 import { LibraryPane } from "@renderer/components/library/LibraryPane"
+import { EnginesPane } from "@renderer/components/models/EnginesPane"
 import { InspectorPane } from "@renderer/components/reader/InspectorPane"
 import { ReaderPane } from "@renderer/components/reader/ReaderPane"
 import { SettingsDialog } from "@renderer/components/settings/SettingsDialog"
@@ -24,11 +27,22 @@ import type {
   Annotation,
   AnnotationKind,
   AppSettings,
+  AudioSettings,
   BookDetails,
   BookSummary,
   HighlightColor,
   ReaderLocator,
-  ReaderPreferences
+  ReaderPreferences,
+  RuntimeDiagnostic,
+  RuntimeModel,
+  RuntimeOperationJob,
+  RuntimeSidecar,
+  TtsJob,
+  VoiceProfile,
+  AudiobookExport,
+  LibraryAudioStatus,
+  HuggingFaceTokenStatus,
+  ModelDownloadJob
 } from "@renderer/types"
 
 export function App(): ReactElement {
@@ -36,6 +50,19 @@ export function App(): ReactElement {
   const [books, setBooks] = useState<BookSummary[]>([])
   const [selectedBook, setSelectedBook] = useState<BookDetails | null>(null)
   const [annotations, setAnnotations] = useState<Annotation[]>([])
+  const [audioJobs, setAudioJobs] = useState<TtsJob[]>([])
+  const [audiobookExport, setAudiobookExport] = useState<AudiobookExport | null>(null)
+  const [audioLoading, setAudioLoading] = useState(false)
+  const [modelManagementLoading, setModelManagementLoading] = useState(false)
+  const [libraryAudioStatus, setLibraryAudioStatus] = useState<LibraryAudioStatus[]>([])
+  const [audioBook, setAudioBook] = useState<BookDetails | null>(null)
+  const [diagnostics, setDiagnostics] = useState<RuntimeDiagnostic[]>([])
+  const [runtimeModels, setRuntimeModels] = useState<RuntimeModel[]>([])
+  const [modelDownloadJobs, setModelDownloadJobs] = useState<ModelDownloadJob[]>([])
+  const [runtimeOperations, setRuntimeOperations] = useState<RuntimeOperationJob[]>([])
+  const [runtimeSidecars, setRuntimeSidecars] = useState<RuntimeSidecar[]>([])
+  const [huggingFaceTokenStatus, setHuggingFaceTokenStatus] = useState<HuggingFaceTokenStatus>({ configured: false })
+  const [voices, setVoices] = useState<VoiceProfile[]>([])
   const [activeView, setActiveView] = useState<AppView>("library")
   const [libraryMode, setLibraryMode] = useState<LibraryMode>("grid")
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("summary")
@@ -54,6 +81,7 @@ export function App(): ReactElement {
   const stableChapterIndexRef = useRef<number | null>(null)
   const pendingSettingsSignatureRef = useRef("")
   const settingsSaveTimerRef = useRef<number | null>(null)
+  const modelManagementRefreshIdRef = useRef(0)
 
   const locale = settings?.locale ?? "pt-BR"
   const t = useCallback((key: string, values?: Record<string, string | number>) => translate(locale, key, values), [locale])
@@ -72,6 +100,67 @@ export function App(): ReactElement {
     },
     [search]
   )
+
+  const refreshAudioState = useCallback(async (bookId: string) => {
+    const [nextJobs, nextExport, nextModels, nextVoices] = await Promise.all([
+      dreamreaderClient.listTtsJobs({ bookId }),
+      dreamreaderClient.getAudiobookExport(bookId),
+      dreamreaderClient.listModels(),
+      dreamreaderClient.listCompatibleVoices()
+    ])
+    setAudioJobs(nextJobs)
+    setAudiobookExport(nextExport)
+    setRuntimeModels(nextModels)
+    setVoices(nextVoices)
+  }, [])
+
+  const refreshAudioDashboard = useCallback(async () => {
+    const [nextStatus, nextJobs, nextModels, nextVoices] = await Promise.all([
+      dreamreaderClient.listLibraryAudioStatus(),
+      dreamreaderClient.listTtsJobs(),
+      dreamreaderClient.listModels(),
+      dreamreaderClient.listCompatibleVoices()
+    ])
+    setLibraryAudioStatus(nextStatus)
+    setAudioJobs(nextJobs)
+    setRuntimeModels(nextModels)
+    setVoices(nextVoices)
+  }, [])
+
+  const refreshActiveAudioView = useCallback(async () => {
+    if (audioBook) {
+      await refreshAudioState(audioBook.id)
+    } else {
+      await refreshAudioDashboard()
+    }
+  }, [audioBook, refreshAudioDashboard, refreshAudioState])
+
+  const refreshModelManagement = useCallback(async () => {
+    const refreshId = modelManagementRefreshIdRef.current + 1
+    modelManagementRefreshIdRef.current = refreshId
+    setModelManagementLoading(true)
+
+    try {
+      const [nextDiagnostics, nextModels, nextDownloads, nextOperations, nextSidecars, nextHuggingFaceTokenStatus] = await Promise.all([
+        dreamreaderClient.listModelDiagnostics(),
+        dreamreaderClient.listModels(),
+        dreamreaderClient.listModelDownloadJobs(),
+        dreamreaderClient.listRuntimeOperations(),
+        dreamreaderClient.listSidecars(),
+        dreamreaderClient.getHuggingFaceTokenStatus()
+      ])
+      setDiagnostics(nextDiagnostics)
+      setRuntimeModels(nextModels)
+      setModelDownloadJobs(nextDownloads)
+      setRuntimeOperations(nextOperations)
+      setRuntimeSidecars(nextSidecars)
+      setHuggingFaceTokenStatus(nextHuggingFaceTokenStatus)
+    } finally {
+      if (modelManagementRefreshIdRef.current === refreshId) {
+        setModelManagementLoading(false)
+      }
+    }
+  }, [])
 
   const loadInitialData = useCallback(async () => {
     setLoading(true)
@@ -138,6 +227,22 @@ export function App(): ReactElement {
     setInspectorTab("summary")
     setAnnotations(book ? await dreamreaderClient.listAnnotations(book.id) : [])
   }
+
+  useEffect(() => {
+    if (activeView !== "audio") {
+      return
+    }
+
+    const hasActiveJob = audioJobs.some((job) => !["completed", "failed", "cancelled", "paused"].includes(job.status))
+    if (!hasActiveJob) {
+      return
+    }
+
+    const interval = window.setInterval(() => {
+      void refreshActiveAudioView()
+    }, 800)
+    return () => window.clearInterval(interval)
+  }, [activeView, audioJobs, refreshActiveAudioView])
 
   const importBooks = async () => {
     setImporting(true)
@@ -269,6 +374,309 @@ export function App(): ReactElement {
     setExportContent(await dreamreaderClient.exportNotes(selectedBook.id, "markdown"))
   }
 
+  const openAudioDashboard = () => {
+    setActiveView("audio")
+    setAudioBook(null)
+    void refreshAudioDashboard()
+  }
+
+  const openBookAudio = async (bookId: string) => {
+    setActiveView("audio")
+    const book = await dreamreaderClient.getBook(bookId)
+    setAudioBook(book)
+    if (book) {
+      await refreshAudioState(book.id)
+    }
+  }
+
+  const closeBookAudio = () => {
+    setAudioBook(null)
+    void refreshAudioDashboard()
+  }
+
+  const generateChapterAudio = async (input: {
+    chapterHref: string
+    engineId: string
+    generationLanguage?: string
+    modelSettings?: Record<string, unknown>
+    quality: "draft" | "standard" | "high"
+    seed?: number
+    seedFixed?: boolean
+    useExpressiveNarration: boolean
+    voiceProfileId?: string
+    paragraphLimit?: number
+  }) => {
+    if (!audioBook) {
+      return
+    }
+
+    setAudioLoading(true)
+    try {
+      await dreamreaderClient.enqueueChapterAudio({
+        bookId: audioBook.id,
+        ...input
+      })
+      await refreshAudioState(audioBook.id)
+    } finally {
+      setAudioLoading(false)
+    }
+  }
+
+  const generateChapters = async (input: {
+    chapterHrefs?: string[]
+    engineId: string
+    generationLanguage?: string
+    modelSettings?: Record<string, unknown>
+    quality: "draft" | "standard" | "high"
+    seed?: number
+    seedFixed?: boolean
+    useExpressiveNarration: boolean
+    voiceProfileId?: string
+  }) => {
+    if (!audioBook) {
+      return
+    }
+
+    setAudioLoading(true)
+    try {
+      await dreamreaderClient.enqueueChaptersAudio({
+        bookId: audioBook.id,
+        ...input
+      })
+      await refreshAudioState(audioBook.id)
+    } finally {
+      setAudioLoading(false)
+    }
+  }
+
+  const cancelTtsJob = async (jobId: string) => {
+    await dreamreaderClient.cancelTtsJob(jobId)
+    await refreshActiveAudioView()
+  }
+
+  const pauseTtsJob = async (jobId: string) => {
+    await dreamreaderClient.pauseTtsJob(jobId)
+    await refreshActiveAudioView()
+  }
+
+  const resumeTtsJob = async (jobId: string) => {
+    await dreamreaderClient.resumeTtsJob(jobId)
+    await refreshActiveAudioView()
+  }
+
+  const listTtsSegments = (jobId: string) => dreamreaderClient.listTtsSegments(jobId)
+
+  const retryTtsJob = async (jobId: string) => {
+    await dreamreaderClient.retryTtsJob(jobId)
+    await refreshActiveAudioView()
+  }
+
+  const clearAllTerminalTtsJobs = async () => {
+    const terminalBookIds = [...new Set(
+      audioJobs.filter((job) => ["completed", "failed", "cancelled"].includes(job.status)).map((job) => job.bookId)
+    )]
+    for (const bookId of terminalBookIds) {
+      await dreamreaderClient.clearTerminalTtsJobs(bookId)
+    }
+    await refreshActiveAudioView()
+  }
+
+  const toggleAudiobookAutoBuild = async (enabled: boolean) => {
+    if (!audioBook) {
+      return
+    }
+
+    setAudioLoading(true)
+    try {
+      setAudiobookExport(await dreamreaderClient.setAudiobookAutoBuild(audioBook.id, enabled))
+      await refreshAudioState(audioBook.id)
+    } finally {
+      setAudioLoading(false)
+    }
+  }
+
+  const rebuildAudiobook = async () => {
+    if (!audioBook) {
+      return
+    }
+
+    setAudioLoading(true)
+    try {
+      setAudiobookExport(await dreamreaderClient.rebuildAudiobook(audioBook.id))
+      await refreshAudioState(audioBook.id)
+    } finally {
+      setAudioLoading(false)
+    }
+  }
+
+  const clearChapterAudio = async (chapterHref: string) => {
+    if (!audioBook) {
+      return
+    }
+
+    setAudioLoading(true)
+    try {
+      await dreamreaderClient.clearChapterAudio({
+        bookId: audioBook.id,
+        chapterHref
+      })
+      await refreshAudioState(audioBook.id)
+    } finally {
+      setAudioLoading(false)
+    }
+  }
+
+  const clearTerminalTtsJobs = async () => {
+    if (!audioBook) {
+      return
+    }
+
+    setAudioLoading(true)
+    try {
+      await dreamreaderClient.clearTerminalTtsJobs(audioBook.id)
+      await refreshAudioState(audioBook.id)
+    } finally {
+      setAudioLoading(false)
+    }
+  }
+
+  const selectVoiceReferenceAudio = async () => dreamreaderClient.selectVoiceReferenceAudio()
+
+  const createVoiceFromReference = async (input: {
+    consentConfirmed: true
+    consentNote: string
+    language: string
+    name: string
+    referenceAudioPath: string
+    transcript?: string
+  }) => {
+    setAudioLoading(true)
+    try {
+      const voice = await dreamreaderClient.createVoiceFromReference(input)
+      await refreshActiveAudioView()
+      return voice
+    } finally {
+      setAudioLoading(false)
+    }
+  }
+
+  const createVoiceFromDesignPrompt = async (input: {
+    engineId: string
+    language: string
+    name: string
+    prompt: string
+  }) => {
+    setAudioLoading(true)
+    try {
+      const voice = await dreamreaderClient.createVoiceFromDesignPrompt(input)
+      await refreshActiveAudioView()
+      return voice
+    } finally {
+      setAudioLoading(false)
+    }
+  }
+
+  const updateVoice = async (input: { voiceProfileId: string; name: string }) => {
+    setAudioLoading(true)
+    try {
+      await dreamreaderClient.updateVoice(input)
+      await refreshActiveAudioView()
+    } finally {
+      setAudioLoading(false)
+    }
+  }
+
+  const deleteVoice = async (voiceProfileId: string) => {
+    setAudioLoading(true)
+    try {
+      await dreamreaderClient.deleteVoice(voiceProfileId)
+      await refreshActiveAudioView()
+    } finally {
+      setAudioLoading(false)
+    }
+  }
+
+  const previewVoice = async (voiceProfileId: string, engineId: string) => dreamreaderClient.previewVoice(voiceProfileId, engineId)
+
+  const listPronunciation = (bookId?: string) => dreamreaderClient.listPronunciationEntries(bookId)
+
+  const createPronunciation = async (input: { bookId?: string; pattern: string; replacement: string; scope: "global" | "book" }) => {
+    if (!input.pattern.trim() || !input.replacement.trim()) {
+      return
+    }
+    await dreamreaderClient.createPronunciationEntry({
+      bookId: input.scope === "book" ? input.bookId : undefined,
+      matchKind: "word",
+      pattern: input.pattern.trim(),
+      replacement: input.replacement.trim(),
+      scope: input.scope
+    })
+  }
+
+  const deletePronunciation = (id: string) => dreamreaderClient.deletePronunciationEntry(id)
+
+  const downloadModel = async (modelId: string) => {
+    await dreamreaderClient.downloadModel(modelId)
+    await refreshModelManagement()
+    if (audioBook) {
+      await refreshAudioState(audioBook.id)
+    }
+  }
+
+  const installRecommendedModel = async (modelId: string) => {
+    await dreamreaderClient.installRecommendedModel(modelId)
+    await refreshModelManagement()
+    if (audioBook) {
+      await refreshAudioState(audioBook.id)
+    }
+  }
+
+  const installModelFromPath = async () => {
+    await dreamreaderClient.installModelFromPath()
+    await refreshModelManagement()
+    if (audioBook) {
+      await refreshAudioState(audioBook.id)
+    }
+  }
+
+  const deleteModel = async (modelId: string) => {
+    await dreamreaderClient.deleteModel(modelId)
+    await refreshModelManagement()
+    if (audioBook) {
+      await refreshAudioState(audioBook.id)
+    }
+  }
+
+  const installSidecar = async (sidecarId: string) => {
+    await dreamreaderClient.installSidecar(sidecarId)
+    await refreshModelManagement()
+  }
+
+  const uninstallSidecar = async (sidecarId: string) => {
+    await dreamreaderClient.uninstallSidecar(sidecarId)
+    await refreshModelManagement()
+  }
+
+  const installEngine = async (modelId: string) => {
+    const model = runtimeModels.find((m) => m.id === modelId)
+    const sidecar = runtimeSidecars.find((s) => (model?.engineId ? s.modelEngineIds.includes(model.engineId) : false))
+    if (sidecar && sidecar.status !== "available") {
+      await dreamreaderClient.installSidecar(sidecar.id)
+    }
+    if (model) {
+      if (model.metadata.huggingFaceRepo && model.metadata.localFolder) {
+        await dreamreaderClient.installRecommendedModel(modelId)
+      } else if (model.canDownload) {
+        await dreamreaderClient.downloadModel(modelId)
+      }
+    }
+    await refreshModelManagement()
+  }
+
+  const saveHuggingFaceToken = async (token: string) => {
+    setHuggingFaceTokenStatus(await dreamreaderClient.updateHuggingFaceToken(token))
+  }
+
   const updateSettings = (nextSettings: AppSettings) => {
     setSettings(nextSettings)
     setSettingsSaved(false)
@@ -306,6 +714,20 @@ export function App(): ReactElement {
 
     updateSettings(nextSettings)
     scheduleSettingsSave(nextSettings, key === "readingFlow" || key === "theme" ? 0 : 450)
+  }
+
+  const updateAudioSettings = (audio: AudioSettings, delay = 450) => {
+    if (!settings) {
+      return
+    }
+
+    const nextSettings = {
+      ...settings,
+      audio
+    }
+
+    updateSettings(nextSettings)
+    scheduleSettingsSave(nextSettings, delay)
   }
 
   const saveSettings = async () => {
@@ -379,6 +801,7 @@ export function App(): ReactElement {
             <nav className="flex items-center gap-1 rounded-md border bg-card p-1" aria-label={t("common.actions")}>
               <NavButton icon={Library} label={t("nav.library")} active={activeView === "library"} onClick={() => setActiveView("library")} />
               <NavButton icon={BookOpen} label={t("nav.reader")} active={activeView === "reader"} onClick={() => setActiveView("reader")} />
+              <NavButton icon={Headphones} label={t("nav.audio")} active={activeView === "audio"} onClick={openAudioDashboard} />
               <NavButton icon={Settings} label={t("nav.settings")} active={activeView === "settings"} onClick={() => setActiveView("settings")} />
             </nav>
           </header>
@@ -401,6 +824,83 @@ export function App(): ReactElement {
               onSearchChange={updateSearch}
               onSelectBook={selectBook}
             />
+          </div>
+        ) : activeView === "audio" ? (
+          <div className="min-h-0 flex-1 overflow-hidden">
+            {audioBook ? (
+              <BookStudioPane
+                audiobook={audiobookExport}
+                book={audioBook}
+                jobs={audioJobs}
+                loading={audioLoading}
+                audioSettings={settings.audio}
+                models={runtimeModels}
+                t={t}
+                voices={voices}
+                onBack={closeBookAudio}
+                onCancelJob={cancelTtsJob}
+                onClearChapterAudio={clearChapterAudio}
+                onClearTerminalJobs={clearTerminalTtsJobs}
+                onGenerateChapter={generateChapterAudio}
+                onGenerateChapters={generateChapters}
+                onListSegments={listTtsSegments}
+                onPauseJob={pauseTtsJob}
+                onRebuildAudiobook={rebuildAudiobook}
+                onResumeJob={resumeTtsJob}
+                onRetryJob={retryTtsJob}
+                onToggleAutoBuild={toggleAudiobookAutoBuild}
+                onUpdateAudioSettings={updateAudioSettings}
+              />
+            ) : (
+              <StudioPane
+                audioStatus={libraryAudioStatus}
+                audioSettings={settings.audio}
+                books={books}
+                enginesContent={
+                  <EnginesPane
+                    diagnostics={diagnostics}
+                    downloadJobs={modelDownloadJobs}
+                    huggingFaceTokenStatus={huggingFaceTokenStatus}
+                    loading={modelManagementLoading}
+                    models={runtimeModels}
+                    operations={runtimeOperations}
+                    sidecars={runtimeSidecars}
+                    voices={voices}
+                    t={t}
+                    onDeleteModel={deleteModel}
+                    onDownloadModel={downloadModel}
+                    onInstallModel={installRecommendedModel}
+                    onInstallModelFromPath={installModelFromPath}
+                    onInstallSidecar={installSidecar}
+                    onInstallEngine={installEngine}
+                    onRefresh={refreshModelManagement}
+                    onSaveHuggingFaceToken={saveHuggingFaceToken}
+                    onUninstallSidecar={uninstallSidecar}
+                  />
+                }
+                jobs={audioJobs}
+                loading={audioLoading}
+                models={runtimeModels}
+                voices={voices}
+                t={t}
+                onCancelJob={cancelTtsJob}
+                onClearFinished={clearAllTerminalTtsJobs}
+                onCreatePronunciation={createPronunciation}
+                onCreateVoiceFromDesignPrompt={createVoiceFromDesignPrompt}
+                onCreateVoiceFromReference={createVoiceFromReference}
+                onDeletePronunciation={deletePronunciation}
+                onDeleteVoice={deleteVoice}
+                onListPronunciation={listPronunciation}
+                onOpenBook={openBookAudio}
+                onPauseJob={pauseTtsJob}
+                onPreviewVoice={previewVoice}
+                onResumeJob={resumeTtsJob}
+                onRetryJob={retryTtsJob}
+                onSelectVoiceReferenceAudio={selectVoiceReferenceAudio}
+                onUpdateAudioSettings={updateAudioSettings}
+                onUpdateVoice={updateVoice}
+              />
+            )}
           </div>
         ) : (
           <div className={cn("grid min-h-0 flex-1 grid-cols-1 overflow-hidden", !cleanReading && "lg:grid-cols-[minmax(0,1fr)_340px]")}>

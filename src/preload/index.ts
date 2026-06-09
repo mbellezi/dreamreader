@@ -146,34 +146,63 @@ const api = {
     saveSettings: async (settings: {
       locale: string
       appearance: string
+      audio?: Record<string, unknown>
       reader: Record<string, unknown>
     }) => toRendererSettings(await invoke("settings.update", rendererSettingsToCanonical(settings)))
   },
   models: {
     list: () => invoke("models.list"),
     diagnostics: () => invoke("models.diagnostics"),
-    installFromPath: (modelPath: string) => invoke("models.installFromPath", { path: modelPath })
+    downloads: () => invoke("models.downloads"),
+    operations: () => invoke("models.operations"),
+    huggingFaceToken: () => invoke("models.huggingFaceToken"),
+    updateHuggingFaceToken: (token: string) => invoke("models.updateHuggingFaceToken", { token }),
+    installFromPath: (modelPath?: string) => invoke("models.installFromPath", modelPath ? { path: modelPath } : {}),
+    installRecommended: (modelId: string) => invoke("models.installRecommended", { modelId }),
+    delete: (modelId: string, deleteFiles = true) => invoke("models.delete", { modelId, deleteFiles }),
+    download: (modelId: string) => invoke("models.download", { modelId })
+  },
+  sidecars: {
+    list: () => invoke("sidecars.list"),
+    install: (sidecarId: string) => invoke("sidecars.install", { sidecarId }),
+    uninstall: (sidecarId: string) => invoke("sidecars.uninstall", { sidecarId })
   },
   tts: {
     enqueueChapter: (input: Record<string, unknown>) => invoke("tts.enqueueChapter", input),
+    enqueueChapters: (input: Record<string, unknown>) => invoke("tts.enqueueChapters", input),
     cancelJob: (id: string) => invoke("tts.cancelJob", { id }),
+    pauseJob: (id: string) => invoke("tts.pauseJob", { id }),
+    resumeJob: (id: string) => invoke("tts.resumeJob", { id }),
+    retryJob: (id: string) => invoke("tts.retryJob", { id }),
     getJob: (id: string) => invoke("tts.getJob", { id }),
-    listJobs: (filter?: { bookId?: string; engineId?: string }) => invoke("tts.listJobs", filter ?? {})
+    listJobs: (filter?: { bookId?: string; engineId?: string }) => invoke("tts.listJobs", filter ?? {}),
+    listSegments: (jobId: string) => invoke("tts.listSegments", { jobId }),
+    clearChapterAudio: (input: { bookId: string; chapterHref: string }) => invoke("tts.clearChapterAudio", input),
+    clearTerminalJobs: (input: { bookId: string }) => invoke("tts.clearTerminalJobs", input)
   },
   voices: {
     list: () => invoke("voices.list"),
     listCompatible: (engineId?: string) => invoke("voices.listCompatible", { engineId }),
     createFromReference: (input: Record<string, unknown>) => invoke("voices.createFromReference", input),
+    createFromDesignPrompt: (input: Record<string, unknown>) => invoke("voices.createFromDesignPrompt", input),
+    selectReferenceAudio: () => invoke("voices.selectReferenceAudio", {}),
     preview: (voiceProfileId: string, engineId: string) => invoke("voices.preview", { voiceProfileId, engineId }),
     update: (input: Record<string, unknown>) => invoke("voices.update", input),
     delete: (voiceProfileId: string) => invoke("voices.delete", { voiceProfileId })
   },
   audiobook: {
     getExport: (bookId: string) => invoke("audiobook.getExport", { bookId }),
+    listLibraryStatus: () => invoke("audiobook.listLibraryStatus"),
     enableAutoBuild: (bookId: string, enabled: boolean) =>
       invoke("audiobook.enableAutoBuild", { bookId, enabled }),
     rebuild: (bookId: string) => invoke("audiobook.rebuild", { bookId }),
     reveal: (bookId: string) => invoke("audiobook.reveal", { bookId })
+  },
+  pronunciation: {
+    list: (input?: { bookId?: string; includeGlobal?: boolean }) => invoke("pronunciation.list", input ?? {}),
+    create: (input: Record<string, unknown>) => invoke("pronunciation.create", input),
+    update: (input: Record<string, unknown>) => invoke("pronunciation.update", input),
+    delete: (id: string) => invoke("pronunciation.delete", { id })
   }
 }
 
@@ -231,6 +260,7 @@ function toRendererAnnotation(input: unknown, fallbackKind = "highlight", fallba
 function toRendererSettings(input: unknown) {
   const settings = (input ?? {}) as Record<string, unknown>
   const ui = (settings.ui ?? {}) as Record<string, unknown>
+  const audio = (settings.audio ?? {}) as Record<string, unknown>
   const reader = (settings.reader ?? {}) as Record<string, unknown>
   return {
     locale: String(ui.locale ?? "pt-BR"),
@@ -247,11 +277,21 @@ function toRendererSettings(input: unknown) {
       readingFlow: String(reader.readingFlow ?? "continuous"),
       textAlign: String(reader.textAlign ?? "justify"),
       hyphenation: Boolean(reader.hyphenation ?? true)
+    },
+    audio: {
+      defaultEngineId: optionalString(audio.defaultEngineId),
+      defaultVoiceProfileId: optionalString(audio.defaultVoiceProfileId),
+      expressiveNarrationEnabled: Boolean(audio.expressiveNarrationEnabled),
+      autoBuildM4b: Boolean(audio.autoBuildM4b),
+      generationLanguageByEngineId: stringRecord(audio.generationLanguageByEngineId),
+      modelSettingsByEngineId: recordObject(audio.modelSettingsByEngineId),
+      seed: clampSeed(audio.seed),
+      seedFixed: Boolean(audio.seedFixed)
     }
   }
 }
 
-function rendererSettingsToCanonical(input: { locale: string; appearance: string; reader: Record<string, unknown> }) {
+function rendererSettingsToCanonical(input: { locale: string; appearance: string; audio?: Record<string, unknown>; reader: Record<string, unknown> }) {
   return {
     ui: {
       locale: input.locale,
@@ -269,6 +309,16 @@ function rendererSettingsToCanonical(input: { locale: string; appearance: string
       readingFlow: input.reader.readingFlow,
       textAlign: input.reader.textAlign,
       hyphenation: input.reader.hyphenation
+    },
+    audio: {
+      defaultEngineId: optionalString(input.audio?.defaultEngineId),
+      defaultVoiceProfileId: optionalString(input.audio?.defaultVoiceProfileId),
+      expressiveNarrationEnabled: Boolean(input.audio?.expressiveNarrationEnabled),
+      autoBuildM4b: Boolean(input.audio?.autoBuildM4b),
+      generationLanguageByEngineId: stringRecord(input.audio?.generationLanguageByEngineId),
+      modelSettingsByEngineId: recordObject(input.audio?.modelSettingsByEngineId),
+      seed: clampSeed(input.audio?.seed),
+      seedFixed: Boolean(input.audio?.seedFixed)
     }
   }
 }
@@ -334,6 +384,36 @@ function optionalString(value: unknown): string | undefined {
 function optionalNumber(value: unknown): number | undefined {
   const numberValue = Number(value)
   return Number.isFinite(numberValue) ? numberValue : undefined
+}
+
+function clampSeed(value: unknown): number {
+  const seed = Math.floor(Number(value))
+  if (!Number.isFinite(seed)) {
+    return 1801202606
+  }
+  return Math.min(Math.max(seed, 0), 4_294_967_295)
+}
+
+function recordObject(value: unknown): Record<string, Record<string, unknown>> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {}
+  }
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => item && typeof item === "object" && !Array.isArray(item))
+      .map(([key, item]) => [key, item as Record<string, unknown>])
+  )
+}
+
+function stringRecord(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {}
+  }
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => typeof item === "string" && item.length > 0)
+      .map(([key, item]) => [key, String(item)])
+  )
 }
 
 function compact<T extends Record<string, unknown>>(value: T): Partial<T> {

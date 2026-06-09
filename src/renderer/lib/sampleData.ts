@@ -15,6 +15,15 @@ export const defaultSettings: AppSettings = {
     readingFlow: "continuous",
     textAlign: "justify",
     hyphenation: true
+  },
+  audio: {
+    defaultQuality: "standard",
+    expressiveNarrationEnabled: false,
+    autoBuildM4b: false,
+    generationLanguageByEngineId: {},
+    modelSettingsByEngineId: {},
+    seed: 1801202606,
+    seedFixed: false
   }
 }
 

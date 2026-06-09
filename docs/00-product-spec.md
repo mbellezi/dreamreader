@@ -28,7 +28,7 @@ O produto deve funcionar bem como leitor tradicional antes de tentar ser uma fer
 
 ## Estado Atual
 
-As fases 0 e 1 estao implementadas. O produto atual e um MVP leitor desktop local-first:
+As fases 0, 1, 2 e 3 estao implementadas. O produto atual e um MVP leitor desktop local-first com audio local basico e prosodia expressiva estruturada:
 
 - App Electron com preload seguro, IPC validado por Zod, PGlite/Drizzle e biblioteca interna em `userData`.
 - Importacao de EPUB, TXT, Markdown e HTML por seletor nativo.
@@ -39,12 +39,13 @@ As fases 0 e 1 estao implementadas. O produto atual e um MVP leitor desktop loca
 - Exportacao de anotacoes em Markdown/JSON no main process; a UI atual expoe Markdown.
 - Configuracoes iniciais de idioma, aparencia e preferencias do leitor.
 - Fallback renderer com dados de exemplo quando o app roda sem bridge Electron.
+- Fila TTS persistente por capitulo, segmentacao/normalizacao PT-BR basica, adapter local WAV, cache de audio, player por capitulo e manifesto parcial de audiobook.
+- Narracao expressiva opcional com analisador local estruturado, cache de prosodia por segmento, fallback neutro validado por Zod e comparacao entre audio neutro e expressivo na UI.
 
 Ainda planejado:
 
 - Busca no texto completo, filtros avancados, tags/colecoes completas e monitoramento de pastas.
-- Player de audio, fila persistente de TTS, normalizacao PT-BR para audio, cache de audio e retomada de jobs.
-- Execucao real de LLM/TTS local, adapters de engines, voice cloning persistente e montagem M4B.
+- Runtime GGUF/MLX real para prosodia, TTS neural local, adapters Qwen/F5, voice cloning persistente e encoder M4B real.
 
 ## Nao-objetivos iniciais
 
@@ -109,7 +110,7 @@ Cada motor deve ser exposto por um adapter com capacidades declaradas. Exemplo: 
 
 - Usuario escolhe livro, capitulo, motor, voz/perfil e qualidade.
 - O app quebra o capitulo em segmentos estaveis.
-- Um LLM local gera instrucoes estruturadas para cada segmento.
+- Um analisador local ou LLM local gera instrucoes estruturadas para cada segmento.
 - O adapter do motor traduz essas instrucoes para o formato aceito pelo modelo.
 - O TTS gera arquivos por segmento e depois um arquivo de capitulo.
 - Ao concluir um capitulo, o app atualiza o M4B parcial do livro em segundo plano.

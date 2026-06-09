@@ -97,10 +97,44 @@ export type ReaderPreferences = {
   hyphenation: boolean
 }
 
+export type TtsModelSettings = {
+  cfgStrength?: number
+  crossFadeDuration?: number
+  doSample?: boolean
+  maxNewTokens?: number
+  nfeStep?: number
+  nonStreamingMode?: boolean
+  removeSilence?: boolean
+  repetitionPenalty?: number
+  speed?: number
+  subtalkerDoSample?: boolean
+  subtalkerTemperature?: number
+  subtalkerTopK?: number
+  subtalkerTopP?: number
+  swaySamplingCoef?: number
+  targetRms?: number
+  temperature?: number
+  topK?: number
+  topP?: number
+}
+
+export type AudioSettings = {
+  defaultEngineId?: string
+  defaultVoiceProfileId?: string
+  defaultQuality: "draft" | "standard" | "high"
+  expressiveNarrationEnabled: boolean
+  autoBuildM4b: boolean
+  generationLanguageByEngineId: Record<string, string>
+  modelSettingsByEngineId: Record<string, TtsModelSettings>
+  seed: number
+  seedFixed: boolean
+}
+
 export type AppSettings = {
   locale: Locale
   appearance: AppearanceTheme
   reader: ReaderPreferences
+  audio: AudioSettings
 }
 
 export type LibraryQuery = {
@@ -120,6 +154,221 @@ export type ImportBooksResult = {
 }
 
 export type AnnotationDraft = Omit<Annotation, "id" | "createdAt">
+
+export type TtsJobStatus =
+  | "queued"
+  | "preparing"
+  | "analyzing"
+  | "synthesizing"
+  | "assembling"
+  | "updating_m4b"
+  | "building"
+  | "validating"
+  | "paused"
+  | "completed"
+  | "failed"
+  | "cancelled"
+
+export type TtsSegment = {
+  id: string
+  jobId: string
+  segmentIndex: number
+  status: string
+  textPreview: string
+  audioAssetId?: string
+  durationMs?: number
+}
+
+export type TtsJob = {
+  id: string
+  bookId: string
+  chapterHref: string
+  engineId: string
+  voiceProfileId?: string
+  voiceBindingId?: string
+  status: TtsJobStatus
+  progress: number
+  settings: Record<string, unknown>
+  errorMessage?: string
+  createdAt: string
+  updatedAt: string
+  finishedAt?: string
+}
+
+export type AudiobookChapter = {
+  bookId: string
+  chapterHref: string
+  chapterIndex: number
+  title: string
+  audioAssetId: string
+  engineId: string
+  voiceProfileId?: string
+  durationMs: number
+  startMs: number
+  endMs: number
+  contentHash: string
+  audioHash: string
+}
+
+export type AudiobookExport = {
+  id: string
+  bookId: string
+  status: "none" | "partial" | "stale" | "complete" | "error"
+  autoBuildEnabled: boolean
+  draftAssetId?: string
+  manifest?: {
+    chapters: AudiobookChapter[]
+    durationMs: number
+  }
+  chaptersReady: number
+  chaptersTotal: number
+  durationMs?: number
+  stale: boolean
+  errorMessage?: string
+}
+
+export type LibraryAudioStatus = {
+  bookId: string
+  title: string
+  authors: string[]
+  coverAssetId?: string
+  status: "none" | "partial" | "stale" | "complete" | "error"
+  chaptersReady: number
+  chaptersTotal: number
+  durationMs: number
+  hasChapterAudio: boolean
+  hasActiveJob: boolean
+  updatedAt: string
+}
+
+export type RuntimeDiagnostic = {
+  id: string
+  label: string
+  status: "available" | "not_configured"
+  detail: string
+}
+
+export type RuntimeSidecar = {
+  id: string
+  adapterId: string
+  name: string
+  runtime: string
+  status: "available" | "not_configured" | "failed"
+  executablePath?: string
+  scriptPath?: string
+  healthcheckCommand?: string
+  sizeBytes?: number
+  modelEngineIds: string[]
+  createdAt: string
+  updatedAt: string
+}
+
+export type RuntimeOperationStatus = "queued" | "running" | "completed" | "failed"
+
+export type RuntimeOperationKind = "model_download" | "model_install" | "model_delete" | "sidecar_install" | "sidecar_uninstall"
+
+export type RuntimeOperationLogEntry = {
+  id: string
+  level: "info" | "warning" | "error"
+  messageKey: string
+  values: Record<string, string | number>
+  createdAt: string
+}
+
+export type RuntimeOperationJob = {
+  id: string
+  kind: RuntimeOperationKind
+  targetKind: "model" | "sidecar"
+  targetId: string
+  status: RuntimeOperationStatus
+  progress: number
+  progressLabelKey?: string
+  progressLabelValues: Record<string, string | number>
+  errorCode?: string
+  errorMessage?: string
+  logs: RuntimeOperationLogEntry[]
+  createdAt: string
+  startedAt?: string
+  finishedAt?: string
+  updatedAt: string
+}
+
+export type HuggingFaceTokenStatus = {
+  configured: boolean
+  storage?: "electron-safe-storage"
+  updatedAt?: string
+}
+
+export type ModelInstallStatus = "not_configured" | "queued" | "downloading" | "available" | "failed"
+
+export type RuntimeModel = {
+  id: string
+  kind: "llm" | "tts" | "tokenizer" | "vocoder" | "runtime"
+  name: string
+  provider: string
+  version: string
+  runtime: string
+  format: string
+  acceleratorPreference: string
+  installStatus: ModelInstallStatus
+  downloadProgress: number
+  path?: string
+  sizeBytes?: number
+  checksum?: string
+  checksumAlgorithm?: string
+  license: string
+  memoryEstimateMb?: number
+  sourceUrl?: string
+  canDownload: boolean
+  engineId?: string
+  metadata: Record<string, unknown>
+  installedAt?: string
+  createdAt: string
+  updatedAt: string
+}
+
+export type ModelDownloadJob = {
+  id: string
+  modelAssetId: string
+  status: ModelInstallStatus
+  progress: number
+  receivedBytes: number
+  totalBytes?: number
+  sourceUrl: string
+  targetPath: string
+  errorCode?: string
+  errorMessage?: string
+  createdAt: string
+  startedAt?: string
+  finishedAt?: string
+  updatedAt: string
+}
+
+export type VoiceProfile = {
+  id: string
+  name: string
+  description?: string
+  language: string
+  kind: string
+  source?: Record<string, unknown>
+  tags?: string[]
+  settings?: Record<string, unknown>
+  createdFromEngineId?: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+export type PronunciationEntry = {
+  id: string
+  scope: "global" | "book"
+  bookId?: string
+  pattern: string
+  replacement: string
+  matchKind: "literal" | "word" | "regex"
+  caseSensitive: boolean
+  createdAt: string
+  updatedAt: string
+}
 
 export type DreamReaderBridge = {
   library?: {
@@ -143,27 +392,55 @@ export type DreamReaderBridge = {
   models?: {
     list?: () => Promise<unknown[]>
     diagnostics?: () => Promise<unknown[]>
-    installFromPath?: (modelPath: string) => Promise<unknown>
+    downloads?: () => Promise<unknown[]>
+    operations?: () => Promise<unknown[]>
+    huggingFaceToken?: () => Promise<unknown>
+    updateHuggingFaceToken?: (token: string) => Promise<unknown>
+    installFromPath?: (modelPath?: string) => Promise<unknown>
+    installRecommended?: (modelId: string) => Promise<unknown>
+    delete?: (modelId: string, deleteFiles?: boolean) => Promise<unknown>
+    download?: (modelId: string) => Promise<unknown>
+  }
+  sidecars?: {
+    list?: () => Promise<unknown[]>
+    install?: (sidecarId: string) => Promise<unknown>
+    uninstall?: (sidecarId: string) => Promise<unknown>
   }
   tts?: {
     enqueueChapter?: (input: Record<string, unknown>) => Promise<unknown>
+    enqueueChapters?: (input: Record<string, unknown>) => Promise<unknown[]>
     cancelJob?: (id: string) => Promise<unknown>
+    pauseJob?: (id: string) => Promise<unknown>
+    resumeJob?: (id: string) => Promise<unknown>
+    retryJob?: (id: string) => Promise<unknown>
     getJob?: (id: string) => Promise<unknown>
     listJobs?: (filter?: { bookId?: string; engineId?: string }) => Promise<unknown[]>
+    listSegments?: (jobId: string) => Promise<unknown[]>
+    clearChapterAudio?: (input: { bookId: string; chapterHref: string }) => Promise<unknown>
+    clearTerminalJobs?: (input: { bookId: string }) => Promise<unknown>
   }
   voices?: {
     list?: () => Promise<unknown[]>
     listCompatible?: (engineId?: string) => Promise<unknown[]>
     createFromReference?: (input: Record<string, unknown>) => Promise<unknown>
+    createFromDesignPrompt?: (input: Record<string, unknown>) => Promise<unknown>
+    selectReferenceAudio?: () => Promise<{ path?: string; durationMs?: number; sampleRate?: number }>
     preview?: (voiceProfileId: string, engineId: string) => Promise<unknown>
     update?: (input: Record<string, unknown>) => Promise<unknown>
     delete?: (voiceProfileId: string) => Promise<unknown>
   }
   audiobook?: {
     getExport?: (bookId: string) => Promise<unknown>
+    listLibraryStatus?: () => Promise<unknown[]>
     enableAutoBuild?: (bookId: string, enabled: boolean) => Promise<unknown>
     rebuild?: (bookId: string) => Promise<unknown>
     reveal?: (bookId: string) => Promise<unknown>
+  }
+  pronunciation?: {
+    list?: (input?: { bookId?: string; includeGlobal?: boolean }) => Promise<unknown[]>
+    create?: (input: Record<string, unknown>) => Promise<unknown>
+    update?: (input: Record<string, unknown>) => Promise<unknown>
+    delete?: (id: string) => Promise<unknown>
   }
 }
 

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TtsGenerationSeedSchema, TtsModelSettingsSchema } from "./ai";
 import { LocaleSchema, NonEmptyStringSchema } from "./common";
 import { ReaderPreferencesSchema } from "./reader";
 
@@ -23,8 +24,17 @@ const LibrarySettingsSchema = z.object({
 const AudioSettingsSchema = z.object({
   defaultEngineId: NonEmptyStringSchema.optional(),
   defaultVoiceProfileId: NonEmptyStringSchema.optional(),
+  defaultQuality: z.enum(["draft", "standard", "high"]).default("standard"),
   expressiveNarrationEnabled: z.boolean().default(false),
   autoBuildM4b: z.boolean().default(false),
+  generationLanguageByEngineId: z
+    .record(NonEmptyStringSchema, NonEmptyStringSchema)
+    .default({}),
+  modelSettingsByEngineId: z
+    .record(NonEmptyStringSchema, TtsModelSettingsSchema)
+    .default({}),
+  seed: TtsGenerationSeedSchema.default(1_801_202_606),
+  seedFixed: z.boolean().default(false),
 });
 
 const ResourceSettingsSchema = z.object({

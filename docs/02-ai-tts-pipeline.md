@@ -58,6 +58,8 @@ As regras devem ser configuraveis e versionadas. Mudancas de normalizacao invali
 
 O LLM recebe pequenos lotes de segmentos e retorna JSON validado.
 
+Estado atual da fase 3: o app usa `ProsodyService` com o analisador local estruturado `llm-prosody-local` para exercitar o mesmo contrato, cache e fallback sem depender ainda de um modelo GGUF/MLX real. A troca para runtime de LLM deve preservar este formato canonico.
+
 Schema conceitual:
 
 ```json
@@ -171,6 +173,23 @@ O adapter e responsavel por mapear o plano canonico para o formato do modelo:
 - F5-TTS-pt-br: aplicar normalizacao recomendada, lower case quando necessario, referencias de voz/emocao e marcadores discretos se disponiveis.
 
 Campos nao suportados nunca devem quebrar a geracao. Eles viram no-op com log estruturado.
+
+### 5.1. Modelos e Downloads Locais
+
+O main process registra modelos recomendados em `model_assets` e controla downloads por `model_download_jobs`.
+
+Implementado:
+
+- `Qwen3-4B-Instruct-2507 GGUF Q4_K_M` para analise de prosodia via `node-llama-cpp`.
+- Qwen3-TTS 0.6B, Qwen3-TTS 1.7B e F5-TTS-pt-br como modelos TTS reais registraveis por pasta local.
+- Progresso de download salvo no banco e exibido visualmente na UI.
+- Fallback local de prosodia quando o modelo GGUF ou runtime opcional nao existem.
+
+Ainda pendente:
+
+- Sidecars de sintese neural para os motores Qwen3-TTS e F5-TTS.
+- Downloads de snapshots multi-arquivo para modelos TTS que exigem pasta completa.
+- Healthcheck de runtime antes de habilitar sintese neural.
 
 ### 6. Gerenciador de Vozes
 

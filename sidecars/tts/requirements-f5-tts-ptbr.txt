@@ -1,0 +1,4 @@
+torch
+torchaudio
+f5-tts
+soundfile

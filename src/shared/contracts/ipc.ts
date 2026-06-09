@@ -43,14 +43,41 @@ import {
 } from "./settings";
 import {
   AudiobookExportSchema,
+  ClearChapterAudioRequestSchema,
+  ClearTerminalTtsJobsRequestSchema,
+  ClearTtsJobsResultSchema,
+  CreatePronunciationEntryRequestSchema,
+  DeletePronunciationEntryRequestSchema,
+  DeleteModelRequestSchema,
+  DownloadModelRequestSchema,
   EnqueueChapterTtsRequestSchema,
+  EnqueueChaptersTtsRequestSchema,
+  HuggingFaceTokenStatusSchema,
+  InstallRecommendedModelRequestSchema,
+  LibraryAudioStatusSchema,
+  TtsSegmentSummarySchema,
+  ListPronunciationEntriesRequestSchema,
+  ModelAssetSchema,
+  ModelDownloadJobSchema,
   NarrationPlanSchema,
+  PronunciationEntrySchema,
+  RuntimeDiagnosticSchema,
+  RuntimeOperationJobSchema,
+  RuntimeSidecarSchema,
+  SidecarRequestSchema,
   TtsAdapterManifestSchema,
   TtsEngineCapabilitiesSchema,
+  TtsGenerationSeedSchema,
   TtsJobSchema,
+  TtsModelSettingsSchema,
+  UpdateHuggingFaceTokenRequestSchema,
+  UpdatePronunciationEntryRequestSchema,
   VoiceCloneInputSchema,
+  VoiceDesignPromptInputSchema,
   VoiceFilterSchema,
+  VoiceEngineBindingSchema,
   VoiceProfileSchema,
+  VoiceSampleSchema,
 } from "./ai";
 
 export {
@@ -58,12 +85,25 @@ export {
   AppSettingsSchema,
   AudiobookExportSchema,
   BookmarkSchema,
+  ClearChapterAudioRequestSchema,
+  ClearTerminalTtsJobsRequestSchema,
+  ClearTtsJobsResultSchema,
   BookSchema,
+  CreatePronunciationEntryRequestSchema,
   CreateAnnotationInputSchema,
+  DeletePronunciationEntryRequestSchema,
   ExportAnnotationsInputSchema,
   ImportBooksInputSchema,
   LibraryBookSchema,
+  ListPronunciationEntriesRequestSchema,
+  ModelAssetSchema,
+  ModelDownloadJobSchema,
   NarrationPlanSchema,
+  PronunciationEntrySchema,
+  RuntimeDiagnosticSchema,
+  RuntimeOperationJobSchema,
+  RuntimeSidecarSchema,
+  HuggingFaceTokenStatusSchema,
   ReaderChapterSchema,
   ReaderManifestSchema,
   ReaderOpenResultSchema,
@@ -71,9 +111,14 @@ export {
   SaveReadingPositionInputSchema,
   TtsAdapterManifestSchema,
   TtsEngineCapabilitiesSchema,
+  TtsJobSchema,
   UpdateAnnotationInputSchema,
+  UpdatePronunciationEntryRequestSchema,
   VoiceCloneInputSchema,
+  VoiceDesignPromptInputSchema,
+  VoiceEngineBindingSchema,
   VoiceProfileSchema,
+  VoiceSampleSchema,
 };
 export type {
   Annotation,
@@ -82,7 +127,24 @@ export type {
   ExportAnnotationsInput,
   UpdateAnnotationInput,
 } from "./annotations";
-export type { AudiobookExport, NarrationPlan, TtsEngineCapabilities, VoiceProfile } from "./ai";
+export type {
+  AudiobookExport,
+  ModelAsset,
+  ModelDownloadJob,
+  NarrationPlan,
+  PronunciationEntry,
+  RuntimeDiagnostic,
+  HuggingFaceTokenStatus,
+  RuntimeOperationJob,
+  RuntimeSidecar,
+  TtsEngineCapabilities,
+  TtsGenerationSeed,
+  TtsJob,
+  TtsModelSettings,
+  VoiceEngineBinding,
+  VoiceProfile,
+  VoiceSample,
+} from "./ai";
 export type { Book, ImportBooksInput, LibraryBook } from "./library";
 export type {
   ReaderChapter,
@@ -106,22 +168,46 @@ export const IpcChannelSchema = z.enum([
   "annotations.export",
   "bookmarks.create",
   "tts.enqueueChapter",
+  "tts.enqueueChapters",
   "tts.cancelJob",
+  "tts.pauseJob",
+  "tts.resumeJob",
+  "tts.retryJob",
   "tts.getJob",
   "tts.listJobs",
+  "tts.listSegments",
+  "tts.clearChapterAudio",
+  "tts.clearTerminalJobs",
   "voices.list",
   "voices.createFromReference",
+  "voices.createFromDesignPrompt",
+  "voices.selectReferenceAudio",
   "voices.preview",
   "voices.update",
   "voices.delete",
   "voices.listCompatible",
   "audiobook.getExport",
+  "audiobook.listLibraryStatus",
   "audiobook.enableAutoBuild",
   "audiobook.rebuild",
   "audiobook.reveal",
   "models.list",
   "models.diagnostics",
+  "models.downloads",
+  "models.operations",
+  "models.huggingFaceToken",
+  "models.updateHuggingFaceToken",
   "models.installFromPath",
+  "models.installRecommended",
+  "models.download",
+  "models.delete",
+  "sidecars.list",
+  "sidecars.install",
+  "sidecars.uninstall",
+  "pronunciation.list",
+  "pronunciation.create",
+  "pronunciation.update",
+  "pronunciation.delete",
   "settings.get",
   "settings.update",
 ]);
@@ -184,7 +270,23 @@ export const IpcContractSchemas = {
     request: EnqueueChapterTtsRequestSchema,
     response: createIpcResponseSchema(TtsJobSchema),
   },
+  "tts.enqueueChapters": {
+    request: EnqueueChaptersTtsRequestSchema,
+    response: createIpcResponseSchema(z.array(TtsJobSchema)),
+  },
   "tts.cancelJob": {
+    request: IdRequestSchema,
+    response: createIpcResponseSchema(TtsJobSchema),
+  },
+  "tts.pauseJob": {
+    request: IdRequestSchema,
+    response: createIpcResponseSchema(TtsJobSchema),
+  },
+  "tts.resumeJob": {
+    request: IdRequestSchema,
+    response: createIpcResponseSchema(TtsJobSchema),
+  },
+  "tts.retryJob": {
     request: IdRequestSchema,
     response: createIpcResponseSchema(TtsJobSchema),
   },
@@ -201,6 +303,18 @@ export const IpcContractSchemas = {
       .default({}),
     response: createIpcResponseSchema(z.array(TtsJobSchema)),
   },
+  "tts.listSegments": {
+    request: z.object({ jobId: IdSchema }),
+    response: createIpcResponseSchema(z.array(TtsSegmentSummarySchema)),
+  },
+  "tts.clearChapterAudio": {
+    request: ClearChapterAudioRequestSchema,
+    response: createIpcResponseSchema(z.object({ deleted: z.literal(true) })),
+  },
+  "tts.clearTerminalJobs": {
+    request: ClearTerminalTtsJobsRequestSchema,
+    response: createIpcResponseSchema(ClearTtsJobsResultSchema),
+  },
   "voices.list": {
     request: VoiceFilterSchema.default({ includeUnavailable: false }),
     response: createIpcResponseSchema(z.array(VoiceProfileSchema)),
@@ -208,6 +322,20 @@ export const IpcContractSchemas = {
   "voices.createFromReference": {
     request: VoiceCloneInputSchema,
     response: createIpcResponseSchema(VoiceProfileSchema),
+  },
+  "voices.createFromDesignPrompt": {
+    request: VoiceDesignPromptInputSchema,
+    response: createIpcResponseSchema(VoiceProfileSchema),
+  },
+  "voices.selectReferenceAudio": {
+    request: EmptyRequestSchema,
+    response: createIpcResponseSchema(
+      z.object({
+        path: z.string().trim().min(1).optional(),
+        durationMs: z.number().int().nonnegative().optional(),
+        sampleRate: z.number().int().positive().optional(),
+      }),
+    ),
   },
   "voices.preview": {
     request: z.object({
@@ -241,6 +369,10 @@ export const IpcContractSchemas = {
     request: BookIdRequestSchema,
     response: createIpcResponseSchema(AudiobookExportSchema.nullable()),
   },
+  "audiobook.listLibraryStatus": {
+    request: EmptyRequestSchema,
+    response: createIpcResponseSchema(z.array(LibraryAudioStatusSchema)),
+  },
   "audiobook.enableAutoBuild": {
     request: z.object({
       bookId: IdSchema,
@@ -258,15 +390,71 @@ export const IpcContractSchemas = {
   },
   "models.list": {
     request: EmptyRequestSchema,
-    response: createIpcResponseSchema(z.array(JsonObjectSchema)),
+    response: createIpcResponseSchema(z.array(ModelAssetSchema)),
   },
   "models.diagnostics": {
     request: EmptyRequestSchema,
-    response: createIpcResponseSchema(z.array(JsonObjectSchema)),
+    response: createIpcResponseSchema(z.array(RuntimeDiagnosticSchema)),
+  },
+  "models.downloads": {
+    request: EmptyRequestSchema,
+    response: createIpcResponseSchema(z.array(ModelDownloadJobSchema)),
+  },
+  "models.operations": {
+    request: EmptyRequestSchema,
+    response: createIpcResponseSchema(z.array(RuntimeOperationJobSchema)),
+  },
+  "models.huggingFaceToken": {
+    request: EmptyRequestSchema,
+    response: createIpcResponseSchema(HuggingFaceTokenStatusSchema),
+  },
+  "models.updateHuggingFaceToken": {
+    request: UpdateHuggingFaceTokenRequestSchema,
+    response: createIpcResponseSchema(HuggingFaceTokenStatusSchema),
   },
   "models.installFromPath": {
-    request: z.object({ path: z.string().trim().min(1) }),
-    response: createIpcResponseSchema(JsonObjectSchema),
+    request: z.object({ path: z.string().trim().min(1).optional() }).default({}),
+    response: createIpcResponseSchema(ModelAssetSchema.nullable()),
+  },
+  "models.installRecommended": {
+    request: InstallRecommendedModelRequestSchema,
+    response: createIpcResponseSchema(RuntimeOperationJobSchema),
+  },
+  "models.download": {
+    request: DownloadModelRequestSchema,
+    response: createIpcResponseSchema(ModelDownloadJobSchema),
+  },
+  "models.delete": {
+    request: DeleteModelRequestSchema,
+    response: createIpcResponseSchema(ModelAssetSchema),
+  },
+  "sidecars.list": {
+    request: EmptyRequestSchema,
+    response: createIpcResponseSchema(z.array(RuntimeSidecarSchema)),
+  },
+  "sidecars.install": {
+    request: SidecarRequestSchema,
+    response: createIpcResponseSchema(RuntimeOperationJobSchema),
+  },
+  "sidecars.uninstall": {
+    request: SidecarRequestSchema,
+    response: createIpcResponseSchema(RuntimeOperationJobSchema),
+  },
+  "pronunciation.list": {
+    request: ListPronunciationEntriesRequestSchema,
+    response: createIpcResponseSchema(z.array(PronunciationEntrySchema)),
+  },
+  "pronunciation.create": {
+    request: CreatePronunciationEntryRequestSchema,
+    response: createIpcResponseSchema(PronunciationEntrySchema),
+  },
+  "pronunciation.update": {
+    request: UpdatePronunciationEntryRequestSchema,
+    response: createIpcResponseSchema(PronunciationEntrySchema),
+  },
+  "pronunciation.delete": {
+    request: DeletePronunciationEntryRequestSchema,
+    response: createIpcResponseSchema(z.object({ deleted: z.literal(true) })),
   },
   "settings.get": {
     request: EmptyRequestSchema,
