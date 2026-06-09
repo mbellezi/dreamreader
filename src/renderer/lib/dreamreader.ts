@@ -710,6 +710,15 @@ export const dreamreaderClient = {
     }
   },
 
+  async previewVoice(voiceProfileId: string, engineId: string): Promise<string | null> {
+    const bridgePreview = window.dreamreader?.voices?.preview
+    if (bridgePreview) {
+      const result = (await bridgePreview(voiceProfileId, engineId)) as { audioAssetId?: string } | null
+      return result?.audioAssetId ?? null
+    }
+    return null
+  },
+
   async listPronunciationEntries(bookId?: string): Promise<PronunciationEntry[]> {
     const bridgeList = window.dreamreader?.pronunciation?.list
 

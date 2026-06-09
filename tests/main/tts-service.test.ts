@@ -8,7 +8,17 @@ import { eq } from "drizzle-orm"
 import { describe, expect, it, afterEach } from "vitest"
 import type { AppDatabase } from "../../src/main/db/client"
 import * as schema from "../../src/main/db/schema"
-import { assets, books, runtimeManifests, ttsEngines, ttsJobs, voiceEngineBindings, voiceProfiles, voiceSamples } from "../../src/main/db/schema"
+import {
+  assets,
+  books,
+  prosodyAnalyses,
+  runtimeManifests,
+  ttsEngines,
+  ttsJobs,
+  voiceEngineBindings,
+  voiceProfiles,
+  voiceSamples
+} from "../../src/main/db/schema"
 import { AudiobookService } from "../../src/main/services/audiobook-service"
 import { DEFAULT_TTS_ENGINE_ID, DEFAULT_VOICE_PROFILE_ID, TtsService } from "../../src/main/services/tts-service"
 
@@ -102,6 +112,7 @@ describe("TtsService", () => {
 
       expect(await tts.listJobs({ bookId: "book-audio" })).toEqual([])
       expect(await db.query.ttsSegments.findMany()).toEqual([])
+      expect(await db.query.prosodyAnalyses.findMany()).toEqual([])
       const clearedExport = await audiobook.getExport("book-audio")
       expect(clearedExport.chaptersReady).toBe(0)
       expect(clearedExport.stale).toBe(true)
@@ -410,6 +421,60 @@ process.stdin.on("end", () => {
     }
   })
 
+  it("clears prosody caches for terminal jobs even when no segment rows were persisted", async () => {
+    const { audiobook, client, db, paths } = await createTestServices()
+    try {
+      await seedBook(db, paths)
+      const tts = new TtsService(db, paths, audiobook)
+      await tts.listJobs()
+
+      await db.insert(ttsJobs).values({
+        id: "tts_job_failed_before_segments",
+        bookId: "book-audio",
+        chapterHref: "chapter-1",
+        engineId: DEFAULT_TTS_ENGINE_ID,
+        voiceProfileId: DEFAULT_VOICE_PROFILE_ID,
+        status: "failed",
+        progress: 1,
+        settingsJson: {
+          quality: "draft",
+          useExpressiveNarration: true
+        },
+        resourcePolicyJson: {}
+      })
+      await db.insert(prosodyAnalyses).values({
+        id: "prosody_orphan_candidate",
+        bookId: "book-audio",
+        chapterHref: "chapter-1",
+        segmentId: "chapter-1-p0",
+        segmentHash: "prosody-orphan-hash",
+        analyzerId: "llm-prosody-local",
+        analyzerVersion: "1.0.0",
+        promptVersion: "prosody-json-v1",
+        status: "completed",
+        voiceRole: "narrator",
+        prosodyJson: {
+          emotion: "neutral",
+          intensity: 0.3,
+          pace: "normal",
+          pitch: "mid",
+          pauseAfterMs: 120,
+          instructionPtBr: "Narração neutra."
+        },
+        rawResponseJson: {}
+      })
+
+      expect(await db.query.prosodyAnalyses.findMany()).toHaveLength(1)
+
+      const result = await tts.clearTerminalJobs({ bookId: "book-audio" })
+      expect(result).toMatchObject({ deleted: true, jobsDeleted: 1 })
+      expect(await tts.listJobs({ bookId: "book-audio" })).toEqual([])
+      expect(await db.query.prosodyAnalyses.findMany()).toEqual([])
+    } finally {
+      await client.close()
+    }
+  })
+
   it("does not reuse cached audio from an older normalization version", async () => {
     const { audiobook, client, db, paths } = await createTestServices()
     try {
@@ -603,7 +668,7 @@ setInterval(() => {}, 1000)
         voiceProfileId: DEFAULT_VOICE_PROFILE_ID,
         quality: "draft",
         useExpressiveNarration: false,
-        paragraphLimit: 1
+        paragraphLimit: 3
       })
       await tts.drainQueue()
 
@@ -613,7 +678,7 @@ setInterval(() => {}, 1000)
       expect(typeof completed.settings.chapterAudioAssetId).toBe("string")
 
       const segments = await tts.listSegments(queued.id)
-      expect(segments).toHaveLength(1)
+      expect(segments).toHaveLength(3)
       expect(segments[0].audioAssetId).toBeTruthy()
 
       // Partial previews are test snippets and must not count toward the audiobook.
@@ -729,7 +794,7 @@ async function seedBook(db: AppDatabase, paths: { booksDir: string }) {
           id: "chapter-1",
           href: "chapter-1",
           title: "Capitulo 1",
-          content: "<article><p>Sr. João chegou às 14h30.</p><p>Custou R$ 25,90.</p></article>",
+          content: "<article><p>Sr. João chegou às 14h30.</p><p>Custou R$ 25,90.</p><p>Ele sorriu antes de sair.</p></article>",
           mediaType: "text/html",
           progressionStart: 0,
           progressionEnd: 1

@@ -121,6 +121,7 @@ export type TtsModelSettings = {
 export type AudioSettings = {
   defaultEngineId?: string
   defaultVoiceProfileId?: string
+  defaultQuality: "draft" | "standard" | "high"
   expressiveNarrationEnabled: boolean
   autoBuildM4b: boolean
   generationLanguageByEngineId: Record<string, string>

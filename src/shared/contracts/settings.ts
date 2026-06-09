@@ -24,6 +24,7 @@ const LibrarySettingsSchema = z.object({
 const AudioSettingsSchema = z.object({
   defaultEngineId: NonEmptyStringSchema.optional(),
   defaultVoiceProfileId: NonEmptyStringSchema.optional(),
+  defaultQuality: z.enum(["draft", "standard", "high"]).default("standard"),
   expressiveNarrationEnabled: z.boolean().default(false),
   autoBuildM4b: z.boolean().default(false),
   generationLanguageByEngineId: z

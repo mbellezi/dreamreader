@@ -1,6 +1,7 @@
 import { Pause, Play, Square } from "lucide-react"
 import { useEffect, useState } from "react"
 import type { TranslationFn } from "@renderer/app/types"
+import { isPartialTtsJob } from "@renderer/lib/jobQueue"
 import { cn } from "@renderer/lib/utils"
 import type { TtsJob, TtsSegment } from "@renderer/types"
 
@@ -24,6 +25,7 @@ export function GenerationProgress({
   const [segments, setSegments] = useState<TtsSegment[]>([])
   const isTerminal = TERMINAL_JOB_STATUSES.includes(job.status)
   const isPaused = job.status === "paused"
+  const statusKeyPrefix = isPartialTtsJob(job) ? "audio.previewJobStatus" : "audio.jobStatus"
 
   useEffect(() => {
     let cancelled = false
@@ -52,7 +54,7 @@ export function GenerationProgress({
     <div className="mt-3 space-y-3">
       <div>
         <div className="mb-1 flex items-center justify-between gap-2 text-xs text-muted-foreground">
-          <span>{t(`audio.jobStatus.${job.status}`)}</span>
+          <span>{t(`${statusKeyPrefix}.${job.status}`)}</span>
           <span>{Math.round(job.progress * 100)}%</span>
         </div>
         <div className="h-1.5 overflow-hidden rounded-full bg-muted">

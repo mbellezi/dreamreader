@@ -1,12 +1,14 @@
-import { CircleSlash, Cpu, Download, FolderOpen, HardDrive, KeyRound, Loader2, RefreshCw, ServerCog, TerminalSquare, Trash2 } from "lucide-react"
-import { useMemo, useState } from "react"
+import { CheckCircle2, Circle, CircleSlash, Cpu, Download, FolderOpen, HardDrive, KeyRound, Loader2, RefreshCw, ServerCog, TerminalSquare, Trash2 } from "lucide-react"
+import { useEffect, useMemo, useState } from "react"
 import type { TranslationFn } from "@renderer/app/types"
+import { buildVoiceEngineBundles, prosodyModels, type VoiceEngineBundle } from "@renderer/lib/engineBundles"
 import { cn } from "@renderer/lib/utils"
-import type { HuggingFaceTokenStatus, ModelDownloadJob, RuntimeDiagnostic, RuntimeModel, RuntimeOperationJob, RuntimeOperationLogEntry, RuntimeSidecar } from "@renderer/types"
+import type { HuggingFaceTokenStatus, ModelDownloadJob, RuntimeDiagnostic, RuntimeModel, RuntimeOperationJob, RuntimeOperationLogEntry, RuntimeSidecar, VoiceProfile } from "@renderer/types"
 
 const ACTIVE_OPERATION_STATUSES = ["queued", "running"]
+const RUNTIME_DIAGNOSTIC_IDS = ["device", "apple-silicon"]
 
-export function ModelManagerPane({
+export function EnginesPane({
   diagnostics,
   downloadJobs,
   huggingFaceTokenStatus,
@@ -14,9 +16,11 @@ export function ModelManagerPane({
   models,
   operations,
   sidecars,
+  voices,
   t,
   onDeleteModel,
   onDownloadModel,
+  onInstallEngine,
   onInstallModel,
   onInstallModelFromPath,
   onInstallSidecar,
@@ -31,9 +35,11 @@ export function ModelManagerPane({
   models: RuntimeModel[]
   operations: RuntimeOperationJob[]
   sidecars: RuntimeSidecar[]
+  voices: VoiceProfile[]
   t: TranslationFn
   onDeleteModel: (modelId: string) => Promise<void> | void
   onDownloadModel: (modelId: string) => Promise<void> | void
+  onInstallEngine: (modelId: string) => Promise<void> | void
   onInstallModel: (modelId: string) => Promise<void> | void
   onInstallModelFromPath: () => Promise<void> | void
   onInstallSidecar: (sidecarId: string) => Promise<void> | void
@@ -50,17 +56,44 @@ export function ModelManagerPane({
   const availableSidecars = sidecars.filter((sidecar) => sidecar.status === "available")
   const showMetricSkeletons = loading && models.length === 0 && sidecars.length === 0
   const showModelSkeletons = loading && models.length === 0
-  const showSidecarSkeletons = loading && sidecars.length === 0
   const embeddedDiagnostics = useMemo(() => embeddedDiagnosticsForCards(models, sidecars, diagnostics), [diagnostics, models, sidecars])
+
+  const voiceBundles = useMemo(() => buildVoiceEngineBundles(models, sidecars), [models, sidecars])
+  const prosody = useMemo(() => prosodyModels(models), [models])
+  const runtimeDiagnostics = useMemo(() => diagnostics.filter((diagnostic) => RUNTIME_DIAGNOSTIC_IDS.includes(diagnostic.id)), [diagnostics])
+
+  // Mount refresh + poll while any model/operation is active. Drives live updates while the Motores tab is mounted.
+  const hasActiveDownload = models.some((model) => model.installStatus === "queued" || model.installStatus === "downloading")
+  const hasActiveOperation = operations.some((operation) => operation.status === "queued" || operation.status === "running")
+  const isPolling = hasActiveDownload || hasActiveOperation
+
+  useEffect(() => {
+    void onRefresh()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    if (!isPolling) {
+      return
+    }
+    const interval = window.setInterval(() => {
+      void onRefresh()
+    }, 800)
+    return () => window.clearInterval(interval)
+  }, [isPolling, onRefresh])
 
   const operationFor = (targetKind: RuntimeOperationJob["targetKind"], targetId: string) =>
     operations.find((operation) => operation.targetKind === targetKind && operation.targetId === targetId && ACTIVE_OPERATION_STATUSES.includes(operation.status))
 
   const downloadJobFor = (modelId: string) => downloadJobs.find((job) => job.modelAssetId === modelId && (job.status === "queued" || job.status === "downloading"))
 
+  const runtimeReady = runtimeDiagnostics.some((diagnostic) => diagnostic.status === "available")
+  const engineReady = voiceBundles.some((bundle) => bundle.status === "ready")
+  const prosodyReady = prosody.some((model) => model.installStatus === "available")
+  const voiceReady = voices.length > 0
+
   return (
-    <div className="h-full min-h-0 overflow-auto" aria-busy={loading}>
-      <div className="mx-auto w-full max-w-6xl space-y-6 px-6 py-6">
+    <div className="space-y-6" aria-busy={loading}>
         <header className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="text-lg font-semibold leading-tight">{t("modelManager.title")}</h1>
@@ -71,6 +104,8 @@ export function ModelManagerPane({
             <span>{t("modelManager.refresh")}</span>
           </button>
         </header>
+
+        <ReadinessChecklist runtimeReady={runtimeReady} engineReady={engineReady} prosodyReady={prosodyReady} voiceReady={voiceReady} t={t} />
 
         <section className="grid grid-cols-1 gap-3 md:grid-cols-4">
           {showMetricSkeletons ? (
@@ -85,60 +120,27 @@ export function ModelManagerPane({
           )}
         </section>
 
-        <section className="rounded-md border bg-card p-4">
-          <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-            <label className="block min-w-0 flex-1 text-sm">
-              <span className="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground">
-                <KeyRound className="h-3.5 w-3.5" aria-hidden="true" />
-                {t("modelManager.hfToken.label")}
-              </span>
-              <input
-                className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none"
-                type="password"
-                placeholder={huggingFaceTokenStatus.configured ? t("modelManager.hfToken.placeholderConfigured") : t("modelManager.hfToken.placeholder")}
-                value={huggingFaceToken}
-                onChange={(event) => setHuggingFaceToken(event.target.value)}
-              />
-            </label>
-            <div className="grid grid-cols-2 gap-2 md:w-64">
-              <button
-                className="inline-flex h-10 min-w-0 items-center justify-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground"
-                onClick={async () => {
-                  await onSaveHuggingFaceToken(huggingFaceToken)
-                  setHuggingFaceToken("")
-                }}
-              >
-                <span className="truncate">{t("modelManager.hfToken.save")}</span>
-              </button>
-              <button
-                className="inline-flex h-10 min-w-0 items-center justify-center rounded-md border bg-background px-3 text-sm"
-                onClick={async () => {
-                  await onSaveHuggingFaceToken("")
-                  setHuggingFaceToken("")
-                }}
-              >
-                <span className="truncate">{t("modelManager.hfToken.clear")}</span>
-              </button>
-            </div>
-          </div>
-          <p className="mt-2 text-xs text-muted-foreground">
-            {huggingFaceTokenStatus.configured ? t("modelManager.hfToken.configured") : t("modelManager.hfToken.empty")}
-          </p>
-        </section>
-
         <section className="space-y-3">
-          <SectionTitle title={t("modelManager.sidecars.title")} count={sidecars.length} />
-          {showSidecarSkeletons ? (
-            <SidecarCardSkeletons />
-          ) : sidecars.length ? (
-            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-              {sidecars.map((sidecar) => (
-                <SidecarCard
-                  key={sidecar.id}
-                  diagnostics={embeddedDiagnostics.sidecars.get(sidecar.id) ?? []}
-                  operation={operationFor("sidecar", sidecar.id)}
-                  sidecar={sidecar}
+          <SectionTitle title={t("studio.engines.voice")} count={voiceBundles.length} />
+          {showModelSkeletons ? (
+            <ModelCardSkeletons />
+          ) : voiceBundles.length ? (
+            <div className="space-y-3">
+              {voiceBundles.map((bundle) => (
+                <VoiceEngineBundleCard
+                  key={bundle.model.id}
+                  bundle={bundle}
+                  modelDiagnostics={embeddedDiagnostics.models.get(bundle.model.id) ?? []}
+                  sidecarDiagnostics={bundle.sidecar ? embeddedDiagnostics.sidecars.get(bundle.sidecar.id) ?? [] : []}
+                  downloadJob={downloadJobFor(bundle.model.id)}
+                  modelOperation={operationFor("model", bundle.model.id)}
+                  sidecarOperation={bundle.sidecar ? operationFor("sidecar", bundle.sidecar.id) : undefined}
                   t={t}
+                  onDeleteModel={onDeleteModel}
+                  onDownloadModel={onDownloadModel}
+                  onInstallEngine={onInstallEngine}
+                  onInstallModel={onInstallModel}
+                  onInstallModelFromPath={onInstallModelFromPath}
                   onInstallSidecar={onInstallSidecar}
                   onOpenLogs={setSelectedOperationId}
                   onUninstallSidecar={onUninstallSidecar}
@@ -146,17 +148,17 @@ export function ModelManagerPane({
               ))}
             </div>
           ) : (
-            <EmptyState icon={CircleSlash} message={t("modelManager.sidecars.empty")} />
+            <EmptyState icon={CircleSlash} message={t("modelManager.models.empty")} />
           )}
         </section>
 
         <section className="space-y-3">
-          <SectionTitle title={t("modelManager.models.title")} count={models.length} />
+          <SectionTitle title={t("studio.engines.prosody")} count={prosody.length} />
           {showModelSkeletons ? (
             <ModelCardSkeletons />
-          ) : models.length ? (
+          ) : prosody.length ? (
             <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-              {models.map((model) => (
+              {prosody.map((model) => (
                 <ModelCard
                   key={model.id}
                   diagnostics={embeddedDiagnostics.models.get(model.id) ?? []}
@@ -178,31 +180,90 @@ export function ModelManagerPane({
         </section>
 
         <section className="space-y-3">
-          <SectionTitle title={t("modelManager.operations.title")} count={operations.length} />
-          {operations.length ? (
-            <div className="space-y-2">
-              {operations.slice(0, 8).map((operation) => (
-                <button
-                  key={operation.id}
-                  className="flex w-full items-center justify-between gap-3 rounded-md border bg-card p-3 text-left transition hover:border-primary"
-                  onClick={() => setSelectedOperationId(operation.id)}
-                >
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">{operationTitle(operation, models, sidecars, t)}</p>
-                    <p className="mt-0.5 truncate text-xs text-muted-foreground">{operationProgressLabel(operation, t)}</p>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-3">
-                    <span className="text-xs text-muted-foreground">{Math.round(operation.progress * 100)}%</span>
-                    <StatusBadge status={operation.status} t={t} />
-                  </div>
-                </button>
-              ))}
-            </div>
-          ) : (
-            <EmptyState icon={TerminalSquare} message={t("modelManager.operations.empty")} />
-          )}
+          <SectionTitle title={t("studio.engines.runtime")} count={runtimeDiagnostics.length} />
+          <div className="rounded-md border bg-card p-3">
+            {runtimeDiagnostics.length ? (
+              <DiagnosticsBlock diagnostics={runtimeDiagnostics} t={t} />
+            ) : (
+              <p className="text-sm text-muted-foreground">{t("modelManager.diagnostics.title")}</p>
+            )}
+          </div>
         </section>
-      </div>
+
+        <details className="rounded-md border bg-card">
+          <summary className="cursor-pointer list-none px-4 py-3 text-sm font-semibold">{t("studio.engines.account")}</summary>
+          <div className="border-t p-4">
+            <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+              <label className="block min-w-0 flex-1 text-sm">
+                <span className="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                  <KeyRound className="h-3.5 w-3.5" aria-hidden="true" />
+                  {t("modelManager.hfToken.label")}
+                </span>
+                <input
+                  className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none"
+                  type="password"
+                  placeholder={huggingFaceTokenStatus.configured ? t("modelManager.hfToken.placeholderConfigured") : t("modelManager.hfToken.placeholder")}
+                  value={huggingFaceToken}
+                  onChange={(event) => setHuggingFaceToken(event.target.value)}
+                />
+              </label>
+              <div className="grid grid-cols-2 gap-2 md:w-64">
+                <button
+                  className="inline-flex h-10 min-w-0 items-center justify-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground"
+                  onClick={async () => {
+                    await onSaveHuggingFaceToken(huggingFaceToken)
+                    setHuggingFaceToken("")
+                  }}
+                >
+                  <span className="truncate">{t("modelManager.hfToken.save")}</span>
+                </button>
+                <button
+                  className="inline-flex h-10 min-w-0 items-center justify-center rounded-md border bg-background px-3 text-sm"
+                  onClick={async () => {
+                    await onSaveHuggingFaceToken("")
+                    setHuggingFaceToken("")
+                  }}
+                >
+                  <span className="truncate">{t("modelManager.hfToken.clear")}</span>
+                </button>
+              </div>
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground">
+              {huggingFaceTokenStatus.configured ? t("modelManager.hfToken.configured") : t("modelManager.hfToken.empty")}
+            </p>
+          </div>
+        </details>
+
+        <details className="rounded-md border bg-card" open={activeOperations.length > 0}>
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 text-sm font-semibold">
+            <span>{t("modelManager.operations.title")}</span>
+            <span className="text-xs font-normal text-muted-foreground">{operations.length}</span>
+          </summary>
+          <div className="border-t p-4">
+            {operations.length ? (
+              <div className="space-y-2">
+                {operations.slice(0, 8).map((operation) => (
+                  <button
+                    key={operation.id}
+                    className="flex w-full items-center justify-between gap-3 rounded-md border bg-card p-3 text-left transition hover:border-primary"
+                    onClick={() => setSelectedOperationId(operation.id)}
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">{operationTitle(operation, models, sidecars, t)}</p>
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground">{operationProgressLabel(operation, t)}</p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-3">
+                      <span className="text-xs text-muted-foreground">{Math.round(operation.progress * 100)}%</span>
+                      <StatusBadge status={operation.status} t={t} />
+                    </div>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <EmptyState icon={TerminalSquare} message={t("modelManager.operations.empty")} />
+            )}
+          </div>
+        </details>
 
       {selectedOperation ? (
         <OperationLogDialog
@@ -214,6 +275,161 @@ export function ModelManagerPane({
         />
       ) : null}
     </div>
+  )
+}
+
+function ReadinessChecklist({
+  runtimeReady,
+  engineReady,
+  prosodyReady,
+  voiceReady,
+  t
+}: {
+  runtimeReady: boolean
+  engineReady: boolean
+  prosodyReady: boolean
+  voiceReady: boolean
+  t: TranslationFn
+}) {
+  const items: { ready: boolean; label: string }[] = [
+    { ready: runtimeReady, label: t("studio.readiness.runtime") },
+    { ready: engineReady, label: t("studio.readiness.engine") },
+    { ready: prosodyReady, label: t("studio.readiness.prosody") },
+    { ready: voiceReady, label: t("studio.readiness.voice") }
+  ]
+  return (
+    <section className="rounded-md border bg-card p-4">
+      <p className="text-xs font-medium text-muted-foreground">{t("studio.readiness.title")}</p>
+      <ul className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {items.map((item) => (
+          <li key={item.label} className="flex h-6 items-center gap-2 text-sm">
+            {item.ready ? (
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+            ) : (
+              <Circle className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            )}
+            <span className={cn("truncate", item.ready ? "text-foreground" : "text-muted-foreground")}>{item.label}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+function VoiceEngineBundleCard({
+  bundle,
+  modelDiagnostics,
+  sidecarDiagnostics,
+  downloadJob,
+  modelOperation,
+  sidecarOperation,
+  t,
+  onDeleteModel,
+  onDownloadModel,
+  onInstallEngine,
+  onInstallModel,
+  onInstallModelFromPath,
+  onInstallSidecar,
+  onOpenLogs,
+  onUninstallSidecar
+}: {
+  bundle: VoiceEngineBundle
+  modelDiagnostics: RuntimeDiagnostic[]
+  sidecarDiagnostics: RuntimeDiagnostic[]
+  downloadJob?: ModelDownloadJob
+  modelOperation?: RuntimeOperationJob
+  sidecarOperation?: RuntimeOperationJob
+  t: TranslationFn
+  onDeleteModel: (modelId: string) => Promise<void> | void
+  onDownloadModel: (modelId: string) => Promise<void> | void
+  onInstallEngine: (modelId: string) => Promise<void> | void
+  onInstallModel: (modelId: string) => Promise<void> | void
+  onInstallModelFromPath: () => Promise<void> | void
+  onInstallSidecar: (sidecarId: string) => Promise<void> | void
+  onOpenLogs: (operationId: string) => void
+  onUninstallSidecar: (sidecarId: string) => Promise<void> | void
+}) {
+  const { model, sidecar, status } = bundle
+  const busy =
+    Boolean(modelOperation) ||
+    Boolean(sidecarOperation) ||
+    model.installStatus === "queued" ||
+    model.installStatus === "downloading"
+
+  return (
+    <div className="rounded-md border bg-card p-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-2">
+            <Cpu className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <p className="truncate text-sm font-medium">{model.name}</p>
+          </div>
+          <p className="mt-1 truncate text-xs text-muted-foreground">
+            {model.provider} · {model.runtime}
+            {sidecar ? ` · ${sidecar.name}` : ""}
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <BundleStatusBadge status={status} t={t} />
+          {status !== "ready" ? (
+            <button
+              className="inline-flex h-9 min-w-0 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground"
+              disabled={busy}
+              onClick={() => onInstallEngine(model.id)}
+            >
+              <Download className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span className="truncate">{t("studio.engines.install")}</span>
+            </button>
+          ) : null}
+        </div>
+      </div>
+      <ProgressBlock downloadJob={downloadJob} operation={modelOperation ?? sidecarOperation} t={t} />
+      <details className="mt-3 border-t pt-3">
+        <summary className="cursor-pointer list-none text-xs font-medium text-muted-foreground">{t("studio.engines.details")}</summary>
+        <div className="mt-3 space-y-3">
+          <ModelCard
+            diagnostics={modelDiagnostics}
+            downloadJob={downloadJob}
+            model={model}
+            operation={modelOperation}
+            t={t}
+            onDeleteModel={onDeleteModel}
+            onDownloadModel={onDownloadModel}
+            onInstallModel={onInstallModel}
+            onInstallModelFromPath={onInstallModelFromPath}
+            onOpenLogs={onOpenLogs}
+          />
+          {sidecar ? (
+            <SidecarCard
+              diagnostics={sidecarDiagnostics}
+              operation={sidecarOperation}
+              sidecar={sidecar}
+              t={t}
+              onInstallSidecar={onInstallSidecar}
+              onOpenLogs={onOpenLogs}
+              onUninstallSidecar={onUninstallSidecar}
+            />
+          ) : null}
+        </div>
+      </details>
+    </div>
+  )
+}
+
+function BundleStatusBadge({ status, t }: { status: VoiceEngineBundle["status"]; t: TranslationFn }) {
+  return (
+    <span
+      className={cn(
+        "shrink-0 rounded-sm px-2 py-1 text-xs",
+        status === "ready"
+          ? "bg-primary/10 text-primary"
+          : status === "missing"
+            ? "bg-muted text-muted-foreground"
+            : "bg-amber-500/10 text-amber-600"
+      )}
+    >
+      {t(`modelManager.status.${status === "ready" ? "available" : status === "missing" ? "not_configured" : "queued"}`)}
+    </span>
   )
 }
 
@@ -248,18 +464,6 @@ function SectionTitle({ count, title }: { count: number; title: string }) {
     <div className="flex items-center justify-between gap-2">
       <h2 className="text-sm font-semibold">{title}</h2>
       <span className="text-xs text-muted-foreground">{count}</span>
-    </div>
-  )
-}
-
-function SidecarCardSkeletons() {
-  return (
-    <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-      {Array.from({ length: 2 }, (_, index) => (
-        <div key={index} className="rounded-md border bg-card p-3" aria-hidden="true">
-          <CardSkeleton showModelActions={false} />
-        </div>
-      ))}
     </div>
   )
 }

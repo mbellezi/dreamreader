@@ -17,6 +17,7 @@ export const defaultSettings: AppSettings = {
     hyphenation: true
   },
   audio: {
+    defaultQuality: "standard",
     expressiveNarrationEnabled: false,
     autoBuildM4b: false,
     generationLanguageByEngineId: {},

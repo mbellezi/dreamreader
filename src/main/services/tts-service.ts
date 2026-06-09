@@ -19,6 +19,7 @@ import {
   assets,
   books,
   pronunciationEntries,
+  prosodyAnalyses,
   runtimeManifests,
   ttsEngines,
   ttsJobs,
@@ -536,6 +537,7 @@ export class TtsService {
     if (jobIds.length) {
       await this.db.delete(ttsSegments).where(inArray(ttsSegments.jobId, jobIds))
     }
+    await this.cleanupProsodyCacheForRemovedJobs(jobs)
     if (assetIds.size) {
       await this.db.delete(assets).where(inArray(assets.id, [...assetIds]))
     }
@@ -544,6 +546,25 @@ export class TtsService {
       ...jobs.map((job) => rm(this.jobOutputDirectory(job), { force: true, recursive: true }).catch(() => undefined))
     ])
     return { assetsDeleted: assetRows.length }
+  }
+
+  private async cleanupProsodyCacheForRemovedJobs(jobs: TtsJobRow[]): Promise<void> {
+    if (!jobs.length) {
+      return
+    }
+    const removedJobIds = new Set(jobs.map((job) => job.id))
+    for (const chapter of uniqueChapterKeys(jobs)) {
+      const chapterJobs = await this.db.query.ttsJobs.findMany({
+        where: and(eq(ttsJobs.bookId, chapter.bookId), eq(ttsJobs.chapterHref, chapter.chapterHref))
+      })
+      const hasRemainingChapterJob = chapterJobs.some((job) => !removedJobIds.has(job.id))
+      if (hasRemainingChapterJob) {
+        continue
+      }
+      await this.db
+        .delete(prosodyAnalyses)
+        .where(and(eq(prosodyAnalyses.bookId, chapter.bookId), eq(prosodyAnalyses.chapterHref, chapter.chapterHref)))
+    }
   }
 
   async resumePendingJobs(): Promise<void> {

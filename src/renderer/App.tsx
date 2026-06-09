@@ -1,10 +1,10 @@
-import { BookOpen, Headphones, Library, Loader2, ServerCog, Settings } from "lucide-react"
+import { BookOpen, Headphones, Library, Loader2, Settings } from "lucide-react"
 import { useCallback, useEffect, useRef, useState, type ReactElement } from "react"
 import { NavButton } from "@renderer/components/common/Controls"
-import { AudioDashboardPane } from "@renderer/components/audio/AudioDashboardPane"
-import { BookAudioPane } from "@renderer/components/audio/BookAudioPane"
+import { StudioPane } from "@renderer/components/audio/StudioPane"
+import { BookStudioPane } from "@renderer/components/audio/BookStudioPane"
 import { LibraryPane } from "@renderer/components/library/LibraryPane"
-import { ModelManagerPane } from "@renderer/components/models/ModelManagerPane"
+import { EnginesPane } from "@renderer/components/models/EnginesPane"
 import { InspectorPane } from "@renderer/components/reader/InspectorPane"
 import { ReaderPane } from "@renderer/components/reader/ReaderPane"
 import { SettingsDialog } from "@renderer/components/settings/SettingsDialog"
@@ -42,8 +42,7 @@ import type {
   AudiobookExport,
   LibraryAudioStatus,
   HuggingFaceTokenStatus,
-  ModelDownloadJob,
-  PronunciationEntry
+  ModelDownloadJob
 } from "@renderer/types"
 
 export function App(): ReactElement {
@@ -64,7 +63,6 @@ export function App(): ReactElement {
   const [runtimeSidecars, setRuntimeSidecars] = useState<RuntimeSidecar[]>([])
   const [huggingFaceTokenStatus, setHuggingFaceTokenStatus] = useState<HuggingFaceTokenStatus>({ configured: false })
   const [voices, setVoices] = useState<VoiceProfile[]>([])
-  const [pronunciationEntries, setPronunciationEntries] = useState<PronunciationEntry[]>([])
   const [activeView, setActiveView] = useState<AppView>("library")
   const [libraryMode, setLibraryMode] = useState<LibraryMode>("grid")
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("summary")
@@ -104,18 +102,16 @@ export function App(): ReactElement {
   )
 
   const refreshAudioState = useCallback(async (bookId: string) => {
-    const [nextJobs, nextExport, nextModels, nextVoices, nextPronunciationEntries] = await Promise.all([
+    const [nextJobs, nextExport, nextModels, nextVoices] = await Promise.all([
       dreamreaderClient.listTtsJobs({ bookId }),
       dreamreaderClient.getAudiobookExport(bookId),
       dreamreaderClient.listModels(),
-      dreamreaderClient.listCompatibleVoices(),
-      dreamreaderClient.listPronunciationEntries(bookId)
+      dreamreaderClient.listCompatibleVoices()
     ])
     setAudioJobs(nextJobs)
     setAudiobookExport(nextExport)
     setRuntimeModels(nextModels)
     setVoices(nextVoices)
-    setPronunciationEntries(nextPronunciationEntries)
   }, [])
 
   const refreshAudioDashboard = useCallback(async () => {
@@ -247,23 +243,6 @@ export function App(): ReactElement {
     }, 800)
     return () => window.clearInterval(interval)
   }, [activeView, audioJobs, refreshActiveAudioView])
-
-  useEffect(() => {
-    if (activeView !== "models") {
-      return
-    }
-
-    const hasActiveDownload = runtimeModels.some((model) => model.installStatus === "queued" || model.installStatus === "downloading")
-    const hasActiveOperation = runtimeOperations.some((operation) => operation.status === "queued" || operation.status === "running")
-    if (!hasActiveDownload && !hasActiveOperation) {
-      return
-    }
-
-    const interval = window.setInterval(() => {
-      void refreshModelManagement()
-    }, 800)
-    return () => window.clearInterval(interval)
-  }, [activeView, refreshModelManagement, runtimeModels, runtimeOperations])
 
   const importBooks = async () => {
     setImporting(true)
@@ -401,11 +380,6 @@ export function App(): ReactElement {
     void refreshAudioDashboard()
   }
 
-  const openModelManager = () => {
-    setActiveView("models")
-    void refreshModelManagement()
-  }
-
   const openBookAudio = async (bookId: string) => {
     setActiveView("audio")
     const book = await dreamreaderClient.getBook(bookId)
@@ -430,6 +404,7 @@ export function App(): ReactElement {
     seedFixed?: boolean
     useExpressiveNarration: boolean
     voiceProfileId?: string
+    paragraphLimit?: number
   }) => {
     if (!audioBook) {
       return
@@ -493,6 +468,16 @@ export function App(): ReactElement {
 
   const retryTtsJob = async (jobId: string) => {
     await dreamreaderClient.retryTtsJob(jobId)
+    await refreshActiveAudioView()
+  }
+
+  const clearAllTerminalTtsJobs = async () => {
+    const terminalBookIds = [...new Set(
+      audioJobs.filter((job) => ["completed", "failed", "cancelled"].includes(job.status)).map((job) => job.bookId)
+    )]
+    for (const bookId of terminalBookIds) {
+      await dreamreaderClient.clearTerminalTtsJobs(bookId)
+    }
     await refreshActiveAudioView()
   }
 
@@ -611,33 +596,24 @@ export function App(): ReactElement {
     }
   }
 
-  const createPronunciationEntry = async (input: {
-    pattern: string
-    replacement: string
-    scope: "global" | "book"
-  }) => {
-    if (!audioBook || !input.pattern.trim() || !input.replacement.trim()) {
+  const previewVoice = async (voiceProfileId: string, engineId: string) => dreamreaderClient.previewVoice(voiceProfileId, engineId)
+
+  const listPronunciation = (bookId?: string) => dreamreaderClient.listPronunciationEntries(bookId)
+
+  const createPronunciation = async (input: { bookId?: string; pattern: string; replacement: string; scope: "global" | "book" }) => {
+    if (!input.pattern.trim() || !input.replacement.trim()) {
       return
     }
-
     await dreamreaderClient.createPronunciationEntry({
-      bookId: input.scope === "book" ? audioBook.id : undefined,
+      bookId: input.scope === "book" ? input.bookId : undefined,
       matchKind: "word",
       pattern: input.pattern.trim(),
       replacement: input.replacement.trim(),
       scope: input.scope
     })
-    await refreshAudioState(audioBook.id)
   }
 
-  const deletePronunciationEntry = async (id: string) => {
-    if (!audioBook) {
-      return
-    }
-
-    await dreamreaderClient.deletePronunciationEntry(id)
-    await refreshAudioState(audioBook.id)
-  }
+  const deletePronunciation = (id: string) => dreamreaderClient.deletePronunciationEntry(id)
 
   const downloadModel = async (modelId: string) => {
     await dreamreaderClient.downloadModel(modelId)
@@ -678,6 +654,22 @@ export function App(): ReactElement {
 
   const uninstallSidecar = async (sidecarId: string) => {
     await dreamreaderClient.uninstallSidecar(sidecarId)
+    await refreshModelManagement()
+  }
+
+  const installEngine = async (modelId: string) => {
+    const model = runtimeModels.find((m) => m.id === modelId)
+    const sidecar = runtimeSidecars.find((s) => (model?.engineId ? s.modelEngineIds.includes(model.engineId) : false))
+    if (sidecar && sidecar.status !== "available") {
+      await dreamreaderClient.installSidecar(sidecar.id)
+    }
+    if (model) {
+      if (model.metadata.huggingFaceRepo && model.metadata.localFolder) {
+        await dreamreaderClient.installRecommendedModel(modelId)
+      } else if (model.canDownload) {
+        await dreamreaderClient.downloadModel(modelId)
+      }
+    }
     await refreshModelManagement()
   }
 
@@ -810,7 +802,6 @@ export function App(): ReactElement {
               <NavButton icon={Library} label={t("nav.library")} active={activeView === "library"} onClick={() => setActiveView("library")} />
               <NavButton icon={BookOpen} label={t("nav.reader")} active={activeView === "reader"} onClick={() => setActiveView("reader")} />
               <NavButton icon={Headphones} label={t("nav.audio")} active={activeView === "audio"} onClick={openAudioDashboard} />
-              <NavButton icon={ServerCog} label={t("nav.models")} active={activeView === "models"} onClick={openModelManager} />
               <NavButton icon={Settings} label={t("nav.settings")} active={activeView === "settings"} onClick={() => setActiveView("settings")} />
             </nav>
           </header>
@@ -837,22 +828,19 @@ export function App(): ReactElement {
         ) : activeView === "audio" ? (
           <div className="min-h-0 flex-1 overflow-hidden">
             {audioBook ? (
-              <BookAudioPane
+              <BookStudioPane
                 audiobook={audiobookExport}
                 book={audioBook}
                 jobs={audioJobs}
                 loading={audioLoading}
                 audioSettings={settings.audio}
                 models={runtimeModels}
-                pronunciationEntries={pronunciationEntries}
                 t={t}
                 voices={voices}
                 onBack={closeBookAudio}
                 onCancelJob={cancelTtsJob}
                 onClearChapterAudio={clearChapterAudio}
                 onClearTerminalJobs={clearTerminalTtsJobs}
-                onCreatePronunciationEntry={createPronunciationEntry}
-                onDeletePronunciationEntry={deletePronunciationEntry}
                 onGenerateChapter={generateChapterAudio}
                 onGenerateChapters={generateChapters}
                 onListSegments={listTtsSegments}
@@ -864,44 +852,55 @@ export function App(): ReactElement {
                 onUpdateAudioSettings={updateAudioSettings}
               />
             ) : (
-              <AudioDashboardPane
+              <StudioPane
                 audioStatus={libraryAudioStatus}
+                audioSettings={settings.audio}
                 books={books}
+                enginesContent={
+                  <EnginesPane
+                    diagnostics={diagnostics}
+                    downloadJobs={modelDownloadJobs}
+                    huggingFaceTokenStatus={huggingFaceTokenStatus}
+                    loading={modelManagementLoading}
+                    models={runtimeModels}
+                    operations={runtimeOperations}
+                    sidecars={runtimeSidecars}
+                    voices={voices}
+                    t={t}
+                    onDeleteModel={deleteModel}
+                    onDownloadModel={downloadModel}
+                    onInstallModel={installRecommendedModel}
+                    onInstallModelFromPath={installModelFromPath}
+                    onInstallSidecar={installSidecar}
+                    onInstallEngine={installEngine}
+                    onRefresh={refreshModelManagement}
+                    onSaveHuggingFaceToken={saveHuggingFaceToken}
+                    onUninstallSidecar={uninstallSidecar}
+                  />
+                }
                 jobs={audioJobs}
                 loading={audioLoading}
                 models={runtimeModels}
                 voices={voices}
                 t={t}
                 onCancelJob={cancelTtsJob}
+                onClearFinished={clearAllTerminalTtsJobs}
+                onCreatePronunciation={createPronunciation}
                 onCreateVoiceFromDesignPrompt={createVoiceFromDesignPrompt}
                 onCreateVoiceFromReference={createVoiceFromReference}
+                onDeletePronunciation={deletePronunciation}
                 onDeleteVoice={deleteVoice}
+                onListPronunciation={listPronunciation}
                 onOpenBook={openBookAudio}
+                onPauseJob={pauseTtsJob}
+                onPreviewVoice={previewVoice}
+                onResumeJob={resumeTtsJob}
+                onRetryJob={retryTtsJob}
                 onSelectVoiceReferenceAudio={selectVoiceReferenceAudio}
+                onUpdateAudioSettings={updateAudioSettings}
                 onUpdateVoice={updateVoice}
               />
             )}
-          </div>
-        ) : activeView === "models" ? (
-          <div className="min-h-0 flex-1 overflow-hidden">
-            <ModelManagerPane
-              diagnostics={diagnostics}
-              downloadJobs={modelDownloadJobs}
-              huggingFaceTokenStatus={huggingFaceTokenStatus}
-              loading={modelManagementLoading}
-              models={runtimeModels}
-              operations={runtimeOperations}
-              sidecars={runtimeSidecars}
-              t={t}
-              onDeleteModel={deleteModel}
-              onDownloadModel={downloadModel}
-              onInstallModel={installRecommendedModel}
-              onInstallModelFromPath={installModelFromPath}
-              onInstallSidecar={installSidecar}
-              onRefresh={refreshModelManagement}
-              onSaveHuggingFaceToken={saveHuggingFaceToken}
-              onUninstallSidecar={uninstallSidecar}
-            />
           </div>
         ) : (
           <div className={cn("grid min-h-0 flex-1 grid-cols-1 overflow-hidden", !cleanReading && "lg:grid-cols-[minmax(0,1fr)_340px]")}>

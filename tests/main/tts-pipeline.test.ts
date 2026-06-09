@@ -3,13 +3,17 @@ import { buildNarrationPlan, dictionaryVersionFor, limitParagraphs, normalizePtB
 
 describe("TTS pipeline", () => {
   it("limits a narration plan to the first N paragraphs", () => {
-    const html = "<article><p>Primeiro parágrafo.</p><p>Segundo parágrafo.</p><p>Terceiro parágrafo.</p></article>"
+    const html = "<article><p>Primeiro parágrafo.</p><p>Segundo parágrafo.</p><p>Terceiro parágrafo.</p><p>Quarto parágrafo.</p></article>"
     const full = buildNarrationPlan({ bookId: "b", chapterHref: "c", contentHash: "h", html, language: "pt-BR" })
     const partial = buildNarrationPlan({ bookId: "b", chapterHref: "c", contentHash: "h", html, language: "pt-BR", paragraphLimit: 1 })
+    const threeParagraphs = buildNarrationPlan({ bookId: "b", chapterHref: "c", contentHash: "h", html, language: "pt-BR", paragraphLimit: 3 })
 
     expect(full.segments.length).toBeGreaterThan(partial.segments.length)
     expect(partial.segments).toHaveLength(1)
     expect(partial.segments[0].originalText).toContain("Primeiro")
+    expect(threeParagraphs.segments).toHaveLength(3)
+    expect(threeParagraphs.segments[2].originalText).toContain("Terceiro")
+    expect(threeParagraphs.segments.some((segment) => segment.originalText.includes("Quarto"))).toBe(false)
   })
 
   it("limitParagraphs keeps only the requested leading paragraphs", () => {

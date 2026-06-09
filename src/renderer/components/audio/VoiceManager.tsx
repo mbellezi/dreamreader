@@ -1,8 +1,9 @@
-import { AlertTriangle, Check, FileAudio, Mic2, Pencil, Plus, Sparkles, Trash2, X } from "lucide-react"
+import { AlertTriangle, Check, FileAudio, Loader2, Mic2, Pencil, Play, Plus, Sparkles, Trash2, X } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { SelectField } from "@renderer/components/common/Controls"
 import type { TranslationFn } from "@renderer/app/types"
 import { cn } from "@renderer/lib/utils"
+import { pickPreviewEngineId } from "@renderer/lib/voicePreview"
 import type { RuntimeModel, VoiceProfile } from "@renderer/types"
 
 const CLONE_ENGINE_IDS = ["qwen3-tts-06b-mlx", "qwen3-tts-17b-base-mlx", "f5-tts-pt-br"]
@@ -18,7 +19,8 @@ export function VoiceManager({
   onCreateVoiceFromDesignPrompt,
   onUpdateVoice,
   onDeleteVoice,
-  onSelectVoiceReferenceAudio
+  onSelectVoiceReferenceAudio,
+  onPreviewVoice
 }: {
   voices: VoiceProfile[]
   models: RuntimeModel[]
@@ -36,6 +38,7 @@ export function VoiceManager({
   onUpdateVoice: (input: { voiceProfileId: string; name: string }) => Promise<void> | void
   onDeleteVoice: (voiceProfileId: string) => Promise<void> | void
   onSelectVoiceReferenceAudio: () => Promise<{ path: string; durationMs?: number; sampleRate?: number } | null>
+  onPreviewVoice: (voiceProfileId: string, engineId: string) => Promise<string | null>
 }) {
   const [mode, setMode] = useState<"reference" | "design">("reference")
   const [referenceName, setReferenceName] = useState("")
@@ -222,61 +225,153 @@ export function VoiceManager({
         <h3 className="text-sm font-semibold">{t("voiceManager.listTitle")}</h3>
         {customVoices.length ? (
           customVoices.map((voice) => (
-            <div key={voice.id} className="flex items-center justify-between gap-3 rounded-md border bg-card p-3">
-              <div className="min-w-0 flex-1">
-                {editingId === voice.id ? (
-                  <input
-                    className="h-8 w-full rounded-md border bg-background px-2 text-sm outline-none"
-                    autoFocus
-                    value={editingName}
-                    onChange={(event) => setEditingName(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") void saveRename(voice.id)
-                      if (event.key === "Escape") setEditingId(null)
-                    }}
-                  />
-                ) : (
-                  <p className="truncate text-sm font-medium">{voice.name}</p>
-                )}
-                <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                  {t(`voiceManager.kind.${voice.kind}`)}
-                  {enginesLabel(voice) ? ` · ${enginesLabel(voice)}` : ""}
-                </p>
-              </div>
-              <div className="flex shrink-0 items-center gap-1">
-                {editingId === voice.id ? (
-                  <>
-                    <button className="rounded-sm p-1 text-muted-foreground hover:text-primary" title={t("voiceManager.save")} onClick={() => void saveRename(voice.id)}>
-                      <Check className="h-4 w-4" aria-hidden="true" />
-                    </button>
-                    <button className="rounded-sm p-1 text-muted-foreground hover:text-foreground" title={t("voiceManager.cancelEdit")} onClick={() => setEditingId(null)}>
-                      <X className="h-4 w-4" aria-hidden="true" />
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <button
-                      className="rounded-sm p-1 text-muted-foreground hover:text-foreground"
-                      title={t("voiceManager.edit")}
-                      onClick={() => {
-                        setEditingId(voice.id)
-                        setEditingName(voice.name)
-                      }}
-                    >
-                      <Pencil className="h-4 w-4" aria-hidden="true" />
-                    </button>
-                    <button className="rounded-sm p-1 text-muted-foreground hover:text-destructive" disabled={loading} title={t("voiceManager.delete")} onClick={() => onDeleteVoice(voice.id)}>
-                      <Trash2 className="h-4 w-4" aria-hidden="true" />
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
+            <VoiceRow
+              key={voice.id}
+              voice={voice}
+              previewEngineId={pickPreviewEngineId(voice, installedTtsModels)}
+              loading={loading}
+              isEditing={editingId === voice.id}
+              editingName={editingName}
+              t={t}
+              onPreviewVoice={onPreviewVoice}
+              onStartEdit={() => {
+                setEditingId(voice.id)
+                setEditingName(voice.name)
+              }}
+              onChangeEditingName={setEditingName}
+              onSaveRename={() => void saveRename(voice.id)}
+              onCancelEdit={() => setEditingId(null)}
+              onDeleteVoice={onDeleteVoice}
+            />
           ))
         ) : (
           <p className="rounded-md border bg-card p-3 text-sm text-muted-foreground">{t("voiceManager.empty")}</p>
         )}
       </div>
+    </div>
+  )
+}
+
+function VoiceRow({
+  voice,
+  previewEngineId,
+  loading,
+  isEditing,
+  editingName,
+  t,
+  onPreviewVoice,
+  onStartEdit,
+  onChangeEditingName,
+  onSaveRename,
+  onCancelEdit,
+  onDeleteVoice
+}: {
+  voice: VoiceProfile
+  previewEngineId: string | undefined
+  loading: boolean
+  isEditing: boolean
+  editingName: string
+  t: TranslationFn
+  onPreviewVoice: (voiceProfileId: string, engineId: string) => Promise<string | null>
+  onStartEdit: () => void
+  onChangeEditingName: (value: string) => void
+  onSaveRename: () => void
+  onCancelEdit: () => void
+  onDeleteVoice: (voiceProfileId: string) => Promise<void> | void
+}) {
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [previewAssetId, setPreviewAssetId] = useState<string | null>(null)
+  const [previewError, setPreviewError] = useState(false)
+
+  const runPreview = async () => {
+    if (!previewEngineId || previewLoading) {
+      return
+    }
+    setPreviewLoading(true)
+    setPreviewError(false)
+    setPreviewAssetId(null)
+    try {
+      const assetId = await onPreviewVoice(voice.id, previewEngineId)
+      if (assetId) {
+        setPreviewAssetId(assetId)
+      } else {
+        setPreviewError(true)
+      }
+    } catch {
+      setPreviewError(true)
+    } finally {
+      setPreviewLoading(false)
+    }
+  }
+
+  return (
+    <div className="rounded-md border bg-card p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          {isEditing ? (
+            <input
+              className="h-8 w-full rounded-md border bg-background px-2 text-sm outline-none"
+              autoFocus
+              value={editingName}
+              onChange={(event) => onChangeEditingName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") onSaveRename()
+                if (event.key === "Escape") onCancelEdit()
+              }}
+            />
+          ) : (
+            <p className="truncate text-sm font-medium">{voice.name}</p>
+          )}
+          <p className="mt-0.5 truncate text-xs text-muted-foreground">
+            {t(`voiceManager.kind.${voice.kind}`)}
+            {enginesLabel(voice) ? ` · ${enginesLabel(voice)}` : ""}
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {isEditing ? (
+            <>
+              <button className="rounded-sm p-1 text-muted-foreground hover:text-primary" title={t("voiceManager.save")} onClick={onSaveRename}>
+                <Check className="h-4 w-4" aria-hidden="true" />
+              </button>
+              <button className="rounded-sm p-1 text-muted-foreground hover:text-foreground" title={t("voiceManager.cancelEdit")} onClick={onCancelEdit}>
+                <X className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                className="rounded-sm p-1 text-muted-foreground hover:text-primary disabled:opacity-50"
+                disabled={!previewEngineId || previewLoading}
+                title={previewEngineId ? t("voiceManager.preview") : t("voiceManager.noPreviewEngine")}
+                onClick={() => void runPreview()}
+              >
+                {previewLoading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Play className="h-4 w-4" aria-hidden="true" />}
+              </button>
+              <button
+                className="rounded-sm p-1 text-muted-foreground hover:text-foreground"
+                title={t("voiceManager.edit")}
+                onClick={onStartEdit}
+              >
+                <Pencil className="h-4 w-4" aria-hidden="true" />
+              </button>
+              <button className="rounded-sm p-1 text-muted-foreground hover:text-destructive" disabled={loading} title={t("voiceManager.delete")} onClick={() => onDeleteVoice(voice.id)}>
+                <Trash2 className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+      {previewAssetId ? (
+        <audio
+          className="mt-2 h-8 w-full"
+          controls
+          autoPlay
+          preload="none"
+          src={`dreamreader://asset/${encodeURIComponent(previewAssetId)}`}
+        />
+      ) : previewError ? (
+        <p className="mt-2 text-xs text-destructive">{t("voiceManager.previewFailed")}</p>
+      ) : null}
     </div>
   )
 }
