@@ -15,6 +15,7 @@ import {
   runtimeManifests,
   ttsEngines,
   ttsJobs,
+  ttsSegments,
   voiceEngineBindings,
   voiceProfiles,
   voiceSamples
@@ -684,6 +685,68 @@ setInterval(() => {}, 1000)
       // Partial previews are test snippets and must not count toward the audiobook.
       const exportState = await audiobook.getExport("book-audio")
       expect(exportState.chaptersReady).toBe(0)
+    } finally {
+      await client.close()
+    }
+  })
+
+  it("shows prosody segments for cached expressive partial previews", async () => {
+    const { audiobook, client, db, paths } = await createTestServices()
+    try {
+      await seedBook(db, paths)
+      const tts = new TtsService(db, paths, audiobook)
+
+      const first = await tts.enqueueChapter({
+        bookId: "book-audio",
+        chapterHref: "chapter-1",
+        engineId: DEFAULT_TTS_ENGINE_ID,
+        voiceProfileId: DEFAULT_VOICE_PROFILE_ID,
+        quality: "draft",
+        useExpressiveNarration: true,
+        paragraphLimit: 3
+      })
+      await tts.drainQueue()
+
+      const firstSegments = await tts.listSegments(first.id)
+      expect(firstSegments).toHaveLength(3)
+      expect(firstSegments.every((segment) => segment.prosodyMode === "expressive")).toBe(true)
+      expect(firstSegments.some((segment) => segment.prosody?.instructionPtBr)).toBe(true)
+
+      const cached = await tts.enqueueChapter({
+        bookId: "book-audio",
+        chapterHref: "chapter-1",
+        engineId: DEFAULT_TTS_ENGINE_ID,
+        voiceProfileId: DEFAULT_VOICE_PROFILE_ID,
+        quality: "draft",
+        useExpressiveNarration: true,
+        paragraphLimit: 3
+      })
+
+      expect(cached.status).toBe("completed")
+      expect(cached.settings.cachedFromJobId).toBe(first.id)
+      expect(await db.query.ttsSegments.findMany({ where: eq(ttsSegments.jobId, cached.id) })).toEqual([])
+
+      const cachedSegments = await tts.listSegments(cached.id)
+      expect(cachedSegments).toHaveLength(firstSegments.length)
+      expect(cachedSegments.every((segment) => segment.jobId === cached.id)).toBe(true)
+      expect(cachedSegments.map((segment) => segment.prosody)).toEqual(firstSegments.map((segment) => segment.prosody))
+
+      const cachedAgain = await tts.enqueueChapter({
+        bookId: "book-audio",
+        chapterHref: "chapter-1",
+        engineId: DEFAULT_TTS_ENGINE_ID,
+        voiceProfileId: DEFAULT_VOICE_PROFILE_ID,
+        quality: "draft",
+        useExpressiveNarration: true,
+        paragraphLimit: 3
+      })
+
+      expect(cachedAgain.status).toBe("completed")
+      expect(cachedAgain.settings.cachedFromJobId).toBe(cached.id)
+      const cachedAgainSegments = await tts.listSegments(cachedAgain.id)
+      expect(cachedAgainSegments).toHaveLength(firstSegments.length)
+      expect(cachedAgainSegments.every((segment) => segment.jobId === cachedAgain.id)).toBe(true)
+      expect(cachedAgainSegments.map((segment) => segment.prosody)).toEqual(firstSegments.map((segment) => segment.prosody))
     } finally {
       await client.close()
     }

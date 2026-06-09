@@ -64,6 +64,7 @@ type ChapterSource = {
 }
 
 type TtsJobRow = typeof ttsJobs.$inferSelect
+type TtsSegmentRow = typeof ttsSegments.$inferSelect
 type TtsEngineRow = typeof ttsEngines.$inferSelect
 type EnqueueChapterTtsInput = Omit<EnqueueChapterTtsRequest, "modelSettings" | "seedFixed"> & {
   modelSettings?: TtsModelSettings
@@ -433,26 +434,28 @@ export class TtsService {
 
   async listSegments(jobId: string): Promise<TtsSegmentSummary[]> {
     await this.ensureReady()
-    const rows = await this.db.query.ttsSegments.findMany({
+    let rows = await this.db.query.ttsSegments.findMany({
       where: eq(ttsSegments.jobId, jobId),
       orderBy: [asc(ttsSegments.segmentIndex)]
     })
-    return rows.map((row) => {
-      const prosody = NarrationProsodySchema.safeParse(row.prosodyJson)
-      const rawMode = (row.adapterPayloadJson as { prosodyMode?: unknown }).prosodyMode
-      const prosodyMode = rawMode === "expressive" || rawMode === "neutral" ? rawMode : undefined
-      return {
-        id: row.id,
-        jobId: row.jobId,
-        segmentIndex: row.segmentIndex,
-        status: row.status,
-        textPreview: row.originalText.slice(0, 160),
-        audioAssetId: row.audioAssetId ?? undefined,
-        durationMs: typeof row.durationMs === "number" ? row.durationMs : undefined,
-        prosody: prosody.success ? prosody.data : undefined,
-        prosodyMode
+
+    const visitedJobIds = new Set([jobId])
+    let segmentSourceJobId = jobId
+    while (!rows.length) {
+      const job = await this.db.query.ttsJobs.findFirst({ where: eq(ttsJobs.id, segmentSourceJobId) })
+      const cachedFromJobId = optionalStringValue(jsonObject(job?.settingsJson).cachedFromJobId)
+      if (!cachedFromJobId || visitedJobIds.has(cachedFromJobId)) {
+        break
       }
-    })
+      visitedJobIds.add(cachedFromJobId)
+      segmentSourceJobId = cachedFromJobId
+      rows = await this.db.query.ttsSegments.findMany({
+        where: eq(ttsSegments.jobId, segmentSourceJobId),
+        orderBy: [asc(ttsSegments.segmentIndex)]
+      })
+    }
+
+    return rows.map((row) => toTtsSegmentSummary(row, jobId))
   }
 
   async retryJob(id: string): Promise<TtsJob> {
@@ -1562,6 +1565,23 @@ function toTtsJob(row: TtsJobRow): TtsJob {
     startedAt: optionalDate(row.startedAt),
     finishedAt: optionalDate(row.finishedAt),
     updatedAt: toIso(row.updatedAt)
+  }
+}
+
+function toTtsSegmentSummary(row: TtsSegmentRow, jobId = row.jobId): TtsSegmentSummary {
+  const prosody = NarrationProsodySchema.safeParse(row.prosodyJson)
+  const rawMode = (row.adapterPayloadJson as { prosodyMode?: unknown }).prosodyMode
+  const prosodyMode = rawMode === "expressive" || rawMode === "neutral" ? rawMode : undefined
+  return {
+    id: row.id,
+    jobId,
+    segmentIndex: row.segmentIndex,
+    status: row.status,
+    textPreview: row.originalText.slice(0, 160),
+    audioAssetId: row.audioAssetId ?? undefined,
+    durationMs: typeof row.durationMs === "number" ? row.durationMs : undefined,
+    prosody: prosody.success ? prosody.data : undefined,
+    prosodyMode
   }
 }
 

@@ -1,4 +1,4 @@
-import { AlertTriangle, Sparkles } from "lucide-react"
+import { AlertTriangle, ChevronDown, ChevronRight, Sparkles } from "lucide-react"
 import { useEffect, useState } from "react"
 import type { TranslationFn } from "@renderer/app/types"
 import {
@@ -24,11 +24,18 @@ export function ProsodyInspector({
 }) {
   const [segments, setSegments] = useState<TtsSegment[]>([])
   const [loaded, setLoaded] = useState(false)
+  const [open, setOpen] = useState(false)
   const jobId = job?.id
   const isLive = job ? !TERMINAL_JOB_STATUSES.includes(job.status) : false
 
   useEffect(() => {
-    if (!jobId) {
+    setOpen(false)
+    setSegments([])
+    setLoaded(false)
+  }, [jobId])
+
+  useEffect(() => {
+    if (!open || !jobId) {
       setSegments([])
       setLoaded(false)
       return
@@ -52,47 +59,53 @@ export function ProsodyInspector({
       cancelled = true
       window.clearInterval(interval)
     }
-  }, [isLive, jobId, onListSegments])
+  }, [isLive, jobId, onListSegments, open])
 
-  if (!job) {
-    return (
-      <div className="space-y-2">
-        <h3 className="text-sm font-semibold">{t("studio.prosody.title")}</h3>
-        <p className="rounded-md border bg-card p-3 text-sm text-muted-foreground">{t("studio.prosody.empty")}</p>
-      </div>
-    )
-  }
-
-  const analyzerId = typeof job.settings.prosodyAnalyzerId === "string" ? job.settings.prosodyAnalyzerId : undefined
-  const support = prosodyEngineSupport(job.engineId)
+  const analyzerId = job && typeof job.settings.prosodyAnalyzerId === "string" ? job.settings.prosodyAnalyzerId : undefined
+  const support = prosodyEngineSupport(job?.engineId)
   const counts = summarizeProsody(segments)
   const prosodySegments = segments.filter((segment) => segment.prosody)
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between gap-2">
-        <h3 className="inline-flex items-center gap-2 text-sm font-semibold">
-          <Sparkles className="h-4 w-4 text-primary" aria-hidden="true" />
-          {t("studio.prosody.title")}
-        </h3>
-        {analyzerId ? <span className="truncate text-[11px] text-muted-foreground">{t("studio.prosody.analyzer", { id: analyzerId })}</span> : null}
-      </div>
-
-      <div
-        className={cn(
-          "flex items-start gap-2 rounded-md border p-3 text-xs",
-          support === "reference" ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300" : "bg-card text-muted-foreground"
-        )}
+      <button
+        className="flex w-full items-center justify-between gap-3 rounded-md border bg-card p-3 text-left"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
       >
-        {support === "reference" ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" /> : null}
-        <span>{t(`studio.prosody.engineSupport.${support}`)}</span>
-      </div>
+        <span className="inline-flex min-w-0 items-center gap-2 text-sm font-semibold">
+          {open ? (
+            <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          ) : (
+            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          )}
+          <Sparkles className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+          <span className="truncate">{t("studio.prosody.title")}</span>
+        </span>
+        {analyzerId ? <span className="truncate text-[11px] text-muted-foreground">{t("studio.prosody.analyzer", { id: analyzerId })}</span> : null}
+      </button>
 
-      {loaded && prosodySegments.length === 0 ? (
+      {open && !job ? (
+        <p className="rounded-md border bg-card p-3 text-sm text-muted-foreground">{t("studio.prosody.empty")}</p>
+      ) : null}
+
+      {open && job ? (
+        <div
+          className={cn(
+            "flex items-start gap-2 rounded-md border p-3 text-xs",
+            support === "reference" ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300" : "bg-card text-muted-foreground"
+          )}
+        >
+          {support === "reference" ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" /> : null}
+          <span>{t(`studio.prosody.engineSupport.${support}`)}</span>
+        </div>
+      ) : null}
+
+      {open && loaded && prosodySegments.length === 0 ? (
         <p className="rounded-md border bg-card p-3 text-sm text-muted-foreground">{t("studio.prosody.noSegments")}</p>
       ) : null}
 
-      {prosodySegments.length ? (
+      {open && prosodySegments.length ? (
         <>
           <p className="text-xs text-muted-foreground">
             {t("studio.prosody.summary", {

@@ -23,7 +23,9 @@ import type {
   VoiceProfile
 } from "@renderer/types"
 import { defaultSettings, sampleAnnotations, sampleBooks } from "@renderer/lib/sampleData"
-import { normalizeSearch } from "@renderer/lib/utils"
+import { clamp, normalizeSearch } from "@renderer/lib/utils"
+
+type SegmentProsody = NonNullable<TtsSegment["prosody"]>
 
 const STORAGE_KEY = "dreamreader.renderer.fallback"
 
@@ -1135,8 +1137,66 @@ function toTtsSegment(input: unknown): TtsSegment {
     status: String(item.status ?? "queued"),
     textPreview: String(item.textPreview ?? ""),
     audioAssetId: optionalString(item.audioAssetId),
-    durationMs: optionalNumber(item.durationMs)
+    durationMs: optionalNumber(item.durationMs),
+    prosody: toSegmentProsody(item.prosody),
+    prosodyMode: toSegmentProsodyMode(item.prosodyMode)
   }
+}
+
+function toSegmentProsody(value: unknown): TtsSegment["prosody"] {
+  const prosody = jsonObject(value)
+  const emotion = toProsodyEmotion(prosody.emotion)
+  const pace = toProsodyPace(prosody.pace)
+  const pitch = toProsodyPitch(prosody.pitch)
+  if (!emotion || !pace || !pitch) {
+    return undefined
+  }
+  return {
+    emotion,
+    intensity: clamp(Number(prosody.intensity ?? 0.2), 0, 1),
+    pace,
+    pitch,
+    pauseBeforeMs: Math.max(0, Math.round(Number(prosody.pauseBeforeMs ?? 0) || 0)),
+    pauseAfterMs: Math.max(0, Math.round(Number(prosody.pauseAfterMs ?? 350) || 0)),
+    instructionPtBr: String(prosody.instructionPtBr ?? "")
+  }
+}
+
+function toSegmentProsodyMode(value: unknown): TtsSegment["prosodyMode"] {
+  return value === "expressive" || value === "neutral" ? value : undefined
+}
+
+function toProsodyEmotion(value: unknown): SegmentProsody["emotion"] | undefined {
+  const emotion = String(value ?? "")
+  if (
+    emotion === "neutral" ||
+    emotion === "warm" ||
+    emotion === "tense" ||
+    emotion === "sad" ||
+    emotion === "joyful" ||
+    emotion === "angry" ||
+    emotion === "suspense" ||
+    emotion === "formal"
+  ) {
+    return emotion
+  }
+  return undefined
+}
+
+function toProsodyPace(value: unknown): SegmentProsody["pace"] | undefined {
+  const pace = String(value ?? "")
+  if (pace === "slow" || pace === "normal" || pace === "fast") {
+    return pace
+  }
+  return undefined
+}
+
+function toProsodyPitch(value: unknown): SegmentProsody["pitch"] | undefined {
+  const pitch = String(value ?? "")
+  if (pitch === "low" || pitch === "neutral" || pitch === "high") {
+    return pitch
+  }
+  return undefined
 }
 
 function toAudiobookStatus(value: unknown): AudiobookExport["status"] {
