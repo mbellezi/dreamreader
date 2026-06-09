@@ -842,6 +842,10 @@ function diagnosticsForModel(model: RuntimeModel, diagnostics: RuntimeDiagnostic
     diagnosticIds.add("qwen3-tts-sidecar")
   }
 
+  if (engineId.startsWith("chatterbox") || provider.includes("chatterbox") || provider.includes("resemble")) {
+    diagnosticIds.add("chatterbox-tts-sidecar")
+  }
+
   if (engineId.startsWith("f5-tts") || provider.includes("firstpixel")) {
     diagnosticIds.add("f5-tts-sidecar")
   }
@@ -854,6 +858,10 @@ function diagnosticsForSidecar(sidecar: RuntimeSidecar, diagnostics: RuntimeDiag
 
   if (sidecar.adapterId === "qwen3-tts-mlx") {
     diagnosticIds.add("qwen3-tts-sidecar")
+  }
+
+  if (sidecar.adapterId === "chatterbox-mlx") {
+    diagnosticIds.add("chatterbox-tts-sidecar")
   }
 
   if (sidecar.adapterId === "f5-tts-pt-br") {

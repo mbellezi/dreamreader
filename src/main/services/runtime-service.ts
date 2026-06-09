@@ -25,6 +25,7 @@ import type { AppPaths } from "@main/lib/paths"
 
 export const QWEN_PROSODY_MODEL_ID = "model_qwen3_4b_instruct_2507_gguf_q4km"
 export const QWEN_PROSODY_GGUF_FILE = "Qwen_Qwen3-4B-Instruct-2507-Q4_K_M.gguf"
+export const CHATTERBOX_MULTILINGUAL_MODEL_DIR_NAME = "chatterbox-multilingual-mlx"
 export const F5_TTS_MODEL_DIR_NAME = "f5-tts-pt-br"
 export const QWEN3_TTS_06B_MODEL_DIR_NAME = "qwen3-tts-06b-mlx"
 export const QWEN3_TTS_17B_MODEL_DIR_NAME = "qwen3-tts-17b-mlx"
@@ -134,6 +135,28 @@ const recommendedModels: RecommendedModel[] = [
     }
   },
   {
+    id: "model_chatterbox_multilingual_mlx",
+    kind: "tts",
+    name: "Chatterbox Multilingual MLX",
+    provider: "ResembleAI / mlx-community",
+    version: "chatterbox-fp16",
+    runtime: "mlx-sidecar",
+    format: "mlx",
+    acceleratorPreference: "mlx",
+    memoryEstimateMb: 4096,
+    license: "apache-2.0",
+    engineId: "chatterbox-multilingual-mlx",
+    metadata: {
+      role: "tts",
+      huggingFaceRepo: "mlx-community/chatterbox-fp16",
+      installMode: "project-local-folder",
+      localFolder: `.dreamreader-local/models/${CHATTERBOX_MULTILINGUAL_MODEL_DIR_NAME}`,
+      originalRepo: "ResembleAI/chatterbox",
+      originalLicense: "mit",
+      prosodyControls: ["exaggeration", "cfgWeight", "pauseAfterMs"]
+    }
+  },
+  {
     id: "model_f5_tts_ptbr_pytorch",
     kind: "tts",
     name: "F5-TTS PT-BR",
@@ -166,6 +189,18 @@ const recommendedRuntimeManifests = [
       protocol: "dreamreader-tts-sidecar/v1",
       engines: ["qwen3-tts-06b-mlx", "qwen3-tts-17b-mlx", "qwen3-tts-17b-base-mlx"],
       output: ["audio/wav", "audio/mp4"]
+    }
+  },
+  {
+    id: "runtime_chatterbox_mlx_sidecar",
+    adapterId: "chatterbox-mlx",
+    runtime: "mlx",
+    version: "sidecar-v1",
+    capabilities: {
+      protocol: "dreamreader-tts-sidecar/v1",
+      engines: ["chatterbox-multilingual-mlx"],
+      output: ["audio/wav", "audio/mp4"],
+      prosodyControls: ["exaggeration", "cfgWeight", "pauseAfterMs"]
     }
   },
   {
@@ -225,6 +260,7 @@ export class RuntimeService {
     const manifests = await this.db.query.runtimeManifests.findMany()
     const qwenProsody = models.find((model) => model.id === QWEN_PROSODY_MODEL_ID)
     const qwenTtsReady = sidecarReady(models, manifests, "qwen3-tts-mlx")
+    const chatterboxReady = sidecarReady(models, manifests, "chatterbox-mlx")
     const f5Ready = sidecarReady(models, manifests, "f5-tts-pt-br")
     return [
       {
@@ -257,6 +293,14 @@ export class RuntimeService {
         detail: f5Ready
           ? "F5-TTS PT-BR model and PyTorch sidecar are configured for synthesis"
           : "Install the F5-TTS PT-BR model and register an f5-tts-pt-br sidecar executable"
+      },
+      {
+        id: "chatterbox-tts-sidecar",
+        label: "Chatterbox Multilingual MLX Sidecar",
+        status: chatterboxReady ? "available" : "not_configured",
+        detail: chatterboxReady
+          ? "Chatterbox Multilingual model and MLX sidecar are configured for synthesis"
+          : "Install the Chatterbox Multilingual MLX model and register a chatterbox-mlx sidecar executable"
       },
       {
         id: "device",
@@ -1366,6 +1410,9 @@ function sidecarName(adapterId: string): string {
   if (adapterId === "qwen3-tts-mlx") {
     return "Qwen3-TTS MLX"
   }
+  if (adapterId === "chatterbox-mlx") {
+    return "Chatterbox Multilingual MLX"
+  }
   if (adapterId === "f5-tts-pt-br") {
     return "F5-TTS PT-BR PyTorch"
   }
@@ -1375,6 +1422,9 @@ function sidecarName(adapterId: string): string {
 function requirementsPathForAdapter(adapterId: string): string | undefined {
   if (adapterId === "qwen3-tts-mlx") {
     return path.join(projectRoot(), "sidecars", "tts", "requirements-qwen3-tts-mlx.txt")
+  }
+  if (adapterId === "chatterbox-mlx") {
+    return path.join(projectRoot(), "sidecars", "tts", "requirements-chatterbox-mlx.txt")
   }
   if (adapterId === "f5-tts-pt-br") {
     return path.join(projectRoot(), "sidecars", "tts", "requirements-f5-tts-ptbr.txt")
@@ -1453,6 +1503,9 @@ function modelForPath(modelPath: string): RecommendedModel {
   }
   if (normalized.includes("qwen3-tts")) {
     return recommendedModelById("model_qwen3_tts_06b_base_mlx")
+  }
+  if (normalized.includes("chatterbox")) {
+    return recommendedModelById("model_chatterbox_multilingual_mlx")
   }
   if (normalized.includes("f5") || normalized.endsWith(".safetensors")) {
     return recommendedModelById("model_f5_tts_ptbr_pytorch")
@@ -1596,6 +1649,9 @@ function adapterIdForEngine(engineId: string): string {
   if (engineId.startsWith("qwen3-tts-")) {
     return "qwen3-tts-mlx"
   }
+  if (engineId === "chatterbox-multilingual-mlx") {
+    return "chatterbox-mlx"
+  }
   if (engineId === "f5-tts-pt-br") {
     return "f5-tts-pt-br"
   }
@@ -1624,16 +1680,21 @@ function acceleratorForModel(model: RecommendedModel): string {
 
 function capabilitiesForModel(model: RecommendedModel): Record<string, unknown> {
   const runtime = runtimeForModel(model)
+  const isChatterbox = model.engineId === "chatterbox-multilingual-mlx"
   return {
     id: model.engineId,
     displayName: model.name,
     runtime,
     modelFormat: model.format,
-    languages: model.engineId === "f5-tts-pt-br" ? ["pt-BR"] : ["pt-BR", "en"],
+    languages: isChatterbox
+      ? ["pt-BR", "pt", "en", "es", "fr", "de", "it", "ja", "ko", "zh", "ar", "da", "el", "fi", "he", "hi", "ms", "nl", "no", "pl", "ru", "sv", "sw", "tr"]
+      : model.engineId === "f5-tts-pt-br"
+        ? ["pt-BR"]
+        : ["pt-BR", "en"],
     supportsVoiceClone:
-      model.engineId === "f5-tts-pt-br" || model.engineId === "qwen3-tts-06b-mlx" || model.engineId === "qwen3-tts-17b-base-mlx",
+      isChatterbox || model.engineId === "f5-tts-pt-br" || model.engineId === "qwen3-tts-06b-mlx" || model.engineId === "qwen3-tts-17b-base-mlx",
     supportsNaturalLanguageInstruction: model.engineId === "qwen3-tts-17b-mlx",
-    supportsDiscreteEmotion: model.engineId === "qwen3-tts-17b-mlx",
+    supportsDiscreteEmotion: isChatterbox || model.engineId === "qwen3-tts-17b-mlx",
     supportsBatch: true,
     supportsStreaming: false,
     supportsSegmentTimestamps: model.engineId !== "f5-tts-pt-br",
@@ -1653,6 +1714,9 @@ function projectLocalModelPathFor(model: RecommendedModel): string | undefined {
   if (model.id === "model_qwen3_tts_17b_base_mlx") {
     return path.join(projectLocalRoot(), "models", QWEN3_TTS_17B_BASE_MODEL_DIR_NAME)
   }
+  if (model.id === "model_chatterbox_multilingual_mlx") {
+    return path.join(projectLocalRoot(), "models", CHATTERBOX_MULTILINGUAL_MODEL_DIR_NAME)
+  }
   if (model.id === "model_f5_tts_ptbr_pytorch") {
     return path.join(projectLocalRoot(), "models", F5_TTS_MODEL_DIR_NAME)
   }
@@ -1669,7 +1733,8 @@ async function modelPathReady(model: RecommendedModel, modelPath: string): Promi
   if (
     model.id === "model_qwen3_tts_06b_base_mlx" ||
     model.id === "model_qwen3_tts_17b_customvoice_mlx" ||
-    model.id === "model_qwen3_tts_17b_base_mlx"
+    model.id === "model_qwen3_tts_17b_base_mlx" ||
+    model.id === "model_chatterbox_multilingual_mlx"
   ) {
     return (await exists(path.join(modelPath, "config.json"))) || hasAnyModelFile(modelPath, [".safetensors", ".npz"])
   }
@@ -1707,6 +1772,9 @@ async function detectedRuntimeForManifest(adapterId: string): Promise<
 function sidecarScriptForAdapter(adapterId: string): string | undefined {
   if (adapterId === "qwen3-tts-mlx") {
     return path.join(projectRoot(), "sidecars", "tts", "qwen3_tts_mlx_sidecar.py")
+  }
+  if (adapterId === "chatterbox-mlx") {
+    return path.join(projectRoot(), "sidecars", "tts", "chatterbox_mlx_sidecar.py")
   }
   if (adapterId === "f5-tts-pt-br") {
     return path.join(projectRoot(), "sidecars", "tts", "f5_tts_ptbr_sidecar.py")

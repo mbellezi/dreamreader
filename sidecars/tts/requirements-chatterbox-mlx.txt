@@ -1,0 +1,3 @@
+mlx-audio
+soundfile
+huggingface_hub[hf_xet]

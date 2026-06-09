@@ -315,8 +315,10 @@ export type TtsGenerationSeed = z.infer<typeof TtsGenerationSeedSchema>;
 export const TtsModelSettingsSchema = z
   .object({
     cfgStrength: z.number().min(0).max(10).optional(),
+    cfgWeight: z.number().min(0).max(2).optional(),
     crossFadeDuration: z.number().min(0).max(2).optional(),
     doSample: z.boolean().optional(),
+    exaggeration: z.number().min(0).max(1.5).optional(),
     maxNewTokens: z.number().int().positive().max(32_768).optional(),
     nfeStep: z.number().int().min(1).max(128).optional(),
     nonStreamingMode: z.boolean().optional(),

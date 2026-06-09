@@ -13,6 +13,7 @@ export type BuiltInVoicePreset = {
 }
 
 const QWEN_17B_ENGINE_ID = "qwen3-tts-17b-mlx"
+const CHATTERBOX_ENGINE_ID = "chatterbox-multilingual-mlx"
 
 const qwenVoiceDesignPresets = [
   {
@@ -53,6 +54,25 @@ export const builtInVoicePresets: BuiltInVoicePreset[] = [
       preset: "pt-br-neutral"
     },
     engineIds: ["dreamreader-local-tts"],
+    bindingKind: "preset"
+  },
+  {
+    id: "voice_chatterbox_ptbr_neutral",
+    name: "Chatterbox PT-BR neutro",
+    description: "Preset neutro para Chatterbox Multilingual em portugues brasileiro.",
+    language: "pt-BR",
+    tags: ["chatterbox", "pt-BR", "narrador"],
+    source: {
+      provider: "chatterbox",
+      preset: "pt-br-neutral"
+    },
+    settings: {
+      preset: "pt-br-neutral",
+      cfgWeight: 0.5,
+      exaggeration: 0.5,
+      temperature: 0.8
+    },
+    engineIds: [CHATTERBOX_ENGINE_ID],
     bindingKind: "preset"
   },
   ...qwenVoiceDesignPresets.map((preset) => ({

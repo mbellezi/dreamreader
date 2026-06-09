@@ -102,15 +102,16 @@ Limites conhecidos da fase 3:
 - Download direto do `Qwen3-4B-Instruct-2507 GGUF Q4_K_M` recomendado para prosodia.
 - Provider real de prosodia GGUF via `node-llama-cpp`, ativado quando o arquivo local e o runtime opcional estao disponiveis.
 - Fallback automatico para o analisador local estruturado quando o Qwen GGUF ou `node-llama-cpp` nao estao instalados.
-- Registro dos motores `qwen3-tts-06b-mlx`, `qwen3-tts-17b-mlx`, `qwen3-tts-17b-base-mlx` e `f5-tts-pt-br` em `tts_engines`.
+- Registro dos motores `qwen3-tts-06b-mlx`, `qwen3-tts-17b-mlx`, `qwen3-tts-17b-base-mlx`, `chatterbox-multilingual-mlx` e `f5-tts-pt-br` em `tts_engines`.
 - Registro de manifests de runtime em `runtime_manifests` para futuros sidecars Python/Swift/MLX/PyTorch.
-- Adapters sidecar `qwen3-tts-mlx` e `f5-tts-pt-br` por protocolo supervisionado pelo main process.
+- Adapters sidecar `qwen3-tts-mlx`, `chatterbox-mlx` e `f5-tts-pt-br` por protocolo supervisionado pelo main process.
 - Sintese neural habilitada quando o modelo TTS esta instalado e o `runtime_manifest` aponta para um executavel local compativel.
-- Runtime Python local standalone em `.dreamreader-local/`, ignorada pelo git, para sidecars Qwen3-TTS/F5-TTS-pt-br e pesos de modelo por pasta local.
+- Runtime Python local standalone em `.dreamreader-local/`, ignorada pelo git, para sidecars Qwen3-TTS/Chatterbox/F5-TTS-pt-br e pesos de modelo por pasta local.
 - Validacao de caminhos de saida do sidecar dentro do diretorio do job antes de importar assets.
 - Seletor de motor, voz, qualidade e narracao expressiva no painel de audio por capitulo.
 - Persistencia de perfis de voz, amostras autorizadas e bindings por engine em `voice_profiles`, `voice_samples` e `voice_engine_bindings`.
 - Qwen3-TTS Base (`0.6B` e `1.7B Base`) exige voz clonada com audio de referencia e transcricao; presets por prompt ficam restritos ao `1.7B VoiceDesign`.
+- Chatterbox Multilingual MLX suporta portugues via `lang_code=pt`, voz padrao ou clonagem por referencia opcional, e prosodia parametrica por `exaggeration`/`cfgWeight`.
 - Gerenciador local de vozes clonadas no main process, com consentimento obrigatorio, copia da amostra para `voices/`, binding compativel e preview WAV local.
 - Dicionario de pronuncia global e por livro em `pronunciation_entries`, aplicado ao `NarrationPlan` e versionado na chave de cache.
 - Exclusao de audio/cache por capitulo, removendo jobs, segmentos, assets de audio e entrada de audiobook.
@@ -119,7 +120,7 @@ Limites conhecidos da fase 3:
 
 Limites conhecidos da fase 4:
 
-- Os sidecars Qwen3-TTS/F5-TTS sao executaveis locais configuraveis; o repositorio nao empacota Python/MLX/PyTorch nem pesos de modelo.
+- Os sidecars Qwen3-TTS/Chatterbox/F5-TTS sao executaveis locais configuraveis; o repositorio nao empacota Python/MLX/PyTorch nem pesos de modelo.
 - Downloads multi-arquivo de snapshots TTS continuam como instalacao por pasta local.
 - O export M4B ainda e manifest-only ate a fase de empacotamento/encoder.
 

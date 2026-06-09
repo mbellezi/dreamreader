@@ -99,8 +99,10 @@ export type ReaderPreferences = {
 
 export type TtsModelSettings = {
   cfgStrength?: number
+  cfgWeight?: number
   crossFadeDuration?: number
   doSample?: boolean
+  exaggeration?: number
   maxNewTokens?: number
   nfeStep?: number
   nonStreamingMode?: boolean

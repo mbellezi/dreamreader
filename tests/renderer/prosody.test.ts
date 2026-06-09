@@ -37,6 +37,10 @@ describe("prosodyEngineSupport", () => {
     expect(prosodyEngineSupport("qwen3-tts-17b-base-mlx")).toBe("reference")
   })
 
+  it("classifies Chatterbox as parameter-control driven", () => {
+    expect(prosodyEngineSupport("chatterbox-multilingual-mlx")).toBe("controls")
+  })
+
   it("treats unknown/undefined engines as reference-driven", () => {
     expect(prosodyEngineSupport(undefined)).toBe("reference")
     expect(prosodyEngineSupport("something-else")).toBe("reference")

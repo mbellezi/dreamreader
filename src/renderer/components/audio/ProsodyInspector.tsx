@@ -4,6 +4,7 @@ import type { TranslationFn } from "@renderer/app/types"
 import {
   emotionChipClass,
   intensityPercent,
+  type ProsodyEngineSupport,
   prosodyEngineSupport,
   summarizeProsody
 } from "@renderer/lib/prosody"
@@ -117,7 +118,7 @@ function ProsodySegmentCard({
   t
 }: {
   segment: TtsSegment
-  support: "instruction" | "reference"
+  support: ProsodyEngineSupport
   t: TranslationFn
 }) {
   const prosody = segment.prosody
@@ -157,9 +158,9 @@ function ProsodySegmentCard({
         <p
           className={cn(
             "mt-2 rounded-sm bg-background px-2 py-1 text-xs",
-            support === "reference" && "text-muted-foreground line-through decoration-muted-foreground/50"
+            support !== "instruction" && "text-muted-foreground line-through decoration-muted-foreground/50"
           )}
-          title={support === "reference" ? t("studio.prosody.engineSupport.reference") : undefined}
+          title={support !== "instruction" ? t(`studio.prosody.engineSupport.${support}`) : undefined}
         >
           {prosody.instructionPtBr}
         </p>

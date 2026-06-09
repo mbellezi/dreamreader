@@ -10,6 +10,9 @@ Data: 2026-06-06.
 - F5-TTS-pt-br no Hugging Face: modelo especializado em portugues brasileiro, baseado em F5-TTS, com licenca `cc-by-nc-4.0`. A pagina recomenda lower case e `num2words` para numeros.
   - https://huggingface.co/firstpixel/F5-TTS-pt-br
 
+- Chatterbox Multilingual MLX: conversao `mlx-community/chatterbox-fp16` do Chatterbox para `mlx-audio`, com suporte a 23 idiomas incluindo portugues via `lang_code=pt`, voz de referencia opcional e controles de expressividade.
+  - https://huggingface.co/mlx-community/chatterbox-fp16
+
 - PGlite: documentacao indica uso em Node/Bun/Deno e browser, persistencia por filesystem/IndexedDB, queries parametrizadas e extensoes.
   - https://pglite.dev/docs/
   - https://pglite.dev/docs/orm-support
@@ -49,6 +52,7 @@ Data: 2026-06-06.
 - O maior risco nao e React/Electron; e empacotar modelos, Python, dependencias nativas e GPU de forma portavel.
 - F5-TTS-pt-br pode ser excelente para PT-BR, mas a licenca `cc-by-nc-4.0` precisa ser considerada se houver uso comercial.
 - Qwen3-TTS parece oferecer variantes mais flexiveis, mas ainda exige validacao de qualidade em PT-BR e custo de inferencia.
+- Chatterbox Multilingual MLX e um candidato forte para Apple Silicon quando a prioridade e voz clonavel multilíngue com suporte direto a portugues, mas ainda precisa de benchmark de qualidade/RTF no app.
 - O uso de `node-llama-cpp` deve ser desenhado como servico do main process desde o inicio.
 - Para melhor performance em Apple Silicon, a arquitetura deve permitir MLX como runtime preferencial onde houver suporte estavel, mantendo `node-llama-cpp` + Metal como baseline GGUF.
 - PyTorch MPS e uma opcao importante para modelos que ainda nao tenham runtime MLX confiavel, especialmente F5-TTS-pt-br.

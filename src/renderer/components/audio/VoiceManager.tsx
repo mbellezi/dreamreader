@@ -6,7 +6,7 @@ import { cn } from "@renderer/lib/utils"
 import { pickPreviewEngineId } from "@renderer/lib/voicePreview"
 import type { RuntimeModel, VoiceProfile } from "@renderer/types"
 
-const CLONE_ENGINE_IDS = ["qwen3-tts-06b-mlx", "qwen3-tts-17b-base-mlx", "f5-tts-pt-br"]
+const CLONE_ENGINE_IDS = ["qwen3-tts-06b-mlx", "qwen3-tts-17b-base-mlx", "chatterbox-multilingual-mlx", "f5-tts-pt-br"]
 const DESIGN_ENGINE_ID = "qwen3-tts-17b-mlx"
 const REFERENCE_WARN_MS = 12_000
 

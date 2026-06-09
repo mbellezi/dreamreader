@@ -21,6 +21,10 @@ MODELS = {
         "repo_id": "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-4bit",
         "local_dir": MODELS_ROOT / "qwen3-tts-17b-base-mlx",
     },
+    "chatterbox-multilingual-mlx": {
+        "repo_id": "mlx-community/chatterbox-fp16",
+        "local_dir": MODELS_ROOT / "chatterbox-multilingual-mlx",
+    },
     "f5-tts-pt-br": {
         "repo_id": "firstpixel/F5-TTS-pt-br",
         "local_dir": MODELS_ROOT / "f5-tts-pt-br",

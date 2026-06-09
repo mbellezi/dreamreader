@@ -39,6 +39,13 @@ const f5Defaults: TtsModelSettings = {
   targetRms: 0.1
 }
 
+const chatterboxDefaults: TtsModelSettings = {
+  cfgWeight: 0.5,
+  exaggeration: 0.5,
+  maxNewTokens: 2048,
+  temperature: 0.8
+}
+
 const qwenFields: AudioModelSettingField[] = [
   numberField("temperature", 0, 2, 0.05),
   numberField("topK", 0, 200, 1),
@@ -63,6 +70,13 @@ const f5Fields: AudioModelSettingField[] = [
   booleanField("removeSilence")
 ]
 
+const chatterboxFields: AudioModelSettingField[] = [
+  numberField("temperature", 0, 2, 0.05),
+  numberField("exaggeration", 0, 1.5, 0.05),
+  numberField("cfgWeight", 0, 2, 0.05),
+  numberField("maxNewTokens", 1, 32768, 128)
+]
+
 const qwenLanguageOptions: AudioLanguageOption[] = [
   { labelKey: "audio.language.auto", value: "Auto" },
   { labelKey: "audio.language.portuguese", value: "Portuguese" },
@@ -77,9 +91,38 @@ const qwenLanguageOptions: AudioLanguageOption[] = [
   { labelKey: "audio.language.italian", value: "Italian" }
 ]
 
+const chatterboxLanguageOptions: AudioLanguageOption[] = [
+  { labelKey: "audio.language.portuguese", value: "pt" },
+  { labelKey: "audio.language.english", value: "en" },
+  { labelKey: "audio.language.spanish", value: "es" },
+  { labelKey: "audio.language.french", value: "fr" },
+  { labelKey: "audio.language.german", value: "de" },
+  { labelKey: "audio.language.italian", value: "it" },
+  { labelKey: "audio.language.japanese", value: "ja" },
+  { labelKey: "audio.language.korean", value: "ko" },
+  { labelKey: "audio.language.chinese", value: "zh" },
+  { labelKey: "audio.language.arabic", value: "ar" },
+  { labelKey: "audio.language.danish", value: "da" },
+  { labelKey: "audio.language.greek", value: "el" },
+  { labelKey: "audio.language.finnish", value: "fi" },
+  { labelKey: "audio.language.hebrew", value: "he" },
+  { labelKey: "audio.language.hindi", value: "hi" },
+  { labelKey: "audio.language.malay", value: "ms" },
+  { labelKey: "audio.language.dutch", value: "nl" },
+  { labelKey: "audio.language.norwegian", value: "no" },
+  { labelKey: "audio.language.polish", value: "pl" },
+  { labelKey: "audio.language.russian", value: "ru" },
+  { labelKey: "audio.language.swedish", value: "sv" },
+  { labelKey: "audio.language.swahili", value: "sw" },
+  { labelKey: "audio.language.turkish", value: "tr" }
+]
+
 export function defaultModelSettingsForEngine(engineId: string): TtsModelSettings {
   if (isQwenEngine(engineId)) {
     return { ...qwenDefaults }
+  }
+  if (isChatterboxEngine(engineId)) {
+    return { ...chatterboxDefaults }
   }
   if (engineId === "f5-tts-pt-br") {
     return { ...f5Defaults }
@@ -91,6 +134,9 @@ export function modelSettingFieldsForEngine(engineId: string): AudioModelSetting
   if (isQwenEngine(engineId)) {
     return qwenFields
   }
+  if (isChatterboxEngine(engineId)) {
+    return chatterboxFields
+  }
   if (engineId === "f5-tts-pt-br") {
     return f5Fields
   }
@@ -101,12 +147,18 @@ export function languageOptionsForEngine(engineId: string): AudioLanguageOption[
   if (isQwenEngine(engineId)) {
     return qwenLanguageOptions
   }
+  if (isChatterboxEngine(engineId)) {
+    return chatterboxLanguageOptions
+  }
   return []
 }
 
 export function defaultGenerationLanguageForEngine(engineId: string): string | undefined {
   if (isQwenEngine(engineId)) {
     return "Portuguese"
+  }
+  if (isChatterboxEngine(engineId)) {
+    return "pt"
   }
   return undefined
 }
@@ -148,6 +200,10 @@ export function normalizeSeed(value: unknown): number {
 
 function isQwenEngine(engineId: string): boolean {
   return engineId.startsWith("qwen3-tts-")
+}
+
+function isChatterboxEngine(engineId: string): boolean {
+  return engineId === "chatterbox-multilingual-mlx"
 }
 
 function booleanField(key: keyof TtsModelSettings): AudioModelSettingField {

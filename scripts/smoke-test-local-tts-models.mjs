@@ -29,6 +29,12 @@ const modelDefinitions = {
     modelPath: path.join(localRoot, "models", "qwen3-tts-17b-base-mlx"),
     sidecarScript: path.join(projectRoot, "sidecars", "tts", "qwen3_tts_mlx_sidecar.py")
   },
+  "chatterbox-multilingual-mlx": {
+    adapterId: "chatterbox-mlx",
+    engineId: "chatterbox-multilingual-mlx",
+    modelPath: path.join(localRoot, "models", "chatterbox-multilingual-mlx"),
+    sidecarScript: path.join(projectRoot, "sidecars", "tts", "chatterbox_mlx_sidecar.py")
+  },
   "f5-tts-pt-br": {
     adapterId: "f5-tts-pt-br",
     engineId: "f5-tts-pt-br",
@@ -66,6 +72,10 @@ F5-TTS needs a reference voice:
 Qwen3-TTS 1.7B Base clone smoke needs a reference voice:
   DREAMREADER_QWEN_REFERENCE_AUDIO=/path/ref.wav
   DREAMREADER_QWEN_REFERENCE_TEXT="transcript of the reference audio"
+
+Chatterbox can run with its default voice or optional reference cloning:
+  DREAMREADER_CHATTERBOX_REFERENCE_AUDIO=/path/ref.wav
+  DREAMREADER_CHATTERBOX_REFERENCE_TEXT="optional transcript"
 `)
     process.exit(0)
   }
@@ -142,6 +152,7 @@ function runSidecar(definition, outputDirectory) {
       jobId: `tts_smoke_${Date.now()}`,
       modelPath: definition.modelPath,
       outputDirectory,
+      generationLanguage: definition.engineId === "chatterbox-multilingual-mlx" ? "pt" : undefined,
       quality: "standard",
       referenceAudioPath: reference?.audioPath,
       referenceText: reference?.text,
@@ -161,7 +172,7 @@ function runSidecar(definition, outputDirectory) {
             prosody: {
               emotion: "neutral",
               intensity: 0.35,
-              pace: 1,
+              pace: "normal",
               pauseAfterMs: 120,
               instructionPtBr: "Narrar em portugues brasileiro, com voz natural e neutra."
             }
@@ -217,6 +228,27 @@ function runSidecar(definition, outputDirectory) {
 }
 
 function voiceBindingFor(definition) {
+  if (definition.adapterId === "chatterbox-mlx") {
+    return {
+      id: "smoke-binding-chatterbox",
+      voiceProfileId: "voice_chatterbox_ptbr_neutral",
+      engineId: definition.engineId,
+      adapterId: definition.adapterId,
+      status: "ready",
+      bindingKind: "preset",
+      settings: {
+        preset: "pt-br-neutral",
+        cfgWeight: 0.5,
+        exaggeration: 0.5,
+        temperature: 0.8
+      },
+      compatibility: {
+        builtIn: true
+      },
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }
+  }
   if (definition.adapterId !== "qwen3-tts-mlx") {
     return undefined
   }
@@ -257,6 +289,15 @@ function referenceFor(engineId) {
     assertExists(audioPath, "Qwen3-TTS reference audio not found")
     return { audioPath: path.resolve(audioPath), text }
   }
+  if (engineId === "chatterbox-multilingual-mlx") {
+    const audioPath = process.env.DREAMREADER_CHATTERBOX_REFERENCE_AUDIO
+    const text = process.env.DREAMREADER_CHATTERBOX_REFERENCE_TEXT
+    if (!audioPath) {
+      return undefined
+    }
+    assertExists(audioPath, "Chatterbox reference audio not found")
+    return { audioPath: path.resolve(audioPath), text }
+  }
   if (engineId !== "f5-tts-pt-br") {
     return undefined
   }
@@ -286,16 +327,25 @@ function assertResult(result) {
 
 function parseJson(stdout) {
   const trimmed = stdout.trim()
-  try {
-    return JSON.parse(trimmed)
-  } catch {
-    const start = trimmed.indexOf("{")
-    const end = trimmed.lastIndexOf("}")
-    if (start < 0 || end <= start) {
-      throw new Error("stdout did not include a JSON object")
+  const jsonLines = trimmed
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("{") && line.endsWith("}"))
+  for (const line of jsonLines.reverse()) {
+    try {
+      const parsed = JSON.parse(line)
+      if (parsed?.type === "result") {
+        const { type: _type, ...result } = parsed
+        return result
+      }
+      if (parsed?.schemaVersion === "dreamreader-tts-sidecar-result/v1") {
+        return parsed
+      }
+    } catch {
+      // Keep scanning earlier JSON lines.
     }
-    return JSON.parse(trimmed.slice(start, end + 1))
   }
+  throw new Error("stdout did not include a sidecar result JSON object")
 }
 
 function inspectWav(audioPath) {

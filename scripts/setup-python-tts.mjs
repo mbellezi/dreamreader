@@ -14,6 +14,7 @@ const downloadsRoot = path.join(localRoot, "downloads")
 const qwen06bModelDir = path.join(modelsRoot, "qwen3-tts-06b-mlx")
 const qwen17bModelDir = path.join(modelsRoot, "qwen3-tts-17b-mlx")
 const qwen17bBaseModelDir = path.join(modelsRoot, "qwen3-tts-17b-base-mlx")
+const chatterboxModelDir = path.join(modelsRoot, "chatterbox-multilingual-mlx")
 const f5ModelDir = path.join(modelsRoot, "f5-tts-pt-br")
 const vocosModelDir = path.join(modelsRoot, "vocos-mel-24khz")
 
@@ -41,6 +42,7 @@ mkdirSync(downloadsRoot, { recursive: true })
 mkdirSync(qwen06bModelDir, { recursive: true })
 mkdirSync(qwen17bModelDir, { recursive: true })
 mkdirSync(qwen17bBaseModelDir, { recursive: true })
+mkdirSync(chatterboxModelDir, { recursive: true })
 mkdirSync(f5ModelDir, { recursive: true })
 mkdirSync(vocosModelDir, { recursive: true })
 
@@ -77,6 +79,15 @@ writeModelReadme(
   ]
 )
 writeModelReadme(
+  chatterboxModelDir,
+  [
+    "Chatterbox Multilingual MLX local model folder.",
+    "",
+    "Put mlx-community/chatterbox-fp16 files here, or select another mlx-audio compatible Chatterbox folder in the app.",
+    "This model supports Portuguese via lang_code=pt and exposes emotion exaggeration/CFG controls."
+  ]
+)
+writeModelReadme(
   f5ModelDir,
   [
     "F5-TTS PT-BR local model folder.",
@@ -99,10 +110,12 @@ console.log(`Python executable: ${path.relative(projectRoot, pythonExecutable)}`
 console.log(`Qwen3-TTS 0.6B folder: ${path.relative(projectRoot, qwen06bModelDir)}`)
 console.log(`Qwen3-TTS 1.7B VoiceDesign folder: ${path.relative(projectRoot, qwen17bModelDir)}`)
 console.log(`Qwen3-TTS 1.7B Base folder: ${path.relative(projectRoot, qwen17bBaseModelDir)}`)
+console.log(`Chatterbox Multilingual folder: ${path.relative(projectRoot, chatterboxModelDir)}`)
 console.log(`F5-TTS PT-BR folder: ${path.relative(projectRoot, f5ModelDir)}`)
 console.log(`F5-TTS Vocos folder: ${path.relative(projectRoot, vocosModelDir)}`)
 console.log("Install Python dependencies explicitly when you are ready:")
 console.log(`  ${path.relative(projectRoot, pythonExecutable)} -m pip install -r sidecars/tts/requirements-qwen3-tts-mlx.txt`)
+console.log(`  ${path.relative(projectRoot, pythonExecutable)} -m pip install -r sidecars/tts/requirements-chatterbox-mlx.txt`)
 console.log(`  ${path.relative(projectRoot, pythonExecutable)} -m pip install -r sidecars/tts/requirements-f5-tts-ptbr.txt`)
 
 function writeModelReadme(directory, lines) {

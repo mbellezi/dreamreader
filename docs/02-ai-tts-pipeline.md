@@ -170,6 +170,7 @@ O adapter e responsavel por mapear o plano canonico para o formato do modelo:
 - Qwen3-TTS VoiceDesign: converter `instructionPtBr` para instrucao natural curta no idioma esperado/suportado.
 - Qwen3-TTS CustomVoice: mapear emocao/ritmo para presets, quando houver.
 - Qwen3-TTS Base: usar voz/referencia e ignorar campos nao suportados sem falhar.
+- Chatterbox Multilingual MLX: mapear emocao/intensidade para `exaggeration`, ritmo para `cfgWeight`, idioma PT-BR para `lang_code=pt`, e usar pausas do plano na montagem do capitulo.
 - F5-TTS-pt-br: aplicar normalizacao recomendada, lower case quando necessario, referencias de voz/emocao e marcadores discretos se disponiveis.
 
 Campos nao suportados nunca devem quebrar a geracao. Eles viram no-op com log estruturado.
@@ -181,15 +182,15 @@ O main process registra modelos recomendados em `model_assets` e controla downlo
 Implementado:
 
 - `Qwen3-4B-Instruct-2507 GGUF Q4_K_M` para analise de prosodia via `node-llama-cpp`.
-- Qwen3-TTS 0.6B, Qwen3-TTS 1.7B e F5-TTS-pt-br como modelos TTS reais registraveis por pasta local.
+- Qwen3-TTS 0.6B, Qwen3-TTS 1.7B, Chatterbox Multilingual MLX e F5-TTS-pt-br como modelos TTS reais registraveis por pasta local.
+- Sidecars de sintese neural para Qwen3-TTS, Chatterbox Multilingual MLX e F5-TTS-pt-br por protocolo supervisionado pelo main process.
+- Downloads de snapshots multi-arquivo para modelos TTS instalados em `.dreamreader-local/models`.
 - Progresso de download salvo no banco e exibido visualmente na UI.
 - Fallback local de prosodia quando o modelo GGUF ou runtime opcional nao existem.
 
 Ainda pendente:
 
-- Sidecars de sintese neural para os motores Qwen3-TTS e F5-TTS.
-- Downloads de snapshots multi-arquivo para modelos TTS que exigem pasta completa.
-- Healthcheck de runtime antes de habilitar sintese neural.
+- Execucao ativa de healthcheck antes de habilitar sintese neural.
 
 ### 6. Gerenciador de Vozes
 

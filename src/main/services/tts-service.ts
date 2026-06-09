@@ -186,6 +186,37 @@ const neuralTtsEngineDefinitions: TtsEngineDefinition[] = [
     }
   },
   {
+    id: "chatterbox-multilingual-mlx",
+    displayName: "Chatterbox Multilingual MLX",
+    version: "chatterbox-fp16",
+    adapterId: "chatterbox-mlx",
+    runtime: "mlx",
+    modelFormat: "mlx",
+    accelerator: "apple_metal",
+    installed: false,
+    capabilities: {
+      id: "chatterbox-multilingual-mlx",
+      displayName: "Chatterbox Multilingual MLX",
+      runtime: "mlx",
+      modelFormat: "mlx",
+      languages: ["pt-BR", "pt", "en", "es", "fr", "de", "it", "ja", "ko", "zh", "ar", "da", "el", "fi", "he", "hi", "ms", "nl", "no", "pl", "ru", "sv", "sw", "tr"],
+      supportsVoiceClone: true,
+      supportsNaturalLanguageInstruction: false,
+      supportsDiscreteEmotion: true,
+      supportsBatch: true,
+      supportsStreaming: false,
+      supportsSegmentTimestamps: true,
+      supportsSsmlLikeMarkup: false,
+      preferredInputCase: "preserve",
+      estimatedMemoryMb: 4096
+    },
+    performanceProfile: {
+      mode: "mlx-sidecar",
+      requiresSidecar: true,
+      prosodyControl: "exaggeration-cfg"
+    }
+  },
+  {
     id: "f5-tts-pt-br",
     displayName: "F5-TTS PT-BR",
     version: "pt-br",
@@ -1688,6 +1719,9 @@ function stableJsonString(value: unknown): string {
 function adapterIdForEngine(engineId: string): string {
   if (engineId.startsWith("qwen3-tts-")) {
     return "qwen3-tts-mlx"
+  }
+  if (engineId === "chatterbox-multilingual-mlx") {
+    return "chatterbox-mlx"
   }
   if (engineId === "f5-tts-pt-br") {
     return "f5-tts-pt-br"

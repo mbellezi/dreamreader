@@ -46,6 +46,17 @@ Observacoes:
 - F5-TTS-pt-br e forte para PT-BR, mas pode ser o caminho mais dificil de acelerar.
 - O adapter deve isolar dependencias e permitir substituir a implementacao sem mudar o pipeline.
 
+### Chatterbox Multilingual
+
+1. MLX via `mlx-audio`, preferencialmente em processo sidecar supervisionado.
+2. PyTorch apenas como fallback/POC fora do caminho principal.
+
+Observacoes:
+
+- O modelo MLX `mlx-community/chatterbox-fp16` suporta portugues via `lang_code=pt`.
+- A prosodia deve usar controles expostos pelo modelo (`exaggeration` e CFG), preservando o plano canonico do app.
+- Voz de referencia e opcional; quando usada, a amostra deve combinar com o idioma selecionado para evitar transferencia indesejada de sotaque.
+
 ## Processos Long-lived
 
 Nao iniciar Python ou carregar modelo por segmento. Cada runtime pesado deve funcionar como sidecar:
@@ -132,4 +143,3 @@ Antes do MVP de audio:
 - Benchmark F5-TTS-pt-br em PyTorch MPS e CPU.
 - Testar um capitulo com dialogo, numeros, abreviacoes e acentos.
 - Medir se rodar prosodia + TTS em paralelo piora o tempo total; a hipotese inicial e que serializar sera melhor para estabilidade.
-

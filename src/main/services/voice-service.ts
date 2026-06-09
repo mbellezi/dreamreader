@@ -72,7 +72,7 @@ export class VoiceService {
   async createFromReference(input: VoiceCloneInput): Promise<VoiceProfile> {
     await this.ensureReady()
     // A reference voice is shared across every installed engine that supports
-    // cloning (Qwen 0.6B Base, Qwen 1.7B Base and F5 use the same sample).
+    // cloning (Qwen Base, Chatterbox and F5 use the same managed sample).
     const engines = await this.db.query.ttsEngines.findMany()
     const cloneEngines = engines.filter(
       (engine) => engine.installed && jsonObject(engine.capabilitiesJson).supportsVoiceClone === true

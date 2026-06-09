@@ -173,6 +173,7 @@ Cada adapter converte isso:
 
 - Modelo com instrucao natural: gerar frase curta de instrucao.
 - Modelo com tags discretas: mapear para tag mais proxima.
+- Modelo com controles parametricos: mapear intensidade/emocao para parametros numericos e aplicar pausas no assembler.
 - Modelo sem controle emocional: ignorar com log `unsupported_prosody_field`.
 - Modelo com voz de referencia: preservar prosodia discreta e priorizar consistencia de voz.
 
@@ -202,9 +203,10 @@ O app registra adapters por manifesto e healthcheck. Isso permite trocar impleme
 
 Estado atual da fase 4:
 
-- `qwen3-tts-06b-mlx`, `qwen3-tts-17b-mlx`, `qwen3-tts-17b-base-mlx` e `f5-tts-pt-br` ja sao registrados como engines reais.
+- `qwen3-tts-06b-mlx`, `qwen3-tts-17b-mlx`, `qwen3-tts-17b-base-mlx`, `chatterbox-multilingual-mlx` e `f5-tts-pt-br` ja sao registrados como engines reais.
 - `qwen3-tts-06b-mlx` e `qwen3-tts-17b-base-mlx` operam como Qwen Base: exigem voz clonada por referencia (`ref_audio` + `ref_text`) e nao recebem instrucao natural de prosodia no sidecar.
 - `qwen3-tts-17b-mlx` opera como VoiceDesign: vozes disponiveis sao prompts de voz, nao clonagem por audio.
+- `chatterbox-multilingual-mlx` opera via MLX/`mlx-audio`: usa `lang_code=pt` para PT-BR, aceita referencia opcional e mapeia prosodia para `exaggeration`, `cfgWeight` e pausas.
 - A sintese neural permanece bloqueada ate existir sidecar/healthcheck configurado.
 - A prosodia expressiva tenta usar `Qwen3-4B-Instruct-2507 GGUF Q4_K_M` via `node-llama-cpp`; se nao houver runtime ou arquivo local, o app volta ao analisador estruturado local.
 - O painel de audio exibe progresso de download de modelos em tempo real.
