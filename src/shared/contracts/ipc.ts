@@ -76,6 +76,8 @@ import {
   VoiceDesignPromptInputSchema,
   VoiceFilterSchema,
   VoiceEngineBindingSchema,
+  VoiceExportResultSchema,
+  VoiceImportResultSchema,
   VoiceProfileSchema,
   VoiceSampleSchema,
 } from "./ai";
@@ -117,6 +119,8 @@ export {
   VoiceCloneInputSchema,
   VoiceDesignPromptInputSchema,
   VoiceEngineBindingSchema,
+  VoiceExportResultSchema,
+  VoiceImportResultSchema,
   VoiceProfileSchema,
   VoiceSampleSchema,
 };
@@ -142,6 +146,8 @@ export type {
   TtsJob,
   TtsModelSettings,
   VoiceEngineBinding,
+  VoiceExportResult,
+  VoiceImportResult,
   VoiceProfile,
   VoiceSample,
 } from "./ai";
@@ -185,6 +191,8 @@ export const IpcChannelSchema = z.enum([
   "voices.preview",
   "voices.update",
   "voices.delete",
+  "voices.export",
+  "voices.import",
   "voices.listCompatible",
   "audiobook.getExport",
   "audiobook.listLibraryStatus",
@@ -360,6 +368,18 @@ export const IpcContractSchemas = {
   "voices.delete": {
     request: z.object({ voiceProfileId: IdSchema }),
     response: createIpcResponseSchema(z.object({ deleted: z.literal(true) })),
+  },
+  "voices.export": {
+    request: z.object({ voiceProfileId: IdSchema }),
+    response: createIpcResponseSchema(VoiceExportResultSchema),
+  },
+  "voices.import": {
+    request: z
+      .object({
+        archivePaths: z.array(z.string().trim().min(1)).default([]),
+      })
+      .default({ archivePaths: [] }),
+    response: createIpcResponseSchema(VoiceImportResultSchema),
   },
   "voices.listCompatible": {
     request: z.object({ engineId: IdSchema.optional() }),

@@ -188,7 +188,9 @@ const api = {
     selectReferenceAudio: () => invoke("voices.selectReferenceAudio", {}),
     preview: (voiceProfileId: string, engineId: string) => invoke("voices.preview", { voiceProfileId, engineId }),
     update: (input: Record<string, unknown>) => invoke("voices.update", input),
-    delete: (voiceProfileId: string) => invoke("voices.delete", { voiceProfileId })
+    delete: (voiceProfileId: string) => invoke("voices.delete", { voiceProfileId }),
+    export: (voiceProfileId: string) => invoke("voices.export", { voiceProfileId }),
+    import: (archivePaths?: string[]) => invoke("voices.import", { archivePaths: archivePaths ?? [] })
   },
   audiobook: {
     getExport: (bookId: string) => invoke("audiobook.getExport", { bookId }),

@@ -130,6 +130,26 @@ export function registerIpc(services: Services): void {
   handle("voices.preview", contract["voices.preview"].request, (input) => services.voices.preview(input))
   handle("voices.update", contract["voices.update"].request, (input) => services.voices.update(input))
   handle("voices.delete", contract["voices.delete"].request, (input) => services.voices.delete(input))
+  handle("voices.export", contract["voices.export"].request, async (input) => {
+    const selectedPath = (
+      await dialog.showSaveDialog({
+        defaultPath: await services.voices.exportFileName(input.voiceProfileId),
+        filters: [{ name: "DreamReader Voice", extensions: ["zip"] }]
+      })
+    ).filePath
+    return selectedPath ? services.voices.exportVoice({ voiceProfileId: input.voiceProfileId, targetPath: selectedPath }) : { exported: false }
+  })
+  handle("voices.import", contract["voices.import"].request, async (input) => {
+    const archivePaths = input.archivePaths.length
+      ? input.archivePaths
+      : (
+          await dialog.showOpenDialog({
+            properties: ["openFile", "multiSelections"],
+            filters: [{ name: "DreamReader Voice", extensions: ["zip"] }]
+          })
+        ).filePaths
+    return { imported: archivePaths.length ? await services.voices.importVoices({ archivePaths }) : [] }
+  })
   handle("voices.listCompatible", contract["voices.listCompatible"].request, (input) =>
     services.voices.listCompatible(input.engineId)
   )

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { PGlite } from "@electric-sql/pglite"
@@ -7,7 +7,7 @@ import { migrate } from "drizzle-orm/pglite/migrator"
 import { eq } from "drizzle-orm"
 import { afterEach, describe, expect, it } from "vitest"
 import * as schema from "../../src/main/db/schema"
-import { ttsEngines, voiceEngineBindings } from "../../src/main/db/schema"
+import { assets, ttsEngines, voiceEngineBindings } from "../../src/main/db/schema"
 import { AudiobookService } from "../../src/main/services/audiobook-service"
 import { TtsService } from "../../src/main/services/tts-service"
 import { VoiceService } from "../../src/main/services/voice-service"
@@ -165,6 +165,11 @@ describe("VoiceService", () => {
       const clonedSample = await db.query.voiceSamples.findFirst({ where: eq(schema.voiceSamples.voiceProfileId, cloned.id) })
       expect((clonedSample?.qualityJson as { sampleRate?: number; converted?: boolean }).sampleRate).toBe(22_050)
       expect((clonedSample?.qualityJson as { converted?: boolean }).converted).toBe(true)
+      const clonedSampleAsset = clonedSample
+        ? await db.query.assets.findFirst({ where: eq(assets.id, clonedSample.assetId) })
+        : undefined
+      expect(clonedSampleAsset?.path.startsWith(path.join(paths.voicesDir, cloned.id))).toBe(true)
+      expect(clonedSampleAsset?.path).not.toBe(samplePath)
       // A reference voice binds to every installed clone-capable engine.
       expect(await db.query.voiceEngineBindings.findMany({ where: eq(voiceEngineBindings.voiceProfileId, cloned.id) })).toHaveLength(2)
 
@@ -190,6 +195,31 @@ describe("VoiceService", () => {
           })
         ])
       )
+
+      const exportPath = path.join(paths.userData, "voz-exportada.zip")
+      await expect(service.exportVoice({ voiceProfileId: cloned.id, targetPath: exportPath })).resolves.toMatchObject({
+        exported: true,
+        path: exportPath
+      })
+      expect((await readFile(exportPath)).byteLength).toBeGreaterThan(0)
+
+      const [imported] = await service.importVoices({ archivePaths: [exportPath] })
+      expect(imported).toMatchObject({
+        kind: "imported",
+        name: cloned.name,
+        language: "pt-BR"
+      })
+      expect(imported.settings).toMatchObject({
+        compatibleEngineIds: expect.arrayContaining(["qwen3-tts-17b-base-mlx", "f5-tts-pt-br"])
+      })
+      const importedSample = await db.query.voiceSamples.findFirst({ where: eq(schema.voiceSamples.voiceProfileId, imported.id) })
+      const importedSampleAsset = importedSample
+        ? await db.query.assets.findFirst({ where: eq(assets.id, importedSample.assetId) })
+        : undefined
+      expect(importedSample?.transcript).toBe("Amostra curta.")
+      expect(importedSampleAsset?.path.startsWith(path.join(paths.voicesDir, imported.id))).toBe(true)
+      expect(importedSampleAsset?.path).not.toBe(samplePath)
+      expect(await db.query.voiceEngineBindings.findMany({ where: eq(voiceEngineBindings.voiceProfileId, imported.id) })).toHaveLength(2)
     } finally {
       await client.close()
     }

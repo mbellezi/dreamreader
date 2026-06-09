@@ -14,6 +14,8 @@ export {
   TtsModelSettingsSchema,
   VoiceDesignPromptInputSchema,
   VoiceEngineBindingSchema,
+  VoiceExportResultSchema,
+  VoiceImportResultSchema,
   VoiceProfileSchema,
   VoiceSampleSchema,
 } from "./ai";
@@ -33,6 +35,8 @@ export type {
   TtsModelSettings,
   VoiceDesignPromptInput,
   VoiceEngineBinding,
+  VoiceExportResult,
+  VoiceImportResult,
   VoiceProfile,
   VoiceSample,
 } from "./ai";

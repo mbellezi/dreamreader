@@ -605,6 +605,25 @@ export function App(): ReactElement {
     }
   }
 
+  const exportVoice = async (voiceProfileId: string) => {
+    setAudioLoading(true)
+    try {
+      await dreamreaderClient.exportVoice(voiceProfileId)
+    } finally {
+      setAudioLoading(false)
+    }
+  }
+
+  const importVoices = async () => {
+    setAudioLoading(true)
+    try {
+      await dreamreaderClient.importVoices()
+      await refreshActiveAudioView()
+    } finally {
+      setAudioLoading(false)
+    }
+  }
+
   const previewVoice = async (voiceProfileId: string, engineId: string) => dreamreaderClient.previewVoice(voiceProfileId, engineId)
 
   const listPronunciation = (bookId?: string) => dreamreaderClient.listPronunciationEntries(bookId)
@@ -926,6 +945,8 @@ export function App(): ReactElement {
                 onCreateVoiceFromReference={createVoiceFromReference}
                 onDeletePronunciation={deletePronunciation}
                 onDeleteVoice={deleteVoice}
+                onExportVoice={exportVoice}
+                onImportVoices={importVoices}
                 onListPronunciation={listPronunciation}
                 onOpenBook={openBookAudio}
                 onPauseJob={pauseTtsJob}

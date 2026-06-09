@@ -712,6 +712,35 @@ export const dreamreaderClient = {
     }
   },
 
+  async exportVoice(voiceProfileId: string): Promise<{ exported: boolean; path?: string }> {
+    const bridgeExport = window.dreamreader?.voices?.export
+
+    if (bridgeExport) {
+      const result = (await bridgeExport(voiceProfileId)) as Record<string, unknown>
+      return {
+        exported: Boolean(result.exported),
+        path: optionalString(result.path)
+      }
+    }
+
+    throw Object.assign(new Error("Voice export requires the Electron bridge"), {
+      code: "voice_export_requires_app_bridge"
+    })
+  },
+
+  async importVoices(archivePaths?: string[]): Promise<VoiceProfile[]> {
+    const bridgeImport = window.dreamreader?.voices?.import
+
+    if (bridgeImport) {
+      const result = (await bridgeImport(archivePaths)) as Record<string, unknown>
+      return toArray(result.imported).map(toVoiceProfile)
+    }
+
+    throw Object.assign(new Error("Voice import requires the Electron bridge"), {
+      code: "voice_import_requires_app_bridge"
+    })
+  },
+
   async previewVoice(voiceProfileId: string, engineId: string): Promise<string | null> {
     const bridgePreview = window.dreamreader?.voices?.preview
     if (bridgePreview) {

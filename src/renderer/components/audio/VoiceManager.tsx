@@ -1,4 +1,4 @@
-import { AlertTriangle, Check, FileAudio, Loader2, Mic2, Pencil, Play, Plus, Sparkles, Trash2, X } from "lucide-react"
+import { AlertTriangle, Check, Download, FileAudio, Loader2, Mic2, Pencil, Play, Plus, Sparkles, Trash2, Upload, X } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { SelectField } from "@renderer/components/common/Controls"
 import type { TranslationFn } from "@renderer/app/types"
@@ -19,6 +19,8 @@ export function VoiceManager({
   onCreateVoiceFromDesignPrompt,
   onUpdateVoice,
   onDeleteVoice,
+  onExportVoice,
+  onImportVoices,
   onSelectVoiceReferenceAudio,
   onPreviewVoice
 }: {
@@ -37,6 +39,8 @@ export function VoiceManager({
   onCreateVoiceFromDesignPrompt: (input: { engineId: string; language: string; name: string; prompt: string }) => Promise<VoiceProfile | void> | VoiceProfile | void
   onUpdateVoice: (input: { voiceProfileId: string; name: string }) => Promise<void> | void
   onDeleteVoice: (voiceProfileId: string) => Promise<void> | void
+  onExportVoice: (voiceProfileId: string) => Promise<void> | void
+  onImportVoices: () => Promise<void> | void
   onSelectVoiceReferenceAudio: () => Promise<{ path: string; durationMs?: number; sampleRate?: number } | null>
   onPreviewVoice: (voiceProfileId: string, engineId: string) => Promise<string | null>
 }) {
@@ -52,6 +56,7 @@ export function VoiceManager({
   const [designPrompt, setDesignPrompt] = useState("")
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState("")
+  const [importLoading, setImportLoading] = useState(false)
 
   const installedTtsModels = useMemo(
     () => models.filter((model) => model.kind === "tts" && model.installStatus === "available" && model.engineId),
@@ -123,6 +128,18 @@ export function VoiceManager({
     }
     setEditingId(null)
     setEditingName("")
+  }
+
+  const importVoicePackages = async () => {
+    if (importLoading || loading) {
+      return
+    }
+    setImportLoading(true)
+    try {
+      await onImportVoices()
+    } finally {
+      setImportLoading(false)
+    }
   }
 
   return (
@@ -222,7 +239,17 @@ export function VoiceManager({
       </div>
 
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold">{t("voiceManager.listTitle")}</h3>
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold">{t("voiceManager.listTitle")}</h3>
+          <button
+            className="inline-flex h-8 items-center justify-center gap-2 rounded-md border bg-background px-3 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+            disabled={loading || importLoading}
+            onClick={() => void importVoicePackages()}
+          >
+            {importLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Upload className="h-3.5 w-3.5" aria-hidden="true" />}
+            <span>{t("voiceManager.import")}</span>
+          </button>
+        </div>
         {customVoices.length ? (
           customVoices.map((voice) => (
             <VoiceRow
@@ -242,6 +269,7 @@ export function VoiceManager({
               onSaveRename={() => void saveRename(voice.id)}
               onCancelEdit={() => setEditingId(null)}
               onDeleteVoice={onDeleteVoice}
+              onExportVoice={onExportVoice}
             />
           ))
         ) : (
@@ -264,7 +292,8 @@ function VoiceRow({
   onChangeEditingName,
   onSaveRename,
   onCancelEdit,
-  onDeleteVoice
+  onDeleteVoice,
+  onExportVoice
 }: {
   voice: VoiceProfile
   previewEngineId: string | undefined
@@ -278,10 +307,12 @@ function VoiceRow({
   onSaveRename: () => void
   onCancelEdit: () => void
   onDeleteVoice: (voiceProfileId: string) => Promise<void> | void
+  onExportVoice: (voiceProfileId: string) => Promise<void> | void
 }) {
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewAssetId, setPreviewAssetId] = useState<string | null>(null)
   const [previewError, setPreviewError] = useState(false)
+  const [exportLoading, setExportLoading] = useState(false)
 
   const runPreview = async () => {
     if (!previewEngineId || previewLoading) {
@@ -301,6 +332,18 @@ function VoiceRow({
       setPreviewError(true)
     } finally {
       setPreviewLoading(false)
+    }
+  }
+
+  const exportVoice = async () => {
+    if (exportLoading || loading) {
+      return
+    }
+    setExportLoading(true)
+    try {
+      await onExportVoice(voice.id)
+    } finally {
+      setExportLoading(false)
     }
   }
 
@@ -353,6 +396,14 @@ function VoiceRow({
                 onClick={onStartEdit}
               >
                 <Pencil className="h-4 w-4" aria-hidden="true" />
+              </button>
+              <button
+                className="rounded-sm p-1 text-muted-foreground hover:text-foreground disabled:opacity-50"
+                disabled={loading || exportLoading}
+                title={t("voiceManager.export")}
+                onClick={() => void exportVoice()}
+              >
+                {exportLoading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Download className="h-4 w-4" aria-hidden="true" />}
               </button>
               <button className="rounded-sm p-1 text-muted-foreground hover:text-destructive" disabled={loading} title={t("voiceManager.delete")} onClick={() => onDeleteVoice(voice.id)}>
                 <Trash2 className="h-4 w-4" aria-hidden="true" />

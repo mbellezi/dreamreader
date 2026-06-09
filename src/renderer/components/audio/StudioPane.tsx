@@ -26,6 +26,8 @@ export function StudioPane({
   onCreatePronunciation,
   onDeletePronunciation,
   onDeleteVoice,
+  onExportVoice,
+  onImportVoices,
   onListPronunciation,
   onOpenBook,
   onPauseJob,
@@ -59,6 +61,8 @@ export function StudioPane({
   onCreatePronunciation: (input: { bookId?: string; pattern: string; replacement: string; scope: "global" | "book" }) => Promise<void>
   onDeletePronunciation: (id: string) => Promise<void>
   onDeleteVoice: (voiceProfileId: string) => Promise<void> | void
+  onExportVoice: (voiceProfileId: string) => Promise<void> | void
+  onImportVoices: () => Promise<void> | void
   onListPronunciation: (bookId?: string) => Promise<PronunciationEntry[]>
   onOpenBook: (bookId: string) => void
   onPauseJob: (jobId: string) => Promise<void> | void
@@ -151,6 +155,8 @@ export function StudioPane({
             onCreateVoiceFromDesignPrompt={onCreateVoiceFromDesignPrompt}
             onUpdateVoice={onUpdateVoice}
             onDeleteVoice={onDeleteVoice}
+            onExportVoice={onExportVoice}
+            onImportVoices={onImportVoices}
             onSelectVoiceReferenceAudio={onSelectVoiceReferenceAudio}
             onPreviewVoice={onPreviewVoice}
           />

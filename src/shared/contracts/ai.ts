@@ -440,6 +440,17 @@ export type VoiceDesignPromptInput = z.infer<
   typeof VoiceDesignPromptInputSchema
 >;
 
+export const VoiceExportResultSchema = z.object({
+  exported: z.boolean(),
+  path: z.string().trim().optional(),
+});
+export type VoiceExportResult = z.infer<typeof VoiceExportResultSchema>;
+
+export const VoiceImportResultSchema = z.object({
+  imported: z.array(VoiceProfileSchema),
+});
+export type VoiceImportResult = z.infer<typeof VoiceImportResultSchema>;
+
 export const PronunciationScopeSchema = z.enum(["global", "book"]);
 export type PronunciationScope = z.infer<typeof PronunciationScopeSchema>;
 

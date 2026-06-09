@@ -446,6 +446,8 @@ export type DreamReaderBridge = {
     preview?: (voiceProfileId: string, engineId: string) => Promise<unknown>
     update?: (input: Record<string, unknown>) => Promise<unknown>
     delete?: (voiceProfileId: string) => Promise<unknown>
+    export?: (voiceProfileId: string) => Promise<unknown>
+    import?: (archivePaths?: string[]) => Promise<unknown>
   }
   audiobook?: {
     getExport?: (bookId: string) => Promise<unknown>

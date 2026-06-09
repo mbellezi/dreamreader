@@ -1,10 +1,13 @@
 import { copyFile, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { and, asc, eq, inArray } from "drizzle-orm"
+import JSZip from "jszip"
+import { z } from "zod"
 import {
   VoiceEngineBindingSchema,
   VoiceProfileSchema,
   VoiceSampleSchema,
+  type NarrationPlan,
   type VoiceCloneInput,
   type VoiceDesignPromptInput,
   type VoiceEngineBinding,
@@ -13,7 +16,7 @@ import {
   type VoiceSample
 } from "@shared/contracts/ai"
 import type { AppDatabase } from "@main/db/client"
-import { assets, ttsEngines, voiceEngineBindings, voiceProfiles, voiceSamples } from "@main/db/schema"
+import { assets, runtimeManifests, ttsEngines, voiceEngineBindings, voiceProfiles, voiceSamples } from "@main/db/schema"
 import { AppError } from "@main/lib/errors"
 import { hashBuffer } from "@main/lib/hash"
 import { createId } from "@main/lib/ids"
@@ -27,13 +30,60 @@ import {
   DEFAULT_VOICE_PROFILE_ID
 } from "@main/services/default-voices"
 import { LocalTtsAdapter } from "@main/services/local-tts-adapter"
+import { importSidecarAudio, SidecarTtsAdapter } from "@main/services/sidecar-tts-adapter"
 import { buildPreviewPlan } from "@main/services/voice-preview"
 import { probeAudio, resampleAudio, TARGET_SAMPLE_RATE } from "@main/lib/audio-transcode"
 
 const QWEN_VOICE_DESIGN_ENGINE_ID = "qwen3-tts-17b-mlx"
+const LOCAL_TTS_ENGINE_ID = "dreamreader-local-tts"
+const VOICE_PACKAGE_SCHEMA_VERSION = "dreamreader-voice/v1"
+const VOICE_PACKAGE_MANIFEST_PATH = "voice.json"
+
+const VoicePackageManifestSchema = z.object({
+  schemaVersion: z.literal(VOICE_PACKAGE_SCHEMA_VERSION),
+  exportedAt: z.string().trim().optional(),
+  voice: z.object({
+    name: z.string().trim().min(1),
+    description: z.string().trim().optional(),
+    language: z.string().trim().min(1).default("pt-BR"),
+    kind: z.string().trim().min(1).optional(),
+    source: z.record(z.string(), z.unknown()).default({}),
+    settings: z.record(z.string(), z.unknown()).default({}),
+    tags: z.array(z.string().trim().min(1)).default([]),
+    consentNote: z.string().trim().optional(),
+    createdFromEngineId: z.string().trim().optional()
+  }),
+  reference: z
+    .object({
+      file: z.string().trim().min(1),
+      fileName: z.string().trim().min(1).optional(),
+      mimeType: z.string().trim().min(1).default("audio/wav"),
+      transcript: z.string().trim().optional(),
+      language: z.string().trim().optional(),
+      durationMs: z.number().int().positive().optional(),
+      contentHash: z.string().trim().optional(),
+      sizeBytes: z.number().int().nonnegative().optional()
+    })
+    .optional(),
+  designPrompt: z.string().trim().optional(),
+  bindings: z
+    .array(
+      z.object({
+        engineId: z.string().trim().min(1),
+        adapterId: z.string().trim().min(1),
+        bindingKind: z.string().trim().min(1),
+        settings: z.record(z.string(), z.unknown()).default({}),
+        compatibility: z.record(z.string(), z.unknown()).default({})
+      })
+    )
+    .default([])
+})
+
+type VoicePackageManifest = z.infer<typeof VoicePackageManifestSchema>
 
 export class VoiceService {
   private readonly previewAdapter = new LocalTtsAdapter()
+  private readonly sidecarAdapter = new SidecarTtsAdapter()
   private readyPromise: Promise<void> | undefined
 
   constructor(
@@ -209,23 +259,15 @@ export class VoiceService {
     await this.ensureReady()
     const voice = await this.getProfile(input.voiceProfileId)
     const binding = await this.readyBinding(input.voiceProfileId, input.engineId)
-    const previewPath = path.join(this.paths.voicesDir, input.voiceProfileId, `preview-${sanitizePathPart(input.engineId)}.wav`)
-    await mkdir(path.dirname(previewPath), { recursive: true })
-    await this.previewAdapter.warmup()
-    const audio = this.previewAdapter.synthesizeChapter(buildPreviewPlan(input.voiceProfileId, input.engineId, voice.language))
-    await writeFile(previewPath, audio.buffer)
-    this.previewAdapter.scheduleDispose()
-    const [asset] = await this.db
-      .insert(assets)
-      .values({
-        id: createId("asset"),
-        kind: "voice_preview",
-        path: previewPath,
-        mimeType: audio.mimeType,
-        contentHash: audio.contentHash,
-        sizeBytes: audio.buffer.byteLength
-      })
-      .returning()
+    const plan = buildPreviewPlan(input.voiceProfileId, input.engineId, voice.language)
+    const previewDir = path.join(this.paths.voicesDir, input.voiceProfileId, `preview-${sanitizePathPart(input.engineId)}`)
+    await mkdir(previewDir, { recursive: true })
+
+    const asset =
+      input.engineId === LOCAL_TTS_ENGINE_ID
+        ? await this.previewWithLocalAdapter(plan, previewDir)
+        : await this.previewWithSidecar(input.voiceProfileId, input.engineId, plan, previewDir, binding)
+
     await this.db
       .update(voiceProfiles)
       .set({
@@ -246,6 +288,96 @@ export class VoiceService {
     return { audioAssetId: asset.id }
   }
 
+  private async previewWithLocalAdapter(plan: NarrationPlan, previewDir: string): Promise<typeof assets.$inferSelect> {
+    const previewPath = path.join(previewDir, "preview.wav")
+    await this.previewAdapter.warmup()
+    const audio = this.previewAdapter.synthesizeChapter(plan)
+    await writeFile(previewPath, audio.buffer)
+    this.previewAdapter.scheduleDispose()
+    return this.createVoicePreviewAsset({
+      contentHash: audio.contentHash,
+      mimeType: audio.mimeType,
+      path: previewPath,
+      sizeBytes: audio.buffer.byteLength
+    })
+  }
+
+  private async previewWithSidecar(
+    voiceProfileId: string,
+    engineId: string,
+    plan: NarrationPlan,
+    previewDir: string,
+    bindingRow: typeof voiceEngineBindings.$inferSelect
+  ): Promise<typeof assets.$inferSelect> {
+    const engine = await this.db.query.ttsEngines.findFirst({ where: eq(ttsEngines.id, engineId) })
+    if (!engine?.installed || !engine.installPath) {
+      throw new AppError("tts_engine_not_configured", "TTS engine model is not installed")
+    }
+    const runtimeManifest = await this.db.query.runtimeManifests.findFirst({
+      where: and(eq(runtimeManifests.adapterId, engine.adapterId), eq(runtimeManifests.runtime, engine.runtime))
+    })
+    if (!runtimeManifest?.executablePath) {
+      throw new AppError("tts_sidecar_not_configured", "TTS engine sidecar runtime is not configured")
+    }
+
+    const binding = toVoiceBinding(bindingRow)
+    const profile = toVoiceProfile(await this.getProfile(voiceProfileId), await this.bindingsForVoice(voiceProfileId))
+    const sampleRows = await this.db.query.voiceSamples.findMany({ where: eq(voiceSamples.voiceProfileId, voiceProfileId) })
+    const reference = binding.bindingAssetId ? await this.referenceForBinding(binding.bindingAssetId, binding.settings) : undefined
+    const result = await this.sidecarAdapter.synthesize({
+      adapterId: engine.adapterId,
+      engineId,
+      jobId: `voice-preview-${voiceProfileId}-${engineId}`,
+      modelPath: engine.installPath,
+      outputDirectory: previewDir,
+      modelSettings: {},
+      plan,
+      quality: "draft",
+      referenceAudioPath: reference?.audioPath,
+      referenceText: reference?.text,
+      runtimeManifest: {
+        adapterId: runtimeManifest.adapterId,
+        capabilitiesJson: runtimeManifest.capabilitiesJson,
+        environmentJson: runtimeManifest.environmentJson,
+        executablePath: runtimeManifest.executablePath,
+        healthcheckCommand: runtimeManifest.healthcheckCommand,
+        id: runtimeManifest.id,
+        runtime: runtimeManifest.runtime,
+        version: runtimeManifest.version
+      },
+      voiceBinding: binding,
+      voiceProfile: profile,
+      voiceSamples: sampleRows.map(toVoiceSample)
+    })
+    const audio = await importSidecarAudio(result.chapter)
+    return this.createVoicePreviewAsset({
+      contentHash: audio.contentHash,
+      mimeType: audio.mimeType,
+      path: audio.audioPath,
+      sizeBytes: audio.sizeBytes
+    })
+  }
+
+  private async createVoicePreviewAsset(input: {
+    contentHash: string
+    mimeType: string
+    path: string
+    sizeBytes: number
+  }): Promise<typeof assets.$inferSelect> {
+    const [asset] = await this.db
+      .insert(assets)
+      .values({
+        id: createId("asset"),
+        kind: "voice_preview",
+        path: input.path,
+        mimeType: input.mimeType,
+        contentHash: input.contentHash,
+        sizeBytes: input.sizeBytes
+      })
+      .returning()
+    return asset
+  }
+
   async update(input: { voiceProfileId: string; name?: string; description?: string | null; tags?: string[] }) {
     await this.ensureReady()
     await this.getProfile(input.voiceProfileId)
@@ -260,6 +392,249 @@ export class VoiceService {
       .where(eq(voiceProfiles.id, input.voiceProfileId))
       .returning()
     return toVoiceProfile(updated, await this.bindingsForVoice(input.voiceProfileId))
+  }
+
+  async exportFileName(voiceProfileId: string): Promise<string> {
+    await this.ensureReady()
+    const voice = await this.getProfile(voiceProfileId)
+    if (voice.kind === "built_in") {
+      throw new AppError("voice_export_readonly", "Built-in voices cannot be exported")
+    }
+    return `${sanitizePathPart(voice.name)}.zip`
+  }
+
+  async exportVoice(input: { voiceProfileId: string; targetPath: string }) {
+    await this.ensureReady()
+    const voice = await this.getProfile(input.voiceProfileId)
+    if (voice.kind === "built_in") {
+      throw new AppError("voice_export_readonly", "Built-in voices cannot be exported")
+    }
+
+    const bindings = await this.bindingsForVoice(input.voiceProfileId)
+    const sampleRows = await this.db.query.voiceSamples.findMany({ where: eq(voiceSamples.voiceProfileId, input.voiceProfileId) })
+    const sample = sampleRows[0]
+    const sampleAsset = sample?.assetId
+      ? await this.db.query.assets.findFirst({ where: eq(assets.id, sample.assetId) })
+      : undefined
+    const zip = new JSZip()
+    const manifest: VoicePackageManifest = {
+      schemaVersion: VOICE_PACKAGE_SCHEMA_VERSION,
+      exportedAt: new Date().toISOString(),
+      voice: {
+        name: voice.name,
+        description: voice.description || undefined,
+        language: voice.language,
+        kind: voice.kind,
+        source: parseJsonObject(voice.source),
+        settings: jsonObject(voice.settingsJson),
+        tags: voice.tags,
+        consentNote: voice.consentNote || undefined,
+        createdFromEngineId: voice.createdFromEngineId ?? undefined
+      },
+      designPrompt: designPromptFor(voice, bindings),
+      bindings: bindings.map((binding) => ({
+        engineId: binding.engineId,
+        adapterId: binding.adapterId,
+        bindingKind: binding.bindingKind,
+        settings: jsonObject(binding.settingsJson),
+        compatibility: jsonObject(binding.compatibilityJson)
+      }))
+    }
+
+    if (sample && sampleAsset) {
+      const buffer = await readFile(sampleAsset.path)
+      const fileName = safeFileName(path.basename(sampleAsset.path)) || `reference${extensionForMime(sampleAsset.mimeType)}`
+      const zipPath = `reference/${fileName}`
+      zip.file(zipPath, buffer)
+      manifest.reference = {
+        file: zipPath,
+        fileName,
+        mimeType: sampleAsset.mimeType,
+        transcript: sample.transcript ?? undefined,
+        language: sample.language ?? voice.language,
+        durationMs: sample.durationMs,
+        contentHash: sampleAsset.contentHash,
+        sizeBytes: sampleAsset.sizeBytes
+      }
+    }
+
+    zip.file(VOICE_PACKAGE_MANIFEST_PATH, JSON.stringify(manifest, null, 2))
+    await mkdir(path.dirname(input.targetPath), { recursive: true })
+    await writeFile(input.targetPath, await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" }))
+    return { exported: true as const, path: input.targetPath }
+  }
+
+  async importVoices(input: { archivePaths: string[] }): Promise<VoiceProfile[]> {
+    await this.ensureReady()
+    const imported: VoiceProfile[] = []
+    for (const archivePath of input.archivePaths) {
+      imported.push(await this.importVoiceArchive(archivePath))
+    }
+    return imported
+  }
+
+  private async importVoiceArchive(archivePath: string): Promise<VoiceProfile> {
+    const zip = await JSZip.loadAsync(await readFile(archivePath))
+    const manifestFile = zip.file(VOICE_PACKAGE_MANIFEST_PATH)
+    if (!manifestFile) {
+      throw new AppError("voice_import_invalid", "Voice package is missing voice.json")
+    }
+    const manifest = VoicePackageManifestSchema.parse(JSON.parse(await manifestFile.async("string")))
+    const now = new Date()
+    const profileId = createId("voice")
+    const engines = await this.db.query.ttsEngines.findMany()
+    const cloneEngines = manifest.reference
+      ? engines.filter((engine) => engine.installed && jsonObject(engine.capabilitiesJson).supportsVoiceClone === true)
+      : []
+    const designEngine = manifest.designPrompt
+      ? engines.find((engine) => engine.id === QWEN_VOICE_DESIGN_ENGINE_ID && engine.installed)
+      : undefined
+    const compatibleEngineIds = unique([
+      ...cloneEngines.map((engine) => engine.id),
+      ...(designEngine ? [designEngine.id] : [])
+    ])
+    const compatibleAdapterIds = unique([
+      ...cloneEngines.map((engine) => engine.adapterId),
+      ...(designEngine ? [designEngine.adapterId] : [])
+    ])
+    let importedReference:
+      | {
+          buffer: Buffer
+          contentHash: string
+          extension: string
+          transcript: string
+        }
+      | undefined
+    if (manifest.reference) {
+      const transcript = manifest.reference.transcript?.trim()
+      if (!transcript) {
+        throw new AppError("voice_import_transcript_required", "Imported reference voices require reference text")
+      }
+      const referenceBuffer = await readZipFile(zip, manifest.reference.file)
+      const contentHash = hashBuffer(referenceBuffer)
+      if (manifest.reference.contentHash && manifest.reference.contentHash !== contentHash) {
+        throw new AppError("voice_import_hash_mismatch", "Imported voice reference audio does not match the package manifest")
+      }
+      importedReference = {
+        buffer: referenceBuffer,
+        contentHash,
+        extension: extensionForReference(manifest.reference),
+        transcript
+      }
+    }
+
+    const [voice] = await this.db
+      .insert(voiceProfiles)
+      .values({
+        id: profileId,
+        name: manifest.voice.name,
+        description: manifest.voice.description ?? "",
+        language: manifest.voice.language,
+        kind: "imported",
+        source: JSON.stringify({
+          type: "imported_voice_package",
+          importedAt: now.toISOString(),
+          originalKind: manifest.voice.kind ?? "imported",
+          originalSource: manifest.voice.source
+        }),
+        tags: unique([...manifest.voice.tags, manifest.voice.language, "importada"]),
+        settingsJson: {
+          ...manifest.voice.settings,
+          ...(manifest.designPrompt ? { voiceDesignPrompt: manifest.designPrompt } : {}),
+          compatibleAdapterIds,
+          compatibleEngineIds,
+          importedFromPackage: true
+        },
+        consentConfirmedAt: manifest.reference ? now : undefined,
+        consentNote: manifest.voice.consentNote ?? "",
+        createdFromEngineId: designEngine?.id,
+        updatedAt: now
+      })
+      .returning()
+
+    let sampleAssetId: string | undefined
+    if (manifest.reference && importedReference) {
+      const targetDir = path.join(this.paths.voicesDir, profileId)
+      await mkdir(targetDir, { recursive: true })
+      const targetPath = path.join(targetDir, `reference-${importedReference.contentHash.slice(0, 16)}${importedReference.extension}`)
+      await writeFile(targetPath, importedReference.buffer)
+      const probe = await probeAudio(targetPath).catch(() => undefined)
+      const durationMs = manifest.reference.durationMs ?? probe?.durationMs ?? estimateDurationMs(importedReference.buffer)
+      const [asset] = await this.db
+        .insert(assets)
+        .values({
+          id: createId("asset"),
+          kind: "voice_sample",
+          path: targetPath,
+          mimeType: manifest.reference.mimeType,
+          contentHash: importedReference.contentHash,
+          sizeBytes: importedReference.buffer.byteLength,
+          createdAt: now
+        })
+        .returning()
+      sampleAssetId = asset.id
+      await this.db.insert(voiceSamples).values({
+        id: createId("voice_sample"),
+        voiceProfileId: profileId,
+        assetId: asset.id,
+        transcript: importedReference.transcript,
+        language: manifest.reference.language ?? manifest.voice.language,
+        durationMs,
+        qualityJson: {
+          importedFromPackage: true,
+          originalFileName: manifest.reference.fileName ?? path.basename(manifest.reference.file),
+          sampleRate: probe?.sampleRate ?? null
+        },
+        consentConfirmedAt: now
+      })
+    }
+
+    if (sampleAssetId && manifest.reference) {
+      for (const engine of cloneEngines) {
+        await this.db.insert(voiceEngineBindings).values({
+          id: createId("voice_binding"),
+          voiceProfileId: profileId,
+          engineId: engine.id,
+          adapterId: engine.adapterId,
+          status: "ready",
+          bindingKind: "reference_audio",
+          bindingAssetId: sampleAssetId,
+          settingsJson: {
+            transcript: manifest.reference.transcript ?? "",
+            source: "imported-voice-package"
+          },
+          compatibilityJson: {
+            language: manifest.voice.language,
+            engineVersion: engine.version,
+            importedFromPackage: true
+          },
+          updatedAt: now
+        })
+      }
+    }
+
+    if (designEngine && manifest.designPrompt) {
+      await this.db.insert(voiceEngineBindings).values({
+        id: createId("voice_binding"),
+        voiceProfileId: profileId,
+        engineId: designEngine.id,
+        adapterId: designEngine.adapterId,
+        status: "ready",
+        bindingKind: "voice_design_prompt",
+        settingsJson: {
+          voiceDesignPrompt: manifest.designPrompt,
+          source: "imported-voice-package"
+        },
+        compatibilityJson: {
+          language: manifest.voice.language,
+          engineVersion: designEngine.version,
+          importedFromPackage: true
+        },
+        updatedAt: now
+      })
+    }
+
+    return toVoiceProfile(voice, await this.bindingsForVoice(profileId))
   }
 
   async delete(input: { voiceProfileId: string }) {
@@ -489,6 +864,17 @@ export class VoiceService {
     }
     return binding
   }
+
+  private async referenceForBinding(bindingAssetId: string, settings: Record<string, unknown>) {
+    const asset = await this.db.query.assets.findFirst({ where: eq(assets.id, bindingAssetId) })
+    if (!asset) {
+      throw new AppError("voice_reference_missing", "Voice reference audio asset was not found")
+    }
+    return {
+      audioPath: asset.path,
+      text: typeof settings.transcript === "string" ? settings.transcript : undefined
+    }
+  }
 }
 
 function toVoiceProfile(row: typeof voiceProfiles.$inferSelect, bindings: Array<typeof voiceEngineBindings.$inferSelect>): VoiceProfile {
@@ -561,8 +947,47 @@ function unique(values: string[]): string[] {
   return [...new Set(values)]
 }
 
+function designPromptFor(
+  voice: typeof voiceProfiles.$inferSelect,
+  bindings: Array<typeof voiceEngineBindings.$inferSelect>
+): string | undefined {
+  const profilePrompt = jsonObject(voice.settingsJson).voiceDesignPrompt
+  if (typeof profilePrompt === "string" && profilePrompt.trim()) {
+    return profilePrompt.trim()
+  }
+  for (const binding of bindings) {
+    const bindingPrompt = jsonObject(binding.settingsJson).voiceDesignPrompt
+    if (typeof bindingPrompt === "string" && bindingPrompt.trim()) {
+      return bindingPrompt.trim()
+    }
+  }
+  return undefined
+}
+
 function sanitizePathPart(value: string): string {
   return value.replace(/[^a-z0-9._-]+/gi, "_").slice(0, 96) || "voice"
+}
+
+function safeFileName(value: string): string {
+  return value.replace(/[^a-z0-9._ -]+/gi, "_").replace(/^\.+/, "").slice(0, 120)
+}
+
+async function readZipFile(zip: JSZip, filePath: string): Promise<Buffer> {
+  if (!isSafeZipPath(filePath)) {
+    throw new AppError("voice_import_invalid_path", "Voice package contains an unsafe reference path")
+  }
+  const file = zip.file(filePath)
+  if (!file) {
+    throw new AppError("voice_import_missing_audio", "Voice package is missing reference audio")
+  }
+  return file.async("nodebuffer")
+}
+
+function isSafeZipPath(filePath: string): boolean {
+  if (!filePath || path.isAbsolute(filePath) || filePath.includes("\0")) {
+    return false
+  }
+  return !filePath.split(/[\\/]/).some((part) => part === ".." || part === "")
 }
 
 async function disableStaleBuiltInBindings(db: AppDatabase, now: Date): Promise<void> {
@@ -590,6 +1015,23 @@ function mimeTypeFor(extension: string): string {
   if (extension === ".ogg") return "audio/ogg"
   if (extension === ".flac") return "audio/flac"
   return "audio/wav"
+}
+
+function extensionForReference(reference: NonNullable<VoicePackageManifest["reference"]>): string {
+  const fromName = path.extname(reference.fileName ?? reference.file).toLowerCase()
+  return sanitizeExtension(fromName || extensionForMime(reference.mimeType))
+}
+
+function extensionForMime(mimeType: string): string {
+  if (mimeType === "audio/mpeg") return ".mp3"
+  if (mimeType === "audio/mp4") return ".m4a"
+  if (mimeType === "audio/ogg") return ".ogg"
+  if (mimeType === "audio/flac") return ".flac"
+  return ".wav"
+}
+
+function sanitizeExtension(extension: string): string {
+  return /^\.[a-z0-9]{1,8}$/i.test(extension) ? extension : ".wav"
 }
 
 function estimateDurationMs(buffer: Buffer): number {
