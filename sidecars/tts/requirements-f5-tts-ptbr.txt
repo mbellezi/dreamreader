@@ -1,4 +1,3 @@
 torch
 torchaudio
-f5-tts
-soundfile
+-r requirements-f5-tts-ptbr-base.txt

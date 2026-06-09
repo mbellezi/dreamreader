@@ -11,7 +11,7 @@ As fases 0, 1, 2 e 3 do roadmap estao implementadas:
 - Fase 2: audio local basico com jobs TTS persistidos em PGlite, fila por capitulo, segmentacao/normalizacao PT-BR, adapter local WAV, cache de audio por capitulo, player no leitor, cancelamento/retry/retomada, diagnostico de modelos e manifesto parcial de audiobook.
 - Fase 3: prosodia expressiva com analisador local estruturado, cache por segmento em PGlite, fallback neutro validado por Zod e comparacao entre audio neutro e expressivo na UI.
 
-Os motores neurais Qwen/Chatterbox/F5 funcionam por instalacao local de Python, sidecars e pesos em `.dreamreader-local/`. O encoder M4B real e o empacotamento final ainda pertencem as proximas fases. Para preparar Qwen3-TTS/Chatterbox/F5-TTS-pt-br locais, rode `npm run setup:python-tts`; isso instala um CPython 3.12 standalone e cria pastas de modelos em `.dreamreader-local/`, que nao entra no git.
+Os motores neurais Qwen/Chatterbox/F5 funcionam por instalacao local de Python, sidecars e pesos em `.dreamreader-local/`. O encoder M4B real e o empacotamento final ainda pertencem as proximas fases. Para preparar Qwen3-TTS/Chatterbox/F5-TTS-pt-br locais, rode `npm run setup:python-tts`; isso detecta macOS Apple Silicon, Windows ou Linux, instala um CPython 3.12 standalone, verifica o FFmpeg empacotado e cria pastas de modelos em `.dreamreader-local/`, que nao entra no git.
 
 ## Documentacao
 
@@ -24,6 +24,16 @@ Os motores neurais Qwen/Chatterbox/F5 funcionam por instalacao local de Python, 
 - `docs/06-apple-silicon-performance.md`: estrategia de performance para LLM/TTS em Apple Silicon.
 - `docs/07-tts-prosody-abstractions.md`: contratos de abstracao para prosodia, TTS e modelos locais.
 - `docs/08-audiobook-m4b.md`: montagem incremental de audiobooks M4B por livro.
+
+ ## Backend de TTS
+
+No macOS Apple Silicon, `setup:python-tts` usa MLX/MPS por padrao. Em Windows e Linux, escolha o backend de instalacao com `--backend=cuda` ou `--backend=vulkan`:
+
+```bash
+npm run setup:python-tts -- --backend=cuda
+npm run setup:python-tts -- --backend=vulkan --install-sidecars
+npm run download:tts-models -- --backend=cuda
+```
 
 ## Comandos principais
 
@@ -38,6 +48,8 @@ npm run download:tts-models
 npm run db:generate
 npm run db:migrate
 ```
+
+Use `--install-sidecars` quando quiser instalar tambem as dependencias Python dos sidecars. O backend CUDA usa o indice oficial de wheels CUDA do PyTorch por padrao e pode ser alterado com `DREAMREADER_TORCH_CUDA_INDEX_URL`.
 
 ## Empacotamento de audio
 

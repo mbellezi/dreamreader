@@ -2,8 +2,9 @@ import { CheckCircle2, Circle, CircleSlash, Cpu, Download, FolderOpen, HardDrive
 import { useEffect, useMemo, useState } from "react"
 import type { TranslationFn } from "@renderer/app/types"
 import { buildVoiceEngineBundles, prosodyModels, type VoiceEngineBundle } from "@renderer/lib/engineBundles"
+import { installBackendsForDiagnostics } from "@renderer/lib/installBackends"
 import { cn } from "@renderer/lib/utils"
-import type { HuggingFaceTokenStatus, ModelDownloadJob, RuntimeDiagnostic, RuntimeModel, RuntimeOperationJob, RuntimeOperationLogEntry, RuntimeSidecar, VoiceProfile } from "@renderer/types"
+import type { HuggingFaceTokenStatus, ModelDownloadJob, RuntimeDiagnostic, RuntimeInstallBackend, RuntimeModel, RuntimeOperationJob, RuntimeOperationLogEntry, RuntimeSidecar, VoiceProfile } from "@renderer/types"
 
 const ACTIVE_OPERATION_STATUSES = ["queued", "running"]
 const RUNTIME_DIAGNOSTIC_IDS = ["device", "apple-silicon"]
@@ -12,6 +13,7 @@ export function EnginesPane({
   diagnostics,
   downloadJobs,
   huggingFaceTokenStatus,
+  installBackend,
   loading,
   models,
   operations,
@@ -26,11 +28,13 @@ export function EnginesPane({
   onInstallSidecar,
   onRefresh,
   onSaveHuggingFaceToken,
+  onSelectInstallBackend,
   onUninstallSidecar
 }: {
   diagnostics: RuntimeDiagnostic[]
   downloadJobs: ModelDownloadJob[]
   huggingFaceTokenStatus: HuggingFaceTokenStatus
+  installBackend: RuntimeInstallBackend
   loading: boolean
   models: RuntimeModel[]
   operations: RuntimeOperationJob[]
@@ -45,6 +49,7 @@ export function EnginesPane({
   onInstallSidecar: (sidecarId: string) => Promise<void> | void
   onRefresh: () => Promise<void> | void
   onSaveHuggingFaceToken: (token: string) => Promise<void> | void
+  onSelectInstallBackend: (backend: RuntimeInstallBackend) => void
   onUninstallSidecar: (sidecarId: string) => Promise<void> | void
 }) {
   const [selectedOperationId, setSelectedOperationId] = useState<string | null>(null)
@@ -57,6 +62,8 @@ export function EnginesPane({
   const showMetricSkeletons = loading && models.length === 0 && sidecars.length === 0
   const showModelSkeletons = loading && models.length === 0
   const embeddedDiagnostics = useMemo(() => embeddedDiagnosticsForCards(models, sidecars, diagnostics), [diagnostics, models, sidecars])
+  const installBackends = useMemo(() => installBackendsForDiagnostics(diagnostics), [diagnostics])
+  const selectedInstallBackend = installBackends.includes(installBackend) ? installBackend : installBackends[0]
 
   const voiceBundles = useMemo(() => buildVoiceEngineBundles(models, sidecars), [models, sidecars])
   const prosody = useMemo(() => prosodyModels(models), [models])
@@ -82,6 +89,12 @@ export function EnginesPane({
     return () => window.clearInterval(interval)
   }, [isPolling, onRefresh])
 
+  useEffect(() => {
+    if (selectedInstallBackend !== installBackend) {
+      onSelectInstallBackend(selectedInstallBackend)
+    }
+  }, [installBackend, onSelectInstallBackend, selectedInstallBackend])
+
   const operationFor = (targetKind: RuntimeOperationJob["targetKind"], targetId: string) =>
     operations.find((operation) => operation.targetKind === targetKind && operation.targetId === targetId && ACTIVE_OPERATION_STATUSES.includes(operation.status))
 
@@ -99,10 +112,26 @@ export function EnginesPane({
             <h1 className="text-lg font-semibold leading-tight">{t("modelManager.title")}</h1>
             <p className="text-xs text-muted-foreground">{t("modelManager.subtitle")}</p>
           </div>
-          <button className="inline-flex h-9 items-center gap-2 rounded-md border bg-card px-3 text-sm" onClick={onRefresh}>
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <RefreshCw className="h-4 w-4" aria-hidden="true" />}
-            <span>{t("modelManager.refresh")}</span>
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex h-9 items-center gap-2 rounded-md border bg-card px-3 text-sm">
+              <span className="text-xs text-muted-foreground">{t("modelManager.backend.label")}</span>
+              <select
+                className="bg-transparent text-sm outline-none"
+                value={selectedInstallBackend}
+                onChange={(event) => onSelectInstallBackend(event.target.value as RuntimeInstallBackend)}
+              >
+                {installBackends.map((backend) => (
+                  <option key={backend} value={backend}>
+                    {t(`modelManager.backend.${backend}`)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button className="inline-flex h-9 items-center gap-2 rounded-md border bg-card px-3 text-sm" onClick={onRefresh}>
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <RefreshCw className="h-4 w-4" aria-hidden="true" />}
+              <span>{t("modelManager.refresh")}</span>
+            </button>
+          </div>
         </header>
 
         <ReadinessChecklist runtimeReady={runtimeReady} engineReady={engineReady} prosodyReady={prosodyReady} voiceReady={voiceReady} t={t} />

@@ -8,11 +8,13 @@ import {
   ModelAssetSchema,
   ModelDownloadJobSchema,
   HuggingFaceTokenStatusSchema,
+  RuntimeInstallBackendSchema,
   RuntimeOperationJobSchema,
   RuntimeSidecarSchema,
   type HuggingFaceTokenStatus,
   type ModelAsset,
   type ModelDownloadJob,
+  type RuntimeInstallBackend,
   type RuntimeOperationJob,
   type RuntimeOperationKind,
   type RuntimeSidecar
@@ -93,7 +95,8 @@ const recommendedModels: RecommendedModel[] = [
       role: "tts",
       huggingFaceRepo: "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
       installMode: "project-local-folder",
-      localFolder: `.dreamreader-local/models/${QWEN3_TTS_06B_MODEL_DIR_NAME}`
+      localFolder: `.dreamreader-local/models/${QWEN3_TTS_06B_MODEL_DIR_NAME}`,
+      supportedBackends: ["mlx"]
     }
   },
   {
@@ -112,7 +115,8 @@ const recommendedModels: RecommendedModel[] = [
       role: "tts",
       huggingFaceRepo: "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-4bit",
       installMode: "project-local-folder",
-      localFolder: `.dreamreader-local/models/${QWEN3_TTS_17B_MODEL_DIR_NAME}`
+      localFolder: `.dreamreader-local/models/${QWEN3_TTS_17B_MODEL_DIR_NAME}`,
+      supportedBackends: ["mlx"]
     }
   },
   {
@@ -131,7 +135,8 @@ const recommendedModels: RecommendedModel[] = [
       role: "tts",
       huggingFaceRepo: "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-4bit",
       installMode: "project-local-folder",
-      localFolder: `.dreamreader-local/models/${QWEN3_TTS_17B_BASE_MODEL_DIR_NAME}`
+      localFolder: `.dreamreader-local/models/${QWEN3_TTS_17B_BASE_MODEL_DIR_NAME}`,
+      supportedBackends: ["mlx"]
     }
   },
   {
@@ -153,7 +158,8 @@ const recommendedModels: RecommendedModel[] = [
       localFolder: `.dreamreader-local/models/${CHATTERBOX_MULTILINGUAL_MODEL_DIR_NAME}`,
       originalRepo: "ResembleAI/chatterbox",
       originalLicense: "mit",
-      prosodyControls: ["exaggeration", "cfgWeight", "pauseAfterMs"]
+      prosodyControls: ["exaggeration", "cfgWeight", "pauseAfterMs"],
+      supportedBackends: ["mlx"]
     }
   },
   {
@@ -172,7 +178,8 @@ const recommendedModels: RecommendedModel[] = [
       role: "tts",
       huggingFaceRepo: "firstpixel/F5-TTS-pt-br",
       installMode: "project-local-folder",
-      localFolder: `.dreamreader-local/models/${F5_TTS_MODEL_DIR_NAME}`
+      localFolder: `.dreamreader-local/models/${F5_TTS_MODEL_DIR_NAME}`,
+      supportedBackends: ["mlx", "cuda", "vulkan"]
     }
   }
 ]
@@ -413,11 +420,13 @@ export class RuntimeService {
     return rows
   }
 
-  async installRecommendedModel(modelId: string): Promise<RuntimeOperationJob> {
+  async installRecommendedModel(modelId: string, backend: RuntimeInstallBackend = "auto"): Promise<RuntimeOperationJob> {
     await this.ensureReady()
     const model = recommendedModelById(modelId)
+    const installBackend = resolveRuntimeInstallBackend(backend)
+    assertModelBackendSupported(model, installBackend)
     const operation = this.createOperation("model_install", "model", modelId)
-    void this.runRecommendedModelInstall(operation.id, model)
+    void this.runRecommendedModelInstall(operation.id, model, installBackend)
     return operation
   }
 
@@ -482,14 +491,16 @@ export class RuntimeService {
     }
   }
 
-  async installSidecar(sidecarId: string): Promise<RuntimeOperationJob> {
+  async installSidecar(sidecarId: string, backend: RuntimeInstallBackend = "auto"): Promise<RuntimeOperationJob> {
     await this.ensureReady()
     const sidecar = recommendedRuntimeManifests.find((item) => item.id === sidecarId)
     if (!sidecar) {
       throw new AppError("sidecar_not_found", "Sidecar not found")
     }
+    const installBackend = resolveRuntimeInstallBackend(backend)
+    assertSidecarBackendSupported(sidecar.adapterId, installBackend)
     const operation = this.createOperation("sidecar_install", "sidecar", sidecarId)
-    void this.runSidecarInstall(operation.id, sidecar)
+    void this.runSidecarInstall(operation.id, sidecar, installBackend)
     return operation
   }
 
@@ -993,7 +1004,7 @@ export class RuntimeService {
     )
   }
 
-  private async runRecommendedModelInstall(operationId: string, model: RecommendedModel): Promise<void> {
+  private async runRecommendedModelInstall(operationId: string, model: RecommendedModel, backend: ResolvedInstallBackend): Promise<void> {
     try {
       this.updateOperation(operationId, {
         status: "running",
@@ -1012,6 +1023,7 @@ export class RuntimeService {
       const localDir = path.join(projectRoot(), localFolder)
       await mkdir(localDir, { recursive: true })
       const huggingFaceToken = await this.readHuggingFaceToken()
+      this.appendOperationLog(operationId, "info", "modelManager.log.backendSelected", { backend })
       this.appendOperationLog(operationId, "info", "modelManager.log.modelSnapshotStarted", { repo: repoId, path: localFolder })
       this.updateOperation(operationId, {
         progress: 0.5,
@@ -1073,7 +1085,8 @@ export class RuntimeService {
 
   private async runSidecarInstall(
     operationId: string,
-    sidecar: (typeof recommendedRuntimeManifests)[number]
+    sidecar: (typeof recommendedRuntimeManifests)[number],
+    backend: ResolvedInstallBackend
   ): Promise<void> {
     try {
       this.updateOperation(operationId, {
@@ -1082,20 +1095,24 @@ export class RuntimeService {
         progress: 0.05,
         progressLabelKey: "modelManager.progress.preparing"
       })
+      this.appendOperationLog(operationId, "info", "modelManager.log.backendSelected", { backend })
       const pythonExecutable = await this.ensureLocalPython(operationId, 0.05, 0.45)
-      const requirementsPath = requirementsPathForAdapter(sidecar.adapterId)
-      if (!requirementsPath) {
+      const pipSteps = pipInstallStepsForAdapter(sidecar.adapterId, backend)
+      if (pipSteps.length === 0) {
         throw new AppError("sidecar_install_unavailable", "Sidecar installer is not configured")
       }
-      this.appendOperationLog(operationId, "info", "modelManager.log.pipInstalling", { target: path.basename(requirementsPath) })
-      await this.runProcess(operationId, pythonExecutable, ["-m", "pip", "install", "-r", requirementsPath], {
-        cwd: projectRoot(),
-        env: process.env,
-        progressStart: 0.45,
-        progressEnd: 0.92,
-        progressLabelKey: "modelManager.progress.installingDependencies"
-      })
-      const detectedRuntime = await detectedRuntimeForManifest(sidecar.adapterId)
+      const stepSize = 0.47 / pipSteps.length
+      for (const [index, step] of pipSteps.entries()) {
+        this.appendOperationLog(operationId, "info", "modelManager.log.pipInstalling", { target: step.label })
+        await this.runProcess(operationId, pythonExecutable, step.args, {
+          cwd: projectRoot(),
+          env: process.env,
+          progressStart: 0.45 + index * stepSize,
+          progressEnd: 0.45 + (index + 1) * stepSize,
+          progressLabelKey: "modelManager.progress.installingDependencies"
+        })
+      }
+      const detectedRuntime = await detectedRuntimeForManifest(sidecar.adapterId, backend)
       if (!detectedRuntime) {
         throw new AppError("sidecar_runtime_not_detected", "Sidecar runtime could not be detected after installation")
       }
@@ -1172,8 +1189,7 @@ export class RuntimeService {
   private async ensureLocalPython(operationId: string, progressStart: number, progressEnd: number): Promise<string> {
     const localRoot = projectLocalRoot()
     const pythonDir = path.join(localRoot, "python")
-    const pythonExecutable = path.join(pythonDir, "bin", "python")
-    const python3Executable = path.join(pythonDir, "bin", "python3")
+    const pythonExecutable = localPythonExecutablePath()
     if (await exists(pythonExecutable)) {
       this.appendOperationLog(operationId, "info", "modelManager.log.pythonDetected", { path: pythonExecutable })
       this.updateOperation(operationId, {
@@ -1214,10 +1230,14 @@ export class RuntimeService {
     }
     await rename(extractedPythonDir, pythonDir)
     if (!(await exists(pythonExecutable))) {
-      if (!(await exists(python3Executable))) {
+      const pythonAliasTarget = await firstExistingPath(localPythonExecutableCandidates())
+      if (!pythonAliasTarget) {
         throw new AppError("python_archive_invalid", "Standalone Python did not provide a python executable")
       }
-      await symlink("python3", pythonExecutable)
+      if (process.platform === "win32") {
+        throw new AppError("python_archive_invalid", "Standalone Python did not provide python.exe")
+      }
+      await symlink(path.basename(pythonAliasTarget), pythonExecutable)
     }
     await rm(extractDir, { force: true, recursive: true })
     this.updateOperation(operationId, {
@@ -1432,6 +1452,100 @@ function requirementsPathForAdapter(adapterId: string): string | undefined {
   return undefined
 }
 
+type ResolvedInstallBackend = Exclude<RuntimeInstallBackend, "auto">
+
+type PipInstallStep = {
+  label: string
+  args: string[]
+}
+
+function resolveRuntimeInstallBackend(backend: RuntimeInstallBackend): ResolvedInstallBackend {
+  const parsed = RuntimeInstallBackendSchema.parse(backend)
+  if (parsed !== "auto") {
+    return assertBackendSupportedOnHost(parsed)
+  }
+
+  if (process.platform === "darwin" && process.arch === "arm64") {
+    return "mlx"
+  }
+  if (process.platform === "linux" || process.platform === "win32") {
+    const envBackend = RuntimeInstallBackendSchema.safeParse(process.env.DREAMREADER_TTS_BACKEND)
+    if (envBackend.success && envBackend.data !== "auto") {
+      return assertBackendSupportedOnHost(envBackend.data)
+    }
+    return "cuda"
+  }
+  throw new AppError("install_platform_unsupported", `Unsupported install platform: ${process.platform}/${process.arch}`)
+}
+
+function assertBackendSupportedOnHost(backend: ResolvedInstallBackend): ResolvedInstallBackend {
+  if (process.platform === "darwin" && process.arch === "arm64" && backend === "mlx") {
+    return backend
+  }
+  if ((process.platform === "linux" || process.platform === "win32") && (backend === "cuda" || backend === "vulkan")) {
+    return backend
+  }
+  throw new AppError("install_backend_unsupported", `${backend} is not supported on ${process.platform}/${process.arch}`)
+}
+
+function assertModelBackendSupported(model: RecommendedModel, backend: ResolvedInstallBackend): void {
+  const supportedBackends = Array.isArray(model.metadata.supportedBackends) ? model.metadata.supportedBackends.map(String) : ["mlx"]
+  if (!supportedBackends.includes(backend)) {
+    throw new AppError("model_backend_unsupported", `${model.name} supports ${supportedBackends.join(" or ")} installs, not ${backend}`)
+  }
+}
+
+function assertSidecarBackendSupported(adapterId: string, backend: ResolvedInstallBackend): void {
+  const supportedBackends =
+    adapterId === "f5-tts-pt-br" ? ["mlx", "cuda", "vulkan"] : adapterId.endsWith("-mlx") || adapterId.includes("mlx") ? ["mlx"] : [backend]
+  if (!supportedBackends.includes(backend)) {
+    throw new AppError("sidecar_backend_unsupported", `${sidecarName(adapterId)} supports ${supportedBackends.join(" or ")} installs, not ${backend}`)
+  }
+}
+
+function pipInstallStepsForAdapter(adapterId: string, backend: ResolvedInstallBackend): PipInstallStep[] {
+  const requirementsPath = requirementsPathForAdapter(adapterId)
+  if (adapterId !== "f5-tts-pt-br") {
+    return requirementsPath ? [{ label: path.basename(requirementsPath), args: ["-m", "pip", "install", "-r", requirementsPath] }] : []
+  }
+
+  const baseRequirementsPath = path.join(projectRoot(), "sidecars", "tts", "requirements-f5-tts-ptbr-base.txt")
+  if (backend === "cuda") {
+    return [
+      {
+        label: "torch/torchaudio CUDA",
+        args: [
+          "-m",
+          "pip",
+          "install",
+          "torch",
+          "torchaudio",
+          "--index-url",
+          process.env.DREAMREADER_TORCH_CUDA_INDEX_URL || "https://download.pytorch.org/whl/cu128"
+        ]
+      },
+      { label: path.basename(baseRequirementsPath), args: ["-m", "pip", "install", "-r", baseRequirementsPath] }
+    ]
+  }
+  if (backend === "vulkan") {
+    return [
+      { label: "torch/torchaudio Vulkan", args: ["-m", "pip", "install", "torch", "torchaudio"] },
+      { label: path.basename(baseRequirementsPath), args: ["-m", "pip", "install", "-r", baseRequirementsPath] }
+    ]
+  }
+  return requirementsPath ? [{ label: path.basename(requirementsPath), args: ["-m", "pip", "install", "-r", requirementsPath] }] : []
+}
+
+function backendRuntimeEnvironment(adapterId: string, backend: ResolvedInstallBackend): Record<string, string> {
+  const env: Record<string, string> = {
+    DREAMREADER_TTS_BACKEND: backend
+  }
+  if (adapterId === "f5-tts-pt-br") {
+    env.DREAMREADER_TTS_DEVICE = backend === "mlx" ? "mps" : backend
+  }
+  return env
+}
+
 function standalonePythonTarget(): string {
   if (process.platform === "darwin" && process.arch === "arm64") {
     return "aarch64-apple-darwin"
@@ -1444,6 +1558,12 @@ function standalonePythonTarget(): string {
   }
   if (process.platform === "linux" && process.arch === "x64") {
     return "x86_64-unknown-linux-gnu"
+  }
+  if (process.platform === "win32" && process.arch === "arm64") {
+    return "aarch64-pc-windows-msvc"
+  }
+  if (process.platform === "win32" && process.arch === "x64") {
+    return "x86_64-pc-windows-msvc"
   }
   throw new AppError("python_runtime_unsupported", `Unsupported platform for standalone Python: ${process.platform}/${process.arch}`)
 }
@@ -1621,6 +1741,15 @@ async function exists(filePath: string): Promise<boolean> {
   }
 }
 
+async function firstExistingPath(paths: string[]): Promise<string | undefined> {
+  for (const item of paths) {
+    if (await exists(item)) {
+      return item
+    }
+  }
+  return undefined
+}
+
 function writeChunk(stream: ReturnType<typeof createWriteStream>, chunk: Uint8Array): Promise<void> {
   return new Promise((resolve, reject) => {
     stream.write(chunk, (error) => (error ? reject(error) : resolve()))
@@ -1741,7 +1870,7 @@ async function modelPathReady(model: RecommendedModel, modelPath: string): Promi
   return true
 }
 
-async function detectedRuntimeForManifest(adapterId: string): Promise<
+async function detectedRuntimeForManifest(adapterId: string, backend: ResolvedInstallBackend = resolveRuntimeInstallBackend("auto")): Promise<
   | {
       environmentJson: Record<string, unknown>
       executablePath: string
@@ -1749,11 +1878,17 @@ async function detectedRuntimeForManifest(adapterId: string): Promise<
     }
   | undefined
 > {
-  const pythonExecutable = path.join(projectLocalRoot(), "python", "bin", "python")
+  const pythonExecutable = localPythonExecutablePath()
   const sidecarScript = sidecarScriptForAdapter(adapterId)
+  try {
+    assertSidecarBackendSupported(adapterId, backend)
+  } catch {
+    return undefined
+  }
   if (!sidecarScript || !(await exists(pythonExecutable)) || !(await exists(sidecarScript))) {
     return undefined
   }
+  const runtimeEnv = backendRuntimeEnvironment(adapterId, backend)
   return {
     executablePath: pythonExecutable,
     environmentJson: {
@@ -1761,7 +1896,8 @@ async function detectedRuntimeForManifest(adapterId: string): Promise<
       env: {
         HF_HOME: path.join(projectLocalRoot(), "huggingface"),
         MPLCONFIGDIR: path.join(projectLocalRoot(), "cache", "matplotlib"),
-        PYTHONUNBUFFERED: "1"
+        PYTHONUNBUFFERED: "1",
+        ...runtimeEnv
       },
       timeoutMs: 30 * 60 * 1000
     },
@@ -1798,6 +1934,18 @@ async function hasAnyModelFile(directory: string, extensions: string[]): Promise
 
 function projectLocalRoot(): string {
   return path.join(projectRoot(), ".dreamreader-local")
+}
+
+function localPythonExecutablePath(): string {
+  return path.join(projectLocalRoot(), "python", process.platform === "win32" ? "python.exe" : path.join("bin", "python"))
+}
+
+function localPythonExecutableCandidates(): string[] {
+  const pythonRoot = path.join(projectLocalRoot(), "python")
+  if (process.platform === "win32") {
+    return [path.join(pythonRoot, "python.exe")]
+  }
+  return [path.join(pythonRoot, "bin", "python"), path.join(pythonRoot, "bin", "python3")]
 }
 
 function projectRoot(): string {

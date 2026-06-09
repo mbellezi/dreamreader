@@ -158,13 +158,13 @@ const api = {
     huggingFaceToken: () => invoke("models.huggingFaceToken"),
     updateHuggingFaceToken: (token: string) => invoke("models.updateHuggingFaceToken", { token }),
     installFromPath: (modelPath?: string) => invoke("models.installFromPath", modelPath ? { path: modelPath } : {}),
-    installRecommended: (modelId: string) => invoke("models.installRecommended", { modelId }),
+    installRecommended: (modelId: string, backend = "auto") => invoke("models.installRecommended", { modelId, backend }),
     delete: (modelId: string, deleteFiles = true) => invoke("models.delete", { modelId, deleteFiles }),
     download: (modelId: string) => invoke("models.download", { modelId })
   },
   sidecars: {
     list: () => invoke("sidecars.list"),
-    install: (sidecarId: string) => invoke("sidecars.install", { sidecarId }),
+    install: (sidecarId: string, backend = "auto") => invoke("sidecars.install", { sidecarId, backend }),
     uninstall: (sidecarId: string) => invoke("sidecars.uninstall", { sidecarId })
   },
   tts: {

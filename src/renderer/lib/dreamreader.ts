@@ -14,6 +14,7 @@ import type {
   PronunciationEntry,
   ReaderLocator,
   RuntimeDiagnostic,
+  RuntimeInstallBackend,
   RuntimeModel,
   RuntimeOperationJob,
   RuntimeOperationLogEntry,
@@ -572,11 +573,11 @@ export const dreamreaderClient = {
     })
   },
 
-  async installRecommendedModel(modelId: string): Promise<RuntimeOperationJob> {
+  async installRecommendedModel(modelId: string, backend: RuntimeInstallBackend = "auto"): Promise<RuntimeOperationJob> {
     const bridgeInstall = window.dreamreader?.models?.installRecommended
 
     if (bridgeInstall) {
-      return toRuntimeOperation(await bridgeInstall(modelId))
+      return toRuntimeOperation(await bridgeInstall(modelId, backend))
     }
 
     throw Object.assign(new Error("Model installation requires the Electron bridge"), {
@@ -609,11 +610,11 @@ export const dreamreaderClient = {
     })
   },
 
-  async installSidecar(sidecarId: string): Promise<RuntimeOperationJob> {
+  async installSidecar(sidecarId: string, backend: RuntimeInstallBackend = "auto"): Promise<RuntimeOperationJob> {
     const bridgeInstall = window.dreamreader?.sidecars?.install
 
     if (bridgeInstall) {
-      return toRuntimeOperation(await bridgeInstall(sidecarId))
+      return toRuntimeOperation(await bridgeInstall(sidecarId, backend))
     }
 
     throw Object.assign(new Error("Sidecar installation requires the Electron bridge"), {

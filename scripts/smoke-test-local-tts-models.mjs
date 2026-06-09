@@ -3,10 +3,11 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { detectInstallPlatform, pythonExecutablePath } from "./install-platform.mjs"
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const localRoot = path.join(projectRoot, ".dreamreader-local")
-const pythonExecutable = path.join(localRoot, "python", "bin", "python")
+const pythonExecutable = pythonExecutablePath(localRoot, detectInstallPlatform())
 const smokeRoot = path.join(localRoot, "smoke-tests")
 const timeoutMs = Number(process.env.DREAMREADER_TTS_SMOKE_TIMEOUT_MS ?? 30 * 60 * 1000)
 

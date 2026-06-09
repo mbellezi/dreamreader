@@ -90,14 +90,14 @@ export function registerIpc(services: Services): void {
     return selectedPath ? services.runtime.installFromPath(selectedPath) : null
   })
   handle("models.installRecommended", contract["models.installRecommended"].request, (input) =>
-    services.runtime.installRecommendedModel(input.modelId)
+    services.runtime.installRecommendedModel(input.modelId, input.backend)
   )
   handle("models.download", contract["models.download"].request, (input) => services.runtime.downloadModel(input.modelId))
   handle("models.delete", contract["models.delete"].request, (input) =>
     services.runtime.deleteModel(input.modelId, input.deleteFiles)
   )
   handle("sidecars.list", contract["sidecars.list"].request, () => services.runtime.listSidecars())
-  handle("sidecars.install", contract["sidecars.install"].request, (input) => services.runtime.installSidecar(input.sidecarId))
+  handle("sidecars.install", contract["sidecars.install"].request, (input) => services.runtime.installSidecar(input.sidecarId, input.backend))
   handle("sidecars.uninstall", contract["sidecars.uninstall"].request, (input) =>
     services.runtime.uninstallSidecar(input.sidecarId)
   )

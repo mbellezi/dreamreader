@@ -2,19 +2,32 @@ import { spawnSync } from "node:child_process"
 import { existsSync, mkdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import ffmpegStaticPath from "ffmpeg-static"
+import {
+  detectInstallPlatform,
+  modelFolderName,
+  parseInstallBackend,
+  pipInstallPlanForBackend,
+  pythonExecutableCandidates,
+  pythonExecutablePath,
+  resolveInstallBackend
+} from "./install-platform.mjs"
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 const projectRoot = path.resolve(scriptDir, "..")
 const localRoot = path.join(projectRoot, ".dreamreader-local")
 const pythonDir = path.join(localRoot, "python")
-const pythonExecutable = path.join(pythonDir, "bin", "python")
-const python3Executable = path.join(pythonDir, "bin", "python3")
+const args = process.argv.slice(2)
+const installPlatform = detectInstallPlatform()
+const installBackend = resolveInstallBackend(parseInstallBackend(args), installPlatform)
+const installSidecars = args.includes("--install-sidecars")
+const pythonExecutable = pythonExecutablePath(localRoot, installPlatform)
 const modelsRoot = path.join(localRoot, "models")
 const downloadsRoot = path.join(localRoot, "downloads")
-const qwen06bModelDir = path.join(modelsRoot, "qwen3-tts-06b-mlx")
-const qwen17bModelDir = path.join(modelsRoot, "qwen3-tts-17b-mlx")
-const qwen17bBaseModelDir = path.join(modelsRoot, "qwen3-tts-17b-base-mlx")
-const chatterboxModelDir = path.join(modelsRoot, "chatterbox-multilingual-mlx")
+const qwen06bModelDir = path.join(modelsRoot, modelFolderName("qwen3-tts-06b-mlx", installBackend))
+const qwen17bModelDir = path.join(modelsRoot, modelFolderName("qwen3-tts-17b-mlx", installBackend))
+const qwen17bBaseModelDir = path.join(modelsRoot, modelFolderName("qwen3-tts-17b-base-mlx", installBackend))
+const chatterboxModelDir = path.join(modelsRoot, modelFolderName("chatterbox-multilingual-mlx", installBackend))
 const f5ModelDir = path.join(modelsRoot, "f5-tts-pt-br")
 const vocosModelDir = path.join(modelsRoot, "vocos-mel-24khz")
 
@@ -46,7 +59,11 @@ mkdirSync(chatterboxModelDir, { recursive: true })
 mkdirSync(f5ModelDir, { recursive: true })
 mkdirSync(vocosModelDir, { recursive: true })
 
+console.log(`DreamReader install target: ${installPlatform.label} (${installPlatform.arch})`)
+console.log(`TTS backend: ${installBackend}`)
+
 installStandalonePython()
+ensureFfmpegStatic()
 
 const version = run(pythonExecutable, ["--version"])
 console.log(version)
@@ -54,36 +71,44 @@ console.log(version)
 writeModelReadme(
   qwen06bModelDir,
   [
-    "Qwen3-TTS 0.6B MLX local model folder.",
+    `Qwen3-TTS 0.6B ${installBackend.toUpperCase()} local model folder.`,
     "",
-    "Put the downloaded MLX model files here, or select another local Qwen3-TTS 0.6B folder in the app.",
-    "Suggested source: mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16 or another mlx-audio compatible Qwen3-TTS conversion."
+    "Put the downloaded model files here, or select another local Qwen3-TTS 0.6B folder in the app.",
+    installBackend === "mlx"
+      ? "Suggested source: mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit or another mlx-audio compatible Qwen3-TTS conversion."
+      : "Suggested source: Qwen/Qwen3-TTS-12Hz-0.6B-Base or another PyTorch-compatible Qwen3-TTS conversion for this backend."
   ]
 )
 writeModelReadme(
   qwen17bModelDir,
   [
-    "Qwen3-TTS 1.7B VoiceDesign MLX local model folder.",
+    `Qwen3-TTS 1.7B VoiceDesign ${installBackend.toUpperCase()} local model folder.`,
     "",
-    "Put the downloaded MLX model files here, or select another local Qwen3-TTS 1.7B VoiceDesign folder in the app.",
-    "Suggested source: mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-4bit or another mlx-audio compatible Qwen3-TTS conversion."
+    "Put the downloaded model files here, or select another local Qwen3-TTS 1.7B VoiceDesign folder in the app.",
+    installBackend === "mlx"
+      ? "Suggested source: mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-4bit or another mlx-audio compatible Qwen3-TTS conversion."
+      : "Suggested source: Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign or another PyTorch-compatible Qwen3-TTS conversion for this backend."
   ]
 )
 writeModelReadme(
   qwen17bBaseModelDir,
   [
-    "Qwen3-TTS 1.7B Base MLX local model folder.",
+    `Qwen3-TTS 1.7B Base ${installBackend.toUpperCase()} local model folder.`,
     "",
-    "Put the downloaded MLX model files here, or select another local Qwen3-TTS 1.7B Base folder in the app.",
-    "Suggested source: mlx-community/Qwen3-TTS-12Hz-1.7B-Base-4bit for voice cloning with reference audio and transcript."
+    "Put the downloaded model files here, or select another local Qwen3-TTS 1.7B Base folder in the app.",
+    installBackend === "mlx"
+      ? "Suggested source: mlx-community/Qwen3-TTS-12Hz-1.7B-Base-4bit for voice cloning with reference audio and transcript."
+      : "Suggested source: Qwen/Qwen3-TTS-12Hz-1.7B-Base or another PyTorch-compatible Qwen3-TTS conversion for this backend."
   ]
 )
 writeModelReadme(
   chatterboxModelDir,
   [
-    "Chatterbox Multilingual MLX local model folder.",
+    `Chatterbox Multilingual ${installBackend.toUpperCase()} local model folder.`,
     "",
-    "Put mlx-community/chatterbox-fp16 files here, or select another mlx-audio compatible Chatterbox folder in the app.",
+    installBackend === "mlx"
+      ? "Put mlx-community/chatterbox-fp16 files here, or select another mlx-audio compatible Chatterbox folder in the app."
+      : "Put ResembleAI/chatterbox files here, or select another PyTorch-compatible Chatterbox folder in the app.",
     "This model supports Portuguese via lang_code=pt and exposes emotion exaggeration/CFG controls."
   ]
 )
@@ -106,6 +131,8 @@ writeModelReadme(
 )
 
 console.log("Python TTS setup complete.")
+console.log(`Platform: ${installPlatform.id}`)
+console.log(`Backend: ${installBackend}`)
 console.log(`Python executable: ${path.relative(projectRoot, pythonExecutable)}`)
 console.log(`Qwen3-TTS 0.6B folder: ${path.relative(projectRoot, qwen06bModelDir)}`)
 console.log(`Qwen3-TTS 1.7B VoiceDesign folder: ${path.relative(projectRoot, qwen17bModelDir)}`)
@@ -113,10 +140,12 @@ console.log(`Qwen3-TTS 1.7B Base folder: ${path.relative(projectRoot, qwen17bBas
 console.log(`Chatterbox Multilingual folder: ${path.relative(projectRoot, chatterboxModelDir)}`)
 console.log(`F5-TTS PT-BR folder: ${path.relative(projectRoot, f5ModelDir)}`)
 console.log(`F5-TTS Vocos folder: ${path.relative(projectRoot, vocosModelDir)}`)
-console.log("Install Python dependencies explicitly when you are ready:")
-console.log(`  ${path.relative(projectRoot, pythonExecutable)} -m pip install -r sidecars/tts/requirements-qwen3-tts-mlx.txt`)
-console.log(`  ${path.relative(projectRoot, pythonExecutable)} -m pip install -r sidecars/tts/requirements-chatterbox-mlx.txt`)
-console.log(`  ${path.relative(projectRoot, pythonExecutable)} -m pip install -r sidecars/tts/requirements-f5-tts-ptbr.txt`)
+if (installSidecars) {
+  installPythonDependencies()
+} else {
+  console.log("Install Python sidecar dependencies explicitly when you are ready:")
+  console.log(`  npm run setup:python-tts -- --backend=${installBackend} --install-sidecars`)
+}
 
 function writeModelReadme(directory, lines) {
   writeFileSync(path.join(directory, "README.txt"), [...lines, "", "This folder is intentionally ignored by git."].join("\n"))
@@ -128,7 +157,7 @@ function installStandalonePython() {
     return
   }
 
-  const target = standaloneTarget()
+  const target = installPlatform.pythonTarget
   console.log(`Finding CPython 3.12 standalone build for ${target}`)
   const asset = findStandalonePythonAsset(target)
   const archivePath = path.join(downloadsRoot, asset.name)
@@ -155,7 +184,7 @@ function installStandalonePython() {
     throw new Error("Standalone Python archive did not contain a python/ directory")
   }
   renameSync(extractedPythonDir, pythonDir)
-  ensurePythonAlias()
+  ensurePythonExecutable()
   rmSync(extractDir, { force: true, recursive: true })
 }
 
@@ -186,20 +215,31 @@ function findStandalonePythonAsset(target) {
   return asset
 }
 
-function standaloneTarget() {
-  if (process.platform === "darwin" && process.arch === "arm64") return "aarch64-apple-darwin"
-  if (process.platform === "darwin" && process.arch === "x64") return "x86_64-apple-darwin"
-  if (process.platform === "linux" && process.arch === "arm64") return "aarch64-unknown-linux-gnu"
-  if (process.platform === "linux" && process.arch === "x64") return "x86_64-unknown-linux-gnu"
-  throw new Error(`Unsupported platform for standalone Python: ${process.platform}/${process.arch}`)
-}
-
-function ensurePythonAlias() {
+function ensurePythonExecutable() {
   if (existsSync(pythonExecutable)) {
     return
   }
-  if (!existsSync(python3Executable)) {
+  const python3Executable = pythonExecutableCandidates(localRoot, installPlatform).find((candidate) => existsSync(candidate))
+  if (!python3Executable) {
     throw new Error("Standalone Python did not provide bin/python or bin/python3")
   }
-  symlinkSync("python3", pythonExecutable)
+  if (process.platform === "win32") {
+    throw new Error("Standalone Python did not provide python.exe")
+  }
+  symlinkSync(path.basename(python3Executable), pythonExecutable)
+}
+
+function ensureFfmpegStatic() {
+  if (!ffmpegStaticPath || !existsSync(ffmpegStaticPath)) {
+    console.log("FFmpeg static binary was not found. Run npm install before audio conversion tests.")
+    return
+  }
+  console.log(`FFmpeg static binary: ${path.relative(projectRoot, ffmpegStaticPath)}`)
+}
+
+function installPythonDependencies() {
+  for (const step of pipInstallPlanForBackend(installBackend, projectRoot)) {
+    console.log(`Installing ${step.label}`)
+    run(pythonExecutable, step.args, { stdio: "inherit" })
+  }
 }

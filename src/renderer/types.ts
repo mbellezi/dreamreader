@@ -319,6 +319,8 @@ export type HuggingFaceTokenStatus = {
 
 export type ModelInstallStatus = "not_configured" | "queued" | "downloading" | "available" | "failed"
 
+export type RuntimeInstallBackend = "auto" | "mlx" | "cuda" | "vulkan"
+
 export type RuntimeModel = {
   id: string
   kind: "llm" | "tts" | "tokenizer" | "vocoder" | "runtime"
@@ -415,13 +417,13 @@ export type DreamReaderBridge = {
     huggingFaceToken?: () => Promise<unknown>
     updateHuggingFaceToken?: (token: string) => Promise<unknown>
     installFromPath?: (modelPath?: string) => Promise<unknown>
-    installRecommended?: (modelId: string) => Promise<unknown>
+    installRecommended?: (modelId: string, backend?: RuntimeInstallBackend) => Promise<unknown>
     delete?: (modelId: string, deleteFiles?: boolean) => Promise<unknown>
     download?: (modelId: string) => Promise<unknown>
   }
   sidecars?: {
     list?: () => Promise<unknown[]>
-    install?: (sidecarId: string) => Promise<unknown>
+    install?: (sidecarId: string, backend?: RuntimeInstallBackend) => Promise<unknown>
     uninstall?: (sidecarId: string) => Promise<unknown>
   }
   tts?: {

@@ -10,6 +10,7 @@ import { ReaderPane } from "@renderer/components/reader/ReaderPane"
 import { SettingsDialog } from "@renderer/components/settings/SettingsDialog"
 import { translate } from "@renderer/i18n"
 import { dreamreaderClient } from "@renderer/lib/dreamreader"
+import { effectiveInstallBackend } from "@renderer/lib/installBackends"
 import {
   initialChapterIndex,
   libraryImportStatusForError,
@@ -41,6 +42,7 @@ import type {
   ReaderLocator,
   ReaderPreferences,
   RuntimeDiagnostic,
+  RuntimeInstallBackend,
   RuntimeModel,
   RuntimeOperationJob,
   RuntimeSidecar,
@@ -68,6 +70,7 @@ export function App(): ReactElement {
   const [modelDownloadJobs, setModelDownloadJobs] = useState<ModelDownloadJob[]>([])
   const [runtimeOperations, setRuntimeOperations] = useState<RuntimeOperationJob[]>([])
   const [runtimeSidecars, setRuntimeSidecars] = useState<RuntimeSidecar[]>([])
+  const [installBackend, setInstallBackend] = useState<RuntimeInstallBackend>("auto")
   const [huggingFaceTokenStatus, setHuggingFaceTokenStatus] = useState<HuggingFaceTokenStatus>({ configured: false })
   const [voices, setVoices] = useState<VoiceProfile[]>([])
   const [activeView, setActiveView] = useState<AppView>("library")
@@ -94,6 +97,7 @@ export function App(): ReactElement {
 
   const locale = settings?.locale ?? "pt-BR"
   const t = useCallback((key: string, values?: Record<string, string | number>) => translate(locale, key, values), [locale])
+  const selectedInstallBackend = effectiveInstallBackend(diagnostics, installBackend)
   const translateLibraryStatus = useCallback(
     (status: LibraryStatusDescriptor): LibraryStatus => ({
       tone: status.tone,
@@ -652,7 +656,7 @@ export function App(): ReactElement {
   }
 
   const installRecommendedModel = async (modelId: string) => {
-    await dreamreaderClient.installRecommendedModel(modelId)
+    await dreamreaderClient.installRecommendedModel(modelId, selectedInstallBackend)
     await refreshModelManagement()
     if (audioBook) {
       await refreshAudioState(audioBook.id)
@@ -676,7 +680,7 @@ export function App(): ReactElement {
   }
 
   const installSidecar = async (sidecarId: string) => {
-    await dreamreaderClient.installSidecar(sidecarId)
+    await dreamreaderClient.installSidecar(sidecarId, selectedInstallBackend)
     await refreshModelManagement()
   }
 
@@ -689,11 +693,11 @@ export function App(): ReactElement {
     const model = runtimeModels.find((m) => m.id === modelId)
     const sidecar = runtimeSidecars.find((s) => (model?.engineId ? s.modelEngineIds.includes(model.engineId) : false))
     if (sidecar && sidecar.status !== "available") {
-      await dreamreaderClient.installSidecar(sidecar.id)
+      await dreamreaderClient.installSidecar(sidecar.id, selectedInstallBackend)
     }
     if (model) {
       if (model.metadata.huggingFaceRepo && model.metadata.localFolder) {
-        await dreamreaderClient.installRecommendedModel(modelId)
+        await dreamreaderClient.installRecommendedModel(modelId, selectedInstallBackend)
       } else if (model.canDownload) {
         await dreamreaderClient.downloadModel(modelId)
       }
@@ -916,6 +920,7 @@ export function App(): ReactElement {
                     diagnostics={diagnostics}
                     downloadJobs={modelDownloadJobs}
                     huggingFaceTokenStatus={huggingFaceTokenStatus}
+                    installBackend={selectedInstallBackend}
                     loading={modelManagementLoading}
                     models={runtimeModels}
                     operations={runtimeOperations}
@@ -930,6 +935,7 @@ export function App(): ReactElement {
                     onInstallEngine={installEngine}
                     onRefresh={refreshModelManagement}
                     onSaveHuggingFaceToken={saveHuggingFaceToken}
+                    onSelectInstallBackend={setInstallBackend}
                     onUninstallSidecar={uninstallSidecar}
                   />
                 }

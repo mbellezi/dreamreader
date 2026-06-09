@@ -146,6 +146,13 @@ export const ModelInstallStatusSchema = z.enum([
 ]);
 export type ModelInstallStatus = z.infer<typeof ModelInstallStatusSchema>;
 
+export const RuntimeInstallBackendSchema = z
+  .enum(["auto", "mlx", "cuda", "vulkan"])
+  .default("auto");
+export type RuntimeInstallBackend = z.infer<
+  typeof RuntimeInstallBackendSchema
+>;
+
 export const ModelAssetSchema = z.object({
   id: IdSchema,
   kind: z.enum(["llm", "tts", "tokenizer", "vocoder", "runtime"]),
@@ -273,6 +280,7 @@ export type RuntimeOperationJob = z.infer<typeof RuntimeOperationJobSchema>;
 
 export const InstallRecommendedModelRequestSchema = z.object({
   modelId: IdSchema,
+  backend: RuntimeInstallBackendSchema,
 });
 export type InstallRecommendedModelRequest = z.infer<
   typeof InstallRecommendedModelRequestSchema
@@ -286,6 +294,7 @@ export type DeleteModelRequest = z.infer<typeof DeleteModelRequestSchema>;
 
 export const SidecarRequestSchema = z.object({
   sidecarId: IdSchema,
+  backend: RuntimeInstallBackendSchema,
 });
 export type SidecarRequest = z.infer<typeof SidecarRequestSchema>;
 
