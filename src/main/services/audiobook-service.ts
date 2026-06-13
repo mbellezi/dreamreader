@@ -1,11 +1,12 @@
-import { mkdir, writeFile } from "node:fs/promises"
+import { access, copyFile, mkdir, rename, rm, stat } from "node:fs/promises"
 import path from "node:path"
-import { and, asc, eq } from "drizzle-orm"
-import type { AudiobookExport, AudiobookManifest, LibraryAudioStatus } from "@shared/contracts/ai"
+import { and, asc, desc, eq, inArray } from "drizzle-orm"
+import type { AudiobookBuildJob, AudiobookExport, AudiobookManifest, LibraryAudioStatus } from "@shared/contracts/ai"
 import type { AppDatabase } from "@main/db/client"
 import { assets, audiobookBuildJobs, audiobookChapters, audiobookExports, books, ttsJobs } from "@main/db/schema"
+import { buildM4bAudiobook, type M4bChapterInput } from "@main/lib/audio-transcode"
 import { AppError } from "@main/lib/errors"
-import { hashBuffer } from "@main/lib/hash"
+import { hashBuffer, hashFile } from "@main/lib/hash"
 import { createId } from "@main/lib/ids"
 import type { AppPaths } from "@main/lib/paths"
 
@@ -81,7 +82,7 @@ export class AudiobookService {
       .returning()
 
     if (enabled && updated.chaptersReady > 0) {
-      return this.buildDraft(bookId, "manual_rebuild")
+      return this.rebuildAutoIfIdle(bookId, "manual_rebuild")
     }
     return toAudiobookExport(updated)
   }
@@ -90,9 +91,57 @@ export class AudiobookService {
     return this.buildDraft(bookId, "manual_rebuild")
   }
 
-  async reveal(bookId: string) {
-    await this.ensureExport(bookId)
-    return { revealed: true as const }
+  async rebuildAutoIfIdle(bookId: string, reason = "chapter_completed"): Promise<AudiobookExport> {
+    const current = await this.ensureExport(bookId)
+    if (!current.autoBuildEnabled || current.chaptersReady <= 0 || (await this.hasActiveAudioJobs(bookId))) {
+      return current
+    }
+    return this.buildDraft(bookId, reason)
+  }
+
+  async getLatestBuildJob(bookId: string): Promise<AudiobookBuildJob | null> {
+    const job = await this.db.query.audiobookBuildJobs.findFirst({
+      where: eq(audiobookBuildJobs.bookId, bookId),
+      orderBy: [desc(audiobookBuildJobs.updatedAt)]
+    })
+    return job ? toAudiobookBuildJob(job) : null
+  }
+
+  async exportFileName(bookId: string): Promise<string> {
+    const book = await this.getBook(bookId)
+    const author = book.authors?.[0]?.trim()
+    const baseName = author ? `${book.title} - ${author}` : book.title
+    return `${safeFileName(baseName)}.m4b`
+  }
+
+  async getExportFilePath(bookId: string): Promise<string> {
+    const current = await this.ensureExport(bookId)
+    const assetId = current.status === "complete" ? current.assetId ?? current.draftAssetId : current.draftAssetId ?? current.assetId
+    if (!assetId) {
+      throw new AppError("audiobook_export_not_built", "Audiobook export has not been built yet")
+    }
+
+    const asset = await this.db.query.assets.findFirst({
+      where: eq(assets.id, assetId)
+    })
+    if (!asset?.path) {
+      throw new AppError("audiobook_export_asset_missing", "Audiobook export asset not found")
+    }
+
+    try {
+      await access(asset.path)
+    } catch {
+      throw new AppError("audiobook_export_file_missing", "Audiobook export file is missing")
+    }
+
+    return asset.path
+  }
+
+  async saveExportToFile(input: { bookId: string; targetPath: string }): Promise<{ saved: true; filePath: string }> {
+    const sourcePath = await this.getExportFilePath(input.bookId)
+    await mkdir(path.dirname(input.targetPath), { recursive: true })
+    await copyFile(sourcePath, input.targetPath)
+    return { saved: true, filePath: input.targetPath }
   }
 
   async recordChapterAudio(input: ChapterAudioReadyInput): Promise<AudiobookExport> {
@@ -138,7 +187,7 @@ export class AudiobookService {
       })
 
     const updated = await this.refreshManifest(input.bookId, true)
-    return updated.autoBuildEnabled ? this.buildDraft(input.bookId, "chapter_completed") : updated
+    return updated.autoBuildEnabled ? this.rebuildAutoIfIdle(input.bookId, "chapter_completed") : updated
   }
 
   async removeChapterAudio(bookId: string, chapterHref: string): Promise<string[]> {
@@ -165,14 +214,15 @@ export class AudiobookService {
         audiobookExportId: current.id,
         bookId,
         reason,
-        status: "building",
-        progress: 0.25,
+        status: "queued",
+        progress: 0.02,
         startedAt: new Date(),
         updatedAt: new Date()
       })
       .returning()
 
     try {
+      await this.updateBuildJob(buildJob.id, { status: "building", progress: 0.12 })
       const refreshed = await this.refreshManifest(bookId, false)
       if (!refreshed.manifest?.chapters.length) {
         const [updatedEmpty] = await this.db
@@ -184,36 +234,56 @@ export class AudiobookService {
           })
           .where(eq(audiobookExports.id, current.id))
           .returning()
+        await this.updateBuildJob(buildJob.id, { status: "completed", progress: 1, finishedAt: new Date() })
         return toAudiobookExport(updatedEmpty)
       }
 
+      await this.updateBuildJob(buildJob.id, { status: "building", progress: 0.28 })
       const manifest = refreshed.manifest
-      const json = JSON.stringify(
-        {
+      const m4bChapters = await this.resolveM4bChapters(manifest)
+      await this.updateBuildJob(buildJob.id, { status: "building", progress: 0.42 })
+      const manifestHash = hashBuffer(
+        JSON.stringify({
           ...manifest,
           container: {
+            encoder: "ffmpeg-static",
             format: "m4b",
-            mode: "manifest-only",
-            note: "Audio chapters are canonical; a real M4B encoder can rebuild from this manifest."
+            mode: "audio"
           }
-        },
-        null,
-        2
+        })
       )
-      const contentHash = hashBuffer(json)
       await mkdir(this.paths.audiobooksDir, { recursive: true })
-      const filePath = path.join(this.paths.audiobooksDir, `${bookId}-${contentHash.slice(0, 16)}.m4b.json`)
-      await writeFile(filePath, json)
+      const filePath = path.join(this.paths.audiobooksDir, `${bookId}-${manifestHash.slice(0, 16)}.m4b`)
+      const tempPath = path.join(this.paths.audiobooksDir, `.${bookId}-${createId("m4b")}.tmp`)
+      try {
+        await this.updateBuildJob(buildJob.id, { status: "building", progress: 0.55 })
+        await buildM4bAudiobook({
+          chapters: m4bChapters,
+          metadata: {
+            authors: manifest.authors,
+            language: manifest.language,
+            title: manifest.title
+          },
+          outputPath: tempPath
+        })
+        await this.updateBuildJob(buildJob.id, { status: "validating", progress: 0.86 })
+        await rename(tempPath, filePath)
+      } catch (error) {
+        await rm(tempPath, { force: true })
+        throw error
+      }
+      const contentHash = await hashFile(filePath)
+      const sizeBytes = (await stat(filePath)).size
       const [asset] = await this.db
         .insert(assets)
         .values({
           id: createId("asset"),
-          kind: "audiobook_manifest",
+          kind: "audiobook_m4b",
           bookId,
           path: filePath,
-          mimeType: "application/json",
+          mimeType: "audio/mp4",
           contentHash,
-          sizeBytes: Buffer.byteLength(json)
+          sizeBytes
         })
         .returning()
 
@@ -227,7 +297,8 @@ export class AudiobookService {
           stale: false,
           metadataJson: {
             ...jsonObject(refreshed.metadata),
-            draftMode: "manifest-only",
+            artifactMode: "m4b",
+            encoder: "ffmpeg-static",
             lastBuildReason: reason
           },
           lastBuiltAt: new Date(),
@@ -273,6 +344,54 @@ export class AudiobookService {
         .where(eq(audiobookExports.id, current.id))
       throw error
     }
+  }
+
+  private async resolveM4bChapters(manifest: AudiobookManifest): Promise<M4bChapterInput[]> {
+    const audioAssetIds = manifest.chapters.map((chapter) => chapter.audioAssetId)
+    const audioAssets = audioAssetIds.length
+      ? await this.db.query.assets.findMany({
+          where: inArray(assets.id, audioAssetIds)
+        })
+      : []
+    const assetsById = new Map(audioAssets.map((asset) => [asset.id, asset]))
+
+    const chapters: M4bChapterInput[] = []
+    for (const chapter of manifest.chapters) {
+      const asset = assetsById.get(chapter.audioAssetId)
+      if (!asset?.path) {
+        throw new AppError("audiobook_chapter_audio_missing", "Audiobook chapter audio asset not found")
+      }
+      try {
+        await access(asset.path)
+      } catch {
+        throw new AppError("audiobook_chapter_audio_file_missing", "Audiobook chapter audio file is missing")
+      }
+      chapters.push({
+        filePath: asset.path,
+        title: chapter.title,
+        startMs: chapter.startMs,
+        endMs: chapter.endMs
+      })
+    }
+
+    return chapters
+  }
+
+  private async hasActiveAudioJobs(bookId: string): Promise<boolean> {
+    const jobs = await this.db.query.ttsJobs.findMany({
+      where: eq(ttsJobs.bookId, bookId)
+    })
+    return jobs.some((job) => !TERMINAL_JOB_STATUSES.has(job.status))
+  }
+
+  private async updateBuildJob(id: string, patch: Partial<typeof audiobookBuildJobs.$inferInsert>) {
+    await this.db
+      .update(audiobookBuildJobs)
+      .set({
+        ...patch,
+        updatedAt: new Date()
+      })
+      .where(eq(audiobookBuildJobs.id, id))
   }
 
   private async ensureExport(bookId: string): Promise<AudiobookExport> {
@@ -410,11 +529,52 @@ function toAudiobookExport(row: typeof audiobookExports.$inferSelect): Audiobook
   }
 }
 
+function toAudiobookBuildJob(row: typeof audiobookBuildJobs.$inferSelect): AudiobookBuildJob {
+  return {
+    id: row.id,
+    bookId: row.bookId,
+    audiobookExportId: row.audiobookExportId,
+    status: normalizeBuildStatus(row.status),
+    progress: Math.min(Math.max(row.progress, 0), 1),
+    reason: row.reason,
+    resultAssetId: optional(row.resultAssetId),
+    errorCode: optional(row.errorCode),
+    errorMessage: optional(row.errorMessage),
+    createdAt: toIso(row.createdAt),
+    updatedAt: toIso(row.updatedAt),
+    startedAt: optionalDate(row.startedAt),
+    finishedAt: optionalDate(row.finishedAt)
+  }
+}
+
 function normalizeStatus(status: string): AudiobookExport["status"] {
   if (status === "partial" || status === "stale" || status === "complete" || status === "error") {
     return status
   }
   return "none"
+}
+
+function normalizeBuildStatus(status: string): AudiobookBuildJob["status"] {
+  if (
+    status === "queued" ||
+    status === "building" ||
+    status === "validating" ||
+    status === "completed" ||
+    status === "failed" ||
+    status === "cancelled"
+  ) {
+    return status
+  }
+  return "queued"
+}
+
+function safeFileName(value: string): string {
+  const clean = value
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-")
+    .replace(/\s+/g, " ")
+    .replace(/[. ]+$/g, "")
+    .trim()
+  return clean || "audiobook"
 }
 
 function jsonObject(value: unknown): Record<string, unknown> {

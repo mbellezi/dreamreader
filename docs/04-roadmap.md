@@ -69,12 +69,12 @@ Implementado:
 - Cancelamento, retry e reutilizacao de cache para jobs repetidos.
 - Diagnostico de modelos/runtimes exibindo o adapter local disponivel e engines futuras nao configuradas.
 - Ciclo long-lived do adapter local com warmup e timeout de desalocacao.
-- Manifesto parcial de audiobook por livro em `audiobook_exports` e `audiobook_chapters`; rebuild gera asset JSON manifest-only enquanto o encoder M4B real nao existe.
+- Manifesto parcial de audiobook por livro em `audiobook_exports` e `audiobook_chapters`; rebuild gera asset M4B real com AAC via `ffmpeg-static`.
 
 Limites conhecidos da fase 2:
 
 - O adapter atual gera WAV local deterministico para validar fila/cache/player; nao e uma engine neural Qwen/F5 nem sintetiza voz natural.
-- O export M4B ainda e manifest-only; encoder AAC/M4B real fica para empacotamento/engines futuras.
+- O export M4B usa encoder AAC/M4B real via `ffmpeg-static`; empacotamento avancado, capas e ajustes finos continuam para fases futuras.
 
 ## Fase 3: Prosodia com LLM - Implementada
 
@@ -122,7 +122,7 @@ Limites conhecidos da fase 4:
 
 - Os sidecars Qwen3-TTS/Chatterbox/F5-TTS sao executaveis locais configuraveis; o repositorio nao empacota Python/MLX/PyTorch nem pesos de modelo.
 - Downloads multi-arquivo de snapshots TTS continuam como instalacao por pasta local.
-- O export M4B ainda e manifest-only ate a fase de empacotamento/encoder.
+- O export M4B gera arquivo `.m4b` real a partir dos capitulos prontos; capas, tuning de qualidade e empacotamento avancado continuam pendentes.
 
 ## Fase 5: Empacotamento Alpha
 

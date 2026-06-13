@@ -74,6 +74,14 @@ export type ExportAnnotationsInput = z.infer<
   typeof ExportAnnotationsInputSchema
 >;
 
+export const ExportAnnotationsResultSchema = z.object({
+  exported: z.boolean(),
+  filePath: z.string().trim().optional(),
+});
+export type ExportAnnotationsResult = z.infer<
+  typeof ExportAnnotationsResultSchema
+>;
+
 export const DeleteAnnotationRequestSchema = z.object({
   id: IdSchema,
 });

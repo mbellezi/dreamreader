@@ -800,6 +800,19 @@ export class TtsService {
         finishedAt: new Date()
       })
       this.pausedJobIds.delete(job.id)
+      if (!isPartial && !audiobookError) {
+        try {
+          await this.audiobook.rebuildAutoIfIdle(job.bookId, "chapter_completed")
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Audiobook rebuild failed"
+          await this.updateJob(job.id, {
+            settingsJson: compactJson({
+              ...jsonObject((await this.getJobRow(job.id)).settingsJson),
+              audiobookError: message
+            })
+          })
+        }
+      }
     } catch (error) {
       const current = await this.getJobRow(job.id).catch(() => job)
       const paused = this.pausedJobIds.has(job.id) || (error instanceof AppError && error.code === "tts_job_paused")
@@ -878,14 +891,15 @@ export class TtsService {
     chapterDurationMs: number
   }> {
     if (input.readyEngine.adapterId === DEFAULT_TTS_ADAPTER_ID) {
-      return this.synthesizeWithLocalAdapter(input.job, input.plan)
+      return this.synthesizeWithLocalAdapter(input.job, input.plan, input.seed)
     }
     return this.synthesizeWithSidecar(input)
   }
 
   private async synthesizeWithLocalAdapter(
     job: TtsJobRow,
-    plan: NarrationPlan
+    plan: NarrationPlan,
+    seed?: number
   ): Promise<{
     chapterAssetId: string
     chapterAudioHash: string
@@ -908,7 +922,7 @@ export class TtsService {
         })
         continue
       }
-      const audio = this.adapter.synthesizeSegment(segment)
+      const audio = this.adapter.synthesizeSegment(segment, seed)
       const filePath = path.join(outputDir, `${String(index).padStart(4, "0")}-${hashBuffer(segment.segmentId).slice(0, 10)}.wav`)
       await writeFile(filePath, audio.buffer)
       const [asset] = await this.db
@@ -940,7 +954,7 @@ export class TtsService {
       await sleep(localSegmentPacingMs(segment.normalizedText))
     }
 
-    const chapterAudio = this.adapter.synthesizeChapter(plan)
+    const chapterAudio = this.adapter.synthesizeChapter(plan, seed)
     const chapterPath = path.join(
       this.paths.audioCacheDir,
       job.bookId,

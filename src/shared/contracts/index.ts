@@ -46,6 +46,7 @@ export {
   BookmarkSchema,
   CreateAnnotationInputSchema,
   ExportAnnotationsInputSchema,
+  ExportAnnotationsResultSchema,
   UpdateAnnotationInputSchema,
 } from "./annotations";
 export type {
@@ -53,6 +54,7 @@ export type {
   Bookmark,
   CreateAnnotationInput,
   ExportAnnotationsInput,
+  ExportAnnotationsResult,
   UpdateAnnotationInput,
 } from "./annotations";
 

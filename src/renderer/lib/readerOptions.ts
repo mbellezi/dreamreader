@@ -9,6 +9,9 @@ export const fontFamilyOptions: Array<{ value: ReaderFontFamily; labelKey: strin
   { value: "palatino", labelKey: "reader.font.palatino", stack: 'Palatino, "Palatino Linotype", "Book Antiqua", serif' },
   { value: "charter", labelKey: "reader.font.charter", stack: 'Charter, "Iowan Old Style", "Athelas", Georgia, serif' },
   { value: "system-serif", labelKey: "reader.font.systemSerif", stack: 'ui-serif, Georgia, Cambria, "Times New Roman", serif' },
+  { value: "atkinson", labelKey: "reader.font.atkinson", stack: '"Atkinson Hyperlegible", "Aptos", "Segoe UI", ui-sans-serif, system-ui, sans-serif' },
+  { value: "avenir", labelKey: "reader.font.avenir", stack: 'Avenir, "Avenir Next", "Helvetica Neue", Arial, ui-sans-serif, sans-serif' },
+  { value: "verdana", labelKey: "reader.font.verdana", stack: 'Verdana, Geneva, "DejaVu Sans", ui-sans-serif, sans-serif' },
   { value: "system-sans", labelKey: "reader.font.systemSans", stack: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }
 ]
 
@@ -34,5 +37,5 @@ export const themePreviewClasses: Record<AppearanceTheme, string> = {
   light: "bg-white",
   dark: "bg-neutral-950",
   sepia: "bg-[#f3e6cc]",
-  contrast: "bg-black ring-2 ring-yellow-300"
+  contrast: "border-yellow-300 bg-[linear-gradient(90deg,#050505_0_50%,#facc15_50%_100%)]"
 }

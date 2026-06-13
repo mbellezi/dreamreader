@@ -27,8 +27,8 @@ As fases 0, 1, 2 e 3 estao implementadas com esta arquitetura:
 - `src/renderer/lib/dreamreader.ts` atua como cliente usado pelo renderer; quando a bridge Electron nao existe, usa fallback local com dados de exemplo em `localStorage`.
 - `src/main/services/tts-service.ts` implementa fila TTS persistente por capitulo, segmentacao/normalizacao basica, adapter local WAV e cache de audio por capitulo.
 - `src/main/services/prosody-service.ts` aplica prosodia neutra ou expressiva sobre `NarrationPlan`, valida a resposta estruturada por Zod e persiste cache por segmento em `prosody_analyses`.
-- `src/main/services/audiobook-service.ts` persiste capitulos prontos, manifestos parciais e build jobs de audiobook. O rebuild atual gera manifesto JSON manifest-only enquanto o encoder M4B real nao existe.
-- Servicos de vozes e modelos ainda mantem parte do comportamento como stub/diagnostico para fases futuras; runtime GGUF/MLX real de prosodia, engines neurais, voice cloning e montagem M4B real ainda nao executam inferencia/processamento externo.
+- `src/main/services/audiobook-service.ts` persiste capitulos prontos, manifestos parciais e build jobs de audiobook. O rebuild gera um M4B real com AAC via `ffmpeg-static`, mantendo o manifesto no banco como fonte reconstruivel.
+- Servicos de vozes e modelos ainda mantem parte do comportamento como stub/diagnostico para fases futuras; runtime GGUF/MLX real de prosodia, engines neurais e voice cloning ainda nao executam inferencia/processamento externo.
 
 ## Limites Entre Processos
 

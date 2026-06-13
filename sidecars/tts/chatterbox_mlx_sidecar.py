@@ -10,6 +10,7 @@ from pathlib import Path
 
 
 SCHEMA_VERSION = "dreamreader-tts-sidecar-result/v1"
+MAX_GENERATION_SEED = 4_294_967_295
 SUPPORTED_LANG_CODES = {
     "ar",
     "da",
@@ -152,7 +153,7 @@ def synthesize(request, emit=lambda event: None):
             if reference.get("text"):
                 kwargs["ref_text"] = reference["text"]
 
-        apply_mlx_seed(seed + index)
+        apply_mlx_seed(chatterbox_segment_seed(seed, index, request))
         generate_audio(**filter_generate_kwargs(kwargs, accepted_params))
         audio_path = find_generated_wav(output_dir, prefix)
         duration_ms = wav_duration_ms(audio_path)
@@ -281,16 +282,16 @@ def chatterbox_max_tokens(settings):
 
 
 def chatterbox_seed(request, settings) -> int:
-    configured = request.get("seed")
-    if isinstance(configured, int):
-        return max(0, min(configured, 2**31 - 1))
+    configured = normalized_generation_seed(request.get("seed"))
+    if configured is not None:
+        return configured
     configured = settings.get("seed")
     if isinstance(configured, int):
-        return max(0, min(configured, 2**31 - 1))
+        return normalized_generation_seed(configured) or 0
     raw = os.environ.get("DREAMREADER_CHATTERBOX_SEED")
     if raw:
         try:
-            return max(0, min(int(raw), 2**31 - 1))
+            return normalized_generation_seed(int(raw)) or 0
         except ValueError:
             pass
     voice_profile = request.get("voiceProfile") if isinstance(request.get("voiceProfile"), dict) else {}
@@ -302,7 +303,19 @@ def chatterbox_seed(request, settings) -> int:
             str(settings.get("preset") or ""),
         ]
     )
-    return int(hashlib.sha256(basis.encode("utf-8")).hexdigest()[:8], 16) % (2**31 - 1)
+    return int(hashlib.sha256(basis.encode("utf-8")).hexdigest()[:8], 16) % MAX_GENERATION_SEED
+
+
+def chatterbox_segment_seed(seed: int, segment_index: int, request) -> int:
+    if normalized_generation_seed(request.get("seed")) is not None:
+        return seed
+    return normalized_generation_seed(seed + segment_index) or 0
+
+
+def normalized_generation_seed(value):
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return max(0, min(value, MAX_GENERATION_SEED))
 
 
 def apply_mlx_seed(seed: int) -> None:

@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { PGlite } from "@electric-sql/pglite"
@@ -84,6 +84,61 @@ describe("LibraryService", () => {
       await client.close()
     }
   })
+
+  it("exports annotations as a structured Markdown file", async () => {
+    const { client, service, tempDir } = await createTestLibrary()
+    const epubPath = path.join(tempDir, "livro-teste.epub")
+    await writeFile(epubPath, await createMinimalEpub())
+
+    try {
+      const result = await service.importFiles([epubPath])
+      const imported = result.imported[0] as { id: string }
+      const opened = await service.openBook(imported.id)
+      const chapterHref = opened.tableOfContents[0].href
+
+      await service.createAnnotation({
+        bookId: imported.id,
+        locator: {
+          href: chapterHref,
+          text: {
+            anchorParagraphIndex: 2,
+            anchorTextOffset: 8
+          }
+        },
+        quote: "Texto em portugues brasileiro.",
+        color: "yellow",
+        note: "Minha nota sobre o trecho.",
+        tags: ["note"]
+      })
+
+      const markdown = await service.exportAnnotations({
+        bookId: imported.id,
+        format: "markdown",
+        includeDeleted: false
+      })
+      expect(markdown).toContain("# Livro de Teste")
+      expect(markdown).toContain("- **Autor(es):** DreamReader")
+      expect(markdown).toContain("## Primeiro capitulo")
+      expect(markdown).toContain("### Paragrafo 3")
+      expect(markdown).toContain("> Texto em portugues brasileiro.")
+      expect(markdown).toContain("**Nota:**\n\nMinha nota sobre o trecho.")
+
+      const targetPath = path.join(tempDir, "notas.md")
+      const exported = await service.exportAnnotationsToFile({
+        bookId: imported.id,
+        format: "markdown",
+        includeDeleted: false,
+        targetPath
+      })
+      expect(exported).toEqual({ exported: true, filePath: targetPath })
+      const exportedMarkdown = await readFile(targetPath, "utf8")
+      expect(exportedMarkdown).toContain("# Livro de Teste")
+      expect(exportedMarkdown).toContain("### Paragrafo 3")
+      expect(exportedMarkdown).toContain("**Nota:**\n\nMinha nota sobre o trecho.")
+    } finally {
+      await client.close()
+    }
+  })
 })
 
 async function createTestLibrary() {
@@ -95,6 +150,8 @@ async function createTestLibrary() {
   await migrate(db, { migrationsFolder: path.resolve("drizzle") })
 
   const paths = {
+    appRoot: tempDir,
+    resourcesDir: tempDir,
     userData: tempDir,
     dbDir: path.join(tempDir, "db"),
     booksDir: path.join(tempDir, "library", "books"),
@@ -104,6 +161,12 @@ async function createTestLibrary() {
     audiobooksDir: path.join(tempDir, "audiobooks"),
     voicesDir: path.join(tempDir, "voices"),
     modelsDir: path.join(tempDir, "models"),
+    runtimeDir: path.join(tempDir, "runtimes"),
+    pythonDir: path.join(tempDir, "runtimes", "python"),
+    runtimeDownloadsDir: path.join(tempDir, "runtimes", "downloads"),
+    runtimeCacheDir: path.join(tempDir, "runtime-cache"),
+    huggingFaceDir: path.join(tempDir, "huggingface"),
+    sidecarsDir: path.join(tempDir, "sidecars"),
     logsDir: path.join(tempDir, "logs"),
     backupsDir: path.join(tempDir, "backups")
   }

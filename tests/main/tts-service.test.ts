@@ -142,6 +142,9 @@ process.stdin.on("end", () => {
   if (typeof request.voiceBinding?.settings?.voiceDesignPrompt !== "string") {
     throw new Error("expected Qwen VoiceDesign binding")
   }
+  if (request.seed !== 2026) {
+    throw new Error("expected fixed seed")
+  }
   fs.mkdirSync(request.outputDirectory, { recursive: true })
   const segments = request.plan.segments.map((segment, index) => {
     const audioPath = require("path").join(request.outputDirectory, "segment-" + index + ".wav")
@@ -186,6 +189,8 @@ process.stdin.on("end", () => {
         chapterHref: "chapter-1",
         engineId: "qwen3-tts-17b-mlx",
         quality: "draft",
+        seed: 2026,
+        seedFixed: true,
         useExpressiveNarration: false,
         voiceProfileId: "voice_qwen3_design_ptbr_neutral"
       })
@@ -538,7 +543,9 @@ process.stdin.on("end", () => {
         useExpressiveNarration: false
       })
       await tts.drainQueue()
-      expect((await tts.getJob(first.id)).status).toBe("completed")
+      const firstCompleted = await tts.getJob(first.id)
+      expect(firstCompleted.status).toBe("completed")
+      expect(firstCompleted.settings.chapterAudioHash).toBeTruthy()
 
       const changedTemperature = await tts.enqueueChapter({
         bookId: "book-audio",
@@ -573,6 +580,9 @@ process.stdin.on("end", () => {
       expect(changedSeed.status).toBe("queued")
       expect(changedSeed.settings.cached).toBe(false)
       await tts.drainQueue()
+      const changedSeedCompleted = await tts.getJob(changedSeed.id)
+      expect(changedSeedCompleted.settings.chapterAudioHash).toBeTruthy()
+      expect(changedSeedCompleted.settings.chapterAudioHash).not.toBe(firstCompleted.settings.chapterAudioHash)
     } finally {
       await client.close()
     }
@@ -814,6 +824,8 @@ async function createTestServices() {
   const db = drizzle(client, { schema })
   await migrate(db, { migrationsFolder: path.resolve("drizzle") })
   const paths = {
+    appRoot: tempDir,
+    resourcesDir: tempDir,
     userData: tempDir,
     dbDir: path.join(tempDir, "db"),
     booksDir: path.join(tempDir, "library", "books"),
@@ -823,6 +835,12 @@ async function createTestServices() {
     audiobooksDir: path.join(tempDir, "audiobooks"),
     voicesDir: path.join(tempDir, "voices"),
     modelsDir: path.join(tempDir, "models"),
+    runtimeDir: path.join(tempDir, "runtimes"),
+    pythonDir: path.join(tempDir, "runtimes", "python"),
+    runtimeDownloadsDir: path.join(tempDir, "runtimes", "downloads"),
+    runtimeCacheDir: path.join(tempDir, "runtime-cache"),
+    huggingFaceDir: path.join(tempDir, "huggingface"),
+    sidecarsDir: path.join(tempDir, "sidecars"),
     logsDir: path.join(tempDir, "logs"),
     backupsDir: path.join(tempDir, "backups")
   }

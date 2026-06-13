@@ -736,3 +736,32 @@ export const AudiobookExportSchema = z.object({
   lastBuiltAt: IsoDateTimeStringSchema.optional(),
 });
 export type AudiobookExport = z.infer<typeof AudiobookExportSchema>;
+
+export const AudiobookBuildJobStatusSchema = z.enum([
+  "queued",
+  "building",
+  "validating",
+  "completed",
+  "failed",
+  "cancelled",
+]);
+export type AudiobookBuildJobStatus = z.infer<
+  typeof AudiobookBuildJobStatusSchema
+>;
+
+export const AudiobookBuildJobSchema = z.object({
+  id: IdSchema,
+  bookId: IdSchema,
+  audiobookExportId: IdSchema,
+  status: AudiobookBuildJobStatusSchema,
+  progress: ProgressSchema,
+  reason: NonEmptyStringSchema,
+  resultAssetId: IdSchema.optional(),
+  errorCode: z.string().trim().optional(),
+  errorMessage: z.string().trim().optional(),
+  createdAt: IsoDateTimeStringSchema,
+  updatedAt: IsoDateTimeStringSchema,
+  startedAt: IsoDateTimeStringSchema.optional(),
+  finishedAt: IsoDateTimeStringSchema.optional(),
+});
+export type AudiobookBuildJob = z.infer<typeof AudiobookBuildJobSchema>;

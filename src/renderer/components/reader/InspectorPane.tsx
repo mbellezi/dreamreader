@@ -5,19 +5,25 @@ import {
   Download,
   Highlighter,
   List,
+  ListFilter,
   PanelRight,
   PanelRightClose,
   SlidersHorizontal,
+  Star,
+  StickyNote,
   TextAlignJustify,
   TextAlignStart,
   Trash2,
   Type
 } from "lucide-react"
+import { useMemo, useState } from "react"
 import { IconToggle, SegmentButton, SliderField } from "@renderer/components/common/Controls"
 import type { InspectorTab, ReaderPreferenceChangeHandler, TranslationFn } from "@renderer/app/types"
 import { fontFamilyOptions, swatchClasses, themeOptions, themePreviewClasses } from "@renderer/lib/readerOptions"
 import { cn } from "@renderer/lib/utils"
 import type { Annotation, BookDetails, ReaderPreferences } from "@renderer/types"
+
+type AnnotationFilter = "all" | "note" | "favorite"
 
 export function InspectorPane({
   activeTab,
@@ -25,7 +31,6 @@ export function InspectorPane({
   annotations,
   book,
   chapterIndex,
-  exportContent,
   preferences,
   t,
   onChangePreference,
@@ -41,7 +46,6 @@ export function InspectorPane({
   annotations: Annotation[]
   book: BookDetails | null
   chapterIndex: number
-  exportContent: string
   preferences: ReaderPreferences
   t: TranslationFn
   onChangePreference: ReaderPreferenceChangeHandler
@@ -52,6 +56,12 @@ export function InspectorPane({
   onJumpToAnnotation: (annotation: Annotation) => void
   onJumpToChapter: (index: number) => void
 }) {
+  const [annotationFilter, setAnnotationFilter] = useState<AnnotationFilter>("all")
+  const filteredAnnotations = useMemo(
+    () => annotationFilter === "all" ? annotations : annotations.filter((annotation) => annotation.kind === annotationFilter),
+    [annotationFilter, annotations]
+  )
+
   return (
     <aside className="flex h-full min-h-0 flex-col overflow-hidden border-l bg-sidebar">
       <div className="flex shrink-0 items-center gap-1 border-b p-2">
@@ -99,18 +109,34 @@ export function InspectorPane({
                 <Download className="h-4 w-4" aria-hidden="true" />
                 {t("reader.export")}
               </button>
-
-              {exportContent ? (
-                <div className="rounded-md border bg-card p-3">
-                  <h3 className="text-sm font-semibold">{t("reader.exportReady")}</h3>
-                  <p className="mt-1 text-xs text-muted-foreground">{t("reader.exportDescription")}</p>
-                  <textarea className="mt-3 h-36 w-full resize-none rounded-md border bg-background p-2 text-xs outline-none" readOnly value={exportContent} />
-                </div>
-              ) : null}
+              <div className="grid grid-cols-3 gap-1 rounded-md border bg-background p-1">
+                {[
+                  { value: "all" as const, icon: ListFilter, label: t("reader.annotationFilter.all") },
+                  { value: "note" as const, icon: StickyNote, label: t("reader.annotationFilter.notes") },
+                  { value: "favorite" as const, icon: Star, label: t("reader.annotationFilter.favorites") }
+                ].map((filter) => {
+                  const Icon = filter.icon
+                  return (
+                    <button
+                      key={filter.value}
+                      className={cn(
+                        "inline-flex h-8 min-w-0 items-center justify-center gap-1 rounded-sm px-2 text-xs text-muted-foreground",
+                        annotationFilter === filter.value && "bg-card text-foreground shadow-sm"
+                      )}
+                      title={filter.label}
+                      aria-pressed={annotationFilter === filter.value}
+                      onClick={() => setAnnotationFilter(filter.value)}
+                    >
+                      <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                      <span className="truncate">{filter.label}</span>
+                    </button>
+                  )
+                })}
+              </div>
 
               <div className="space-y-2">
-                {annotations.length ? (
-                  annotations.map((annotation) => {
+                {filteredAnnotations.length ? (
+                  filteredAnnotations.map((annotation) => {
                     const chapterTitle = book?.chapters.find((chapter) => chapter.id === annotation.chapterId)?.title
 
                     return (
@@ -133,7 +159,7 @@ export function InspectorPane({
                     )
                   })
                 ) : (
-                  <p className="rounded-md border bg-card p-3 text-sm text-muted-foreground">{t("reader.emptyAnnotations")}</p>
+                  <p className="rounded-md border bg-card p-3 text-sm text-muted-foreground">{t(annotations.length ? "reader.emptyFilteredAnnotations" : "reader.emptyAnnotations")}</p>
                 )}
               </div>
             </div>

@@ -48,6 +48,7 @@ import type {
   RuntimeSidecar,
   TtsJob,
   VoiceProfile,
+  AudiobookBuildJob,
   AudiobookExport,
   LibraryAudioStatus,
   HuggingFaceTokenStatus,
@@ -61,6 +62,7 @@ export function App(): ReactElement {
   const [annotations, setAnnotations] = useState<Annotation[]>([])
   const [audioJobs, setAudioJobs] = useState<TtsJob[]>([])
   const [audiobookExport, setAudiobookExport] = useState<AudiobookExport | null>(null)
+  const [audiobookBuildJob, setAudiobookBuildJob] = useState<AudiobookBuildJob | null>(null)
   const [audioLoading, setAudioLoading] = useState(false)
   const [modelManagementLoading, setModelManagementLoading] = useState(false)
   const [libraryAudioStatus, setLibraryAudioStatus] = useState<LibraryAudioStatus[]>([])
@@ -82,7 +84,6 @@ export function App(): ReactElement {
   const [error, setError] = useState(false)
   const [importing, setImporting] = useState(false)
   const [libraryStatus, setLibraryStatus] = useState<LibraryStatus | null>(null)
-  const [exportContent, setExportContent] = useState("")
   const [settingsSaved, setSettingsSaved] = useState(false)
   const [cleanReading, setCleanReading] = useState(false)
   const [sidebar, setSidebar] = useState<ReaderSidebarState>(() => loadReaderSidebarState())
@@ -115,14 +116,16 @@ export function App(): ReactElement {
   )
 
   const refreshAudioState = useCallback(async (bookId: string) => {
-    const [nextJobs, nextExport, nextModels, nextVoices] = await Promise.all([
+    const [nextJobs, nextExport, nextBuildJob, nextModels, nextVoices] = await Promise.all([
       dreamreaderClient.listTtsJobs({ bookId }),
       dreamreaderClient.getAudiobookExport(bookId),
+      dreamreaderClient.getAudiobookBuildJob(bookId),
       dreamreaderClient.listModels(),
       dreamreaderClient.listCompatibleVoices()
     ])
     setAudioJobs(nextJobs)
     setAudiobookExport(nextExport)
+    setAudiobookBuildJob(nextBuildJob)
     setRuntimeModels(nextModels)
     setVoices(nextVoices)
   }, [])
@@ -235,7 +238,6 @@ export function App(): ReactElement {
     stableChapterIndexRef.current = nextChapterIndex
     setReturnChapterIndex(null)
     setActiveAnnotationId(null)
-    setExportContent("")
     setActiveView("reader")
     setInspectorTab("summary")
     setAnnotations(book ? await dreamreaderClient.listAnnotations(book.id) : [])
@@ -247,7 +249,8 @@ export function App(): ReactElement {
     }
 
     const hasActiveJob = audioJobs.some((job) => !["completed", "failed", "cancelled", "paused"].includes(job.status))
-    if (!hasActiveJob) {
+    const hasActiveBuildJob = audiobookBuildJob ? ["queued", "building", "validating"].includes(audiobookBuildJob.status) : false
+    if (!hasActiveJob && !hasActiveBuildJob) {
       return
     }
 
@@ -255,7 +258,7 @@ export function App(): ReactElement {
       void refreshActiveAudioView()
     }, 800)
     return () => window.clearInterval(interval)
-  }, [activeView, audioJobs, refreshActiveAudioView])
+  }, [activeView, audioJobs, audiobookBuildJob, refreshActiveAudioView])
 
   const importBooks = async () => {
     setImporting(true)
@@ -384,12 +387,13 @@ export function App(): ReactElement {
       return
     }
 
-    setExportContent(await dreamreaderClient.exportNotes(selectedBook.id, "markdown"))
+    await dreamreaderClient.exportNotes(selectedBook.id, "markdown")
   }
 
   const openAudioDashboard = () => {
     setActiveView("audio")
     setAudioBook(null)
+    setAudiobookBuildJob(null)
     void refreshAudioDashboard()
   }
 
@@ -404,6 +408,7 @@ export function App(): ReactElement {
 
   const closeBookAudio = () => {
     setAudioBook(null)
+    setAudiobookBuildJob(null)
     void refreshAudioDashboard()
   }
 
@@ -514,9 +519,23 @@ export function App(): ReactElement {
     }
 
     setAudioLoading(true)
+    setAudiobookBuildJob(optimisticAudiobookBuildJob(audioBook.id, audiobookExport?.id))
     try {
       setAudiobookExport(await dreamreaderClient.rebuildAudiobook(audioBook.id))
       await refreshAudioState(audioBook.id)
+    } finally {
+      setAudioLoading(false)
+    }
+  }
+
+  const saveAudiobook = async () => {
+    if (!audioBook) {
+      return
+    }
+
+    setAudioLoading(true)
+    try {
+      await dreamreaderClient.saveAudiobook(audioBook.id)
     } finally {
       setAudioLoading(false)
     }
@@ -889,6 +908,7 @@ export function App(): ReactElement {
             {audioBook ? (
               <BookStudioPane
                 audiobook={audiobookExport}
+                audiobookBuildJob={audiobookBuildJob}
                 book={audioBook}
                 jobs={audioJobs}
                 loading={audioLoading}
@@ -905,6 +925,7 @@ export function App(): ReactElement {
                 onListSegments={listTtsSegments}
                 onPauseJob={pauseTtsJob}
                 onRebuildAudiobook={rebuildAudiobook}
+                onSaveAudiobook={saveAudiobook}
                 onResumeJob={resumeTtsJob}
                 onRetryJob={retryTtsJob}
                 onToggleAutoBuild={toggleAudiobookAutoBuild}
@@ -1023,7 +1044,6 @@ export function App(): ReactElement {
                       annotations={annotations}
                       book={selectedBook}
                       chapterIndex={chapterIndex}
-                      exportContent={exportContent}
                       preferences={settings.reader}
                       t={t}
                       onChangePreference={updateReaderPreference}
@@ -1054,4 +1074,18 @@ export function App(): ReactElement {
       </div>
     </main>
   )
+}
+
+function optimisticAudiobookBuildJob(bookId: string, audiobookExportId = "pending"): AudiobookBuildJob {
+  const now = new Date().toISOString()
+  return {
+    id: `pending-${bookId}`,
+    bookId,
+    audiobookExportId,
+    status: "queued",
+    progress: 0,
+    reason: "manual_rebuild",
+    createdAt: now,
+    updatedAt: now
+  }
 }

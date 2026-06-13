@@ -133,7 +133,7 @@ const api = {
     },
     deleteAnnotation: (annotationId: string) => invoke("annotations.delete", { id: annotationId }),
     exportNotes: (bookId: string, format: "markdown" | "json") =>
-      invoke<string>("annotations.export", { bookId, format })
+      invoke<{ exported: boolean; filePath?: string }>("annotations.export", { bookId, format })
   },
   bookmarks: {
     create: (input: { bookId: string; locator: Record<string, unknown>; label?: string }) =>
@@ -198,6 +198,8 @@ const api = {
     enableAutoBuild: (bookId: string, enabled: boolean) =>
       invoke("audiobook.enableAutoBuild", { bookId, enabled }),
     rebuild: (bookId: string) => invoke("audiobook.rebuild", { bookId }),
+    getBuildJob: (bookId: string) => invoke("audiobook.getBuildJob", { bookId }),
+    save: (bookId: string) => invoke("audiobook.save", { bookId }),
     reveal: (bookId: string) => invoke("audiobook.reveal", { bookId })
   },
   pronunciation: {

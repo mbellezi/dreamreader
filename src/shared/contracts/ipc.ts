@@ -6,6 +6,7 @@ import {
   CreateAnnotationRequestSchema,
   DeleteAnnotationRequestSchema,
   ExportAnnotationsInputSchema,
+  ExportAnnotationsResultSchema,
   UpdateAnnotationInputSchema,
   UpdateAnnotationRequestSchema,
 } from "./annotations";
@@ -42,6 +43,7 @@ import {
   UpdateSettingsRequestSchema,
 } from "./settings";
 import {
+  AudiobookBuildJobSchema,
   AudiobookExportSchema,
   ClearChapterAudioRequestSchema,
   ClearTerminalTtsJobsRequestSchema,
@@ -86,6 +88,7 @@ import {
 export {
   AnnotationSchema,
   AppSettingsSchema,
+  AudiobookBuildJobSchema,
   AudiobookExportSchema,
   BookmarkSchema,
   ClearChapterAudioRequestSchema,
@@ -96,6 +99,7 @@ export {
   CreateAnnotationInputSchema,
   DeletePronunciationEntryRequestSchema,
   ExportAnnotationsInputSchema,
+  ExportAnnotationsResultSchema,
   ImportBooksInputSchema,
   LibraryBookSchema,
   ListPronunciationEntriesRequestSchema,
@@ -131,9 +135,11 @@ export type {
   Bookmark,
   CreateAnnotationInput,
   ExportAnnotationsInput,
+  ExportAnnotationsResult,
   UpdateAnnotationInput,
 } from "./annotations";
 export type {
+  AudiobookBuildJob,
   AudiobookExport,
   ModelAsset,
   ModelDownloadJob,
@@ -201,6 +207,8 @@ export const IpcChannelSchema = z.enum([
   "audiobook.listLibraryStatus",
   "audiobook.enableAutoBuild",
   "audiobook.rebuild",
+  "audiobook.getBuildJob",
+  "audiobook.save",
   "audiobook.reveal",
   "models.list",
   "models.diagnostics",
@@ -267,7 +275,7 @@ export const IpcContractSchemas = {
   },
   "annotations.export": {
     request: ExportAnnotationsInputSchema,
-    response: createIpcResponseSchema(z.string()),
+    response: createIpcResponseSchema(ExportAnnotationsResultSchema),
   },
   "bookmarks.create": {
     request: z.object({
@@ -406,6 +414,19 @@ export const IpcContractSchemas = {
   "audiobook.rebuild": {
     request: BookIdRequestSchema,
     response: createIpcResponseSchema(AudiobookExportSchema),
+  },
+  "audiobook.getBuildJob": {
+    request: BookIdRequestSchema,
+    response: createIpcResponseSchema(AudiobookBuildJobSchema.nullable()),
+  },
+  "audiobook.save": {
+    request: BookIdRequestSchema,
+    response: createIpcResponseSchema(
+      z.object({
+        saved: z.boolean(),
+        filePath: z.string().trim().min(1).optional(),
+      }),
+    ),
   },
   "audiobook.reveal": {
     request: BookIdRequestSchema,

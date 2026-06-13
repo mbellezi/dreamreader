@@ -233,6 +233,8 @@ async function createTestServices() {
   const db = drizzle(client, { schema })
   await migrate(db, { migrationsFolder: path.resolve("drizzle") })
   const paths = {
+    appRoot: tempDir,
+    resourcesDir: tempDir,
     userData: tempDir,
     dbDir: path.join(tempDir, "db"),
     booksDir: path.join(tempDir, "library", "books"),
@@ -242,6 +244,12 @@ async function createTestServices() {
     audiobooksDir: path.join(tempDir, "audiobooks"),
     voicesDir: path.join(tempDir, "voices"),
     modelsDir: path.join(tempDir, "models"),
+    runtimeDir: path.join(tempDir, "runtimes"),
+    pythonDir: path.join(tempDir, "runtimes", "python"),
+    runtimeDownloadsDir: path.join(tempDir, "runtimes", "downloads"),
+    runtimeCacheDir: path.join(tempDir, "runtime-cache"),
+    huggingFaceDir: path.join(tempDir, "huggingface"),
+    sidecarsDir: path.join(tempDir, "sidecars"),
     logsDir: path.join(tempDir, "logs"),
     backupsDir: path.join(tempDir, "backups")
   }

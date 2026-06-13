@@ -7,6 +7,7 @@ import { cn } from "@renderer/lib/utils"
 import type { HuggingFaceTokenStatus, ModelDownloadJob, RuntimeDiagnostic, RuntimeInstallBackend, RuntimeModel, RuntimeOperationJob, RuntimeOperationLogEntry, RuntimeSidecar, VoiceProfile } from "@renderer/types"
 
 const ACTIVE_OPERATION_STATUSES = ["queued", "running"]
+const CARD_OPERATION_STATUSES = [...ACTIVE_OPERATION_STATUSES, "failed"]
 const RUNTIME_DIAGNOSTIC_IDS = ["device", "apple-silicon"]
 
 export function EnginesPane({
@@ -96,7 +97,9 @@ export function EnginesPane({
   }, [installBackend, onSelectInstallBackend, selectedInstallBackend])
 
   const operationFor = (targetKind: RuntimeOperationJob["targetKind"], targetId: string) =>
-    operations.find((operation) => operation.targetKind === targetKind && operation.targetId === targetId && ACTIVE_OPERATION_STATUSES.includes(operation.status))
+    operations
+      .filter((operation) => operation.targetKind === targetKind && operation.targetId === targetId && CARD_OPERATION_STATUSES.includes(operation.status))
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
 
   const downloadJobFor = (modelId: string) => downloadJobs.find((job) => job.modelAssetId === modelId && (job.status === "queued" || job.status === "downloading"))
 
@@ -380,8 +383,8 @@ function VoiceEngineBundleCard({
 }) {
   const { model, sidecar, status } = bundle
   const busy =
-    Boolean(modelOperation) ||
-    Boolean(sidecarOperation) ||
+    isOperationActive(modelOperation) ||
+    isOperationActive(sidecarOperation) ||
     model.installStatus === "queued" ||
     model.installStatus === "downloading"
 
@@ -474,6 +477,10 @@ function MetricCard({ icon: Icon, label, value }: { icon: typeof Cpu; label: str
   )
 }
 
+function isOperationActive(operation: RuntimeOperationJob | undefined): boolean {
+  return Boolean(operation && ACTIVE_OPERATION_STATUSES.includes(operation.status))
+}
+
 function MetricCardSkeletons() {
   return Array.from({ length: 4 }, (_, index) => (
     <div key={index} className="rounded-md border bg-card p-3" aria-hidden="true">
@@ -514,7 +521,7 @@ function SidecarCard({
   onOpenLogs: (operationId: string) => void
   onUninstallSidecar: (sidecarId: string) => Promise<void> | void
 }) {
-  const busy = Boolean(operation)
+  const busy = isOperationActive(operation)
   return (
     <div className="rounded-md border bg-card p-3">
       <div className="flex items-start justify-between gap-3">
@@ -618,7 +625,7 @@ function ModelCard({
   onInstallModelFromPath: () => Promise<void> | void
   onOpenLogs: (operationId: string) => void
 }) {
-  const busy = Boolean(operation) || model.installStatus === "queued" || model.installStatus === "downloading"
+  const busy = isOperationActive(operation) || model.installStatus === "queued" || model.installStatus === "downloading"
   const canAutoInstall = Boolean(model.metadata.huggingFaceRepo && model.metadata.localFolder)
   return (
     <div className="rounded-md border bg-card p-3">

@@ -1,4 +1,5 @@
-import { dialog, ipcMain } from "electron"
+import { BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent, type SaveDialogOptions } from "electron"
+import path from "node:path"
 import { z } from "zod"
 import { IpcContractSchemas, type IpcChannel } from "@shared/contracts/ipc"
 import { AudiobookService } from "@main/services/audiobook-service"
@@ -54,7 +55,22 @@ export function registerIpc(services: Services): void {
   handle("annotations.create", contract["annotations.create"].request, (input) => services.library.createAnnotation(input))
   handle("annotations.update", contract["annotations.update"].request, (input) => services.library.updateAnnotation(input))
   handle("annotations.delete", contract["annotations.delete"].request, (input) => services.library.deleteAnnotation(input.id))
-  handle("annotations.export", contract["annotations.export"].request, (input) => services.library.exportAnnotations(input))
+  handle("annotations.export", contract["annotations.export"].request, async (input, event) => {
+    const browserWindow = BrowserWindow.fromWebContents(event.sender)
+    const options: SaveDialogOptions = {
+      defaultPath: await services.library.exportAnnotationsFileName(input.bookId, input.format),
+      filters: input.format === "json"
+        ? [{ name: "JSON", extensions: ["json"] }]
+        : [{ name: "Markdown", extensions: ["md"] }]
+    }
+    const selectedPath = (browserWindow
+      ? await dialog.showSaveDialog(browserWindow, options)
+      : await dialog.showSaveDialog(options)
+    ).filePath
+    return selectedPath
+      ? services.library.exportAnnotationsToFile({ ...input, targetPath: ensureExportExtension(selectedPath, input.format) })
+      : { exported: false }
+  })
   handle("bookmarks.create", contract["bookmarks.create"].request, (input) => services.library.createBookmark(input))
   handle("tts.enqueueChapter", contract["tts.enqueueChapter"].request, (input) => services.tts.enqueueChapter(input))
   handle("tts.enqueueChapters", contract["tts.enqueueChapters"].request, (input) => services.tts.enqueueChapters(input))
@@ -161,18 +177,50 @@ export function registerIpc(services: Services): void {
     services.audiobook.setAutoBuild(input.bookId, input.enabled)
   )
   handle("audiobook.rebuild", contract["audiobook.rebuild"].request, (input) => services.audiobook.rebuild(input.bookId))
-  handle("audiobook.reveal", contract["audiobook.reveal"].request, (input) => services.audiobook.reveal(input.bookId))
+  handle("audiobook.getBuildJob", contract["audiobook.getBuildJob"].request, (input) =>
+    services.audiobook.getLatestBuildJob(input.bookId)
+  )
+  handle("audiobook.save", contract["audiobook.save"].request, async (input, event) => {
+    const browserWindow = BrowserWindow.fromWebContents(event.sender)
+    const options: SaveDialogOptions = {
+      defaultPath: await services.audiobook.exportFileName(input.bookId),
+      filters: [{ name: "M4B", extensions: ["m4b"] }]
+    }
+    const selectedPath = (browserWindow
+      ? await dialog.showSaveDialog(browserWindow, options)
+      : await dialog.showSaveDialog(options)
+    ).filePath
+    return selectedPath
+      ? services.audiobook.saveExportToFile({ bookId: input.bookId, targetPath: ensureM4bExtension(selectedPath) })
+      : { saved: false }
+  })
+  handle("audiobook.reveal", contract["audiobook.reveal"].request, async (input) => {
+    shell.showItemInFolder(await services.audiobook.getExportFilePath(input.bookId))
+    return { revealed: true as const }
+  })
+}
+
+function ensureExportExtension(filePath: string, format: "markdown" | "json"): string {
+  const extension = path.extname(filePath).toLowerCase()
+  if (format === "json") {
+    return extension === ".json" ? filePath : `${filePath}.json`
+  }
+  return extension === ".md" || extension === ".markdown" ? filePath : `${filePath}.md`
+}
+
+function ensureM4bExtension(filePath: string): string {
+  return path.extname(filePath).toLowerCase() === ".m4b" ? filePath : `${filePath}.m4b`
 }
 
 function handle<TSchema extends z.ZodType, TResult>(
   channel: IpcChannel,
   schema: TSchema,
-  callback: (input: z.infer<TSchema>) => Promise<TResult> | TResult
+  callback: (input: z.infer<TSchema>, event: IpcMainInvokeEvent) => Promise<TResult> | TResult
 ) {
-  ipcMain.handle(channel, async (_event, payload) => {
+  ipcMain.handle(channel, async (event, payload) => {
     try {
       const input = schema.parse(payload ?? {})
-      return { ok: true, data: await callback(input) }
+      return { ok: true, data: await callback(input, event) }
     } catch (error) {
       return { ok: false, error: toIpcError(error) }
     }

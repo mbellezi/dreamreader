@@ -26,10 +26,10 @@ export class LocalTtsAdapter {
     this.warmed = true
   }
 
-  synthesizeSegment(segment: NarrationSegment): LocalTtsAudio {
+  synthesizeSegment(segment: NarrationSegment, seed?: number): LocalTtsAudio {
     this.assertWarm()
     const durationMs = durationForText(segment.normalizedText, segment.prosody)
-    const frequency = frequencyFor(segment.segmentId, segment.prosody)
+    const frequency = frequencyFor(seedKey(seed, segment.segmentId), segment.prosody)
     const buffer = createToneWav(durationMs, frequency, amplitudeFor(segment.prosody))
     return {
       buffer,
@@ -39,14 +39,17 @@ export class LocalTtsAdapter {
     }
   }
 
-  synthesizeChapter(plan: NarrationPlan): LocalTtsAudio {
+  synthesizeChapter(plan: NarrationPlan, seed?: number): LocalTtsAudio {
     this.assertWarm()
     const durationMs = plan.segments.reduce(
       (total, segment) => total + durationForText(segment.normalizedText, segment.prosody),
       0
     )
     const averageProsody = averageProsodyFor(plan.segments)
-    const frequency = frequencyFor(`${plan.source.bookId}:${plan.source.chapterHref}:${plan.prosody.analyzerId}`, averageProsody)
+    const frequency = frequencyFor(
+      seedKey(seed, `${plan.source.bookId}:${plan.source.chapterHref}:${plan.prosody.analyzerId}`),
+      averageProsody
+    )
     const buffer = createToneWav(Math.max(durationMs, 750), frequency, amplitudeFor(averageProsody))
     return {
       buffer,
@@ -89,6 +92,10 @@ function frequencyFor(seed: string, prosody?: NarrationProsody): number {
   const pitchOffset = prosody?.pitch === "low" ? -34 : prosody?.pitch === "high" ? 42 : 0
   const emotionOffset = prosody?.emotion === "suspense" || prosody?.emotion === "sad" ? -18 : prosody?.emotion === "joyful" ? 24 : 0
   return Math.max(120, 180 + offset + pitchOffset + emotionOffset)
+}
+
+function seedKey(seed: number | undefined, fallback: string): string {
+  return typeof seed === "number" ? String(seed) : fallback
 }
 
 function amplitudeFor(prosody?: NarrationProsody): number {

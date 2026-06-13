@@ -94,8 +94,8 @@ const recommendedModels: RecommendedModel[] = [
     metadata: {
       role: "tts",
       huggingFaceRepo: "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
-      installMode: "project-local-folder",
-      localFolder: `.dreamreader-local/models/${QWEN3_TTS_06B_MODEL_DIR_NAME}`,
+      installMode: "user-data-folder",
+      localFolder: `models/${QWEN3_TTS_06B_MODEL_DIR_NAME}`,
       supportedBackends: ["mlx"]
     }
   },
@@ -114,8 +114,8 @@ const recommendedModels: RecommendedModel[] = [
     metadata: {
       role: "tts",
       huggingFaceRepo: "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-4bit",
-      installMode: "project-local-folder",
-      localFolder: `.dreamreader-local/models/${QWEN3_TTS_17B_MODEL_DIR_NAME}`,
+      installMode: "user-data-folder",
+      localFolder: `models/${QWEN3_TTS_17B_MODEL_DIR_NAME}`,
       supportedBackends: ["mlx"]
     }
   },
@@ -134,8 +134,8 @@ const recommendedModels: RecommendedModel[] = [
     metadata: {
       role: "tts",
       huggingFaceRepo: "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-4bit",
-      installMode: "project-local-folder",
-      localFolder: `.dreamreader-local/models/${QWEN3_TTS_17B_BASE_MODEL_DIR_NAME}`,
+      installMode: "user-data-folder",
+      localFolder: `models/${QWEN3_TTS_17B_BASE_MODEL_DIR_NAME}`,
       supportedBackends: ["mlx"]
     }
   },
@@ -154,8 +154,8 @@ const recommendedModels: RecommendedModel[] = [
     metadata: {
       role: "tts",
       huggingFaceRepo: "mlx-community/chatterbox-fp16",
-      installMode: "project-local-folder",
-      localFolder: `.dreamreader-local/models/${CHATTERBOX_MULTILINGUAL_MODEL_DIR_NAME}`,
+      installMode: "user-data-folder",
+      localFolder: `models/${CHATTERBOX_MULTILINGUAL_MODEL_DIR_NAME}`,
       originalRepo: "ResembleAI/chatterbox",
       originalLicense: "mit",
       prosodyControls: ["exaggeration", "cfgWeight", "pauseAfterMs"],
@@ -177,8 +177,8 @@ const recommendedModels: RecommendedModel[] = [
     metadata: {
       role: "tts",
       huggingFaceRepo: "firstpixel/F5-TTS-pt-br",
-      installMode: "project-local-folder",
-      localFolder: `.dreamreader-local/models/${F5_TTS_MODEL_DIR_NAME}`,
+      installMode: "user-data-folder",
+      localFolder: `models/${F5_TTS_MODEL_DIR_NAME}`,
       supportedBackends: ["mlx", "cuda", "vulkan"]
     }
   }
@@ -396,9 +396,9 @@ export class RuntimeService {
 
     for (const definition of recommendedRuntimeManifests) {
       const manifest = manifests.find((item) => item.id === definition.id)
-      const scriptPath = sidecarScriptForAdapter(definition.adapterId)
+      const scriptPath = sidecarScriptForAdapter(definition.adapterId, this.paths.sidecarsDir)
       const executablePath = manifest?.executablePath ?? undefined
-      const runtimeSize = executablePath && isManagedProjectPath(executablePath) ? await pathSize(path.join(projectLocalRoot(), "python")) : undefined
+      const runtimeSize = executablePath ? await runtimeSizeForExecutable(executablePath, this.paths) : undefined
       rows.push(
         RuntimeSidecarSchema.parse({
           id: definition.id,
@@ -447,7 +447,7 @@ export class RuntimeService {
     this.appendOperationLog(operation.id, "info", "modelManager.log.modelDeleteStarted", { target: model.name })
 
     try {
-      if (deleteFiles && model.path && isSafeManagedModelPath(model.path, this.paths.modelsDir)) {
+      if (deleteFiles && model.path && isSafeManagedModelPath(model.path, this.paths)) {
         await rm(model.path, { force: true, recursive: true })
         await removeEmptyParentModelDir(model.path, this.paths.modelsDir)
         this.appendOperationLog(operation.id, "info", "modelManager.log.modelFilesDeleted", { path: model.path })
@@ -741,11 +741,20 @@ export class RuntimeService {
     await this.removeDeprecatedDreamReaderCatalogEntries()
     for (const model of recommendedModels) {
       const existing = await this.db.query.modelAssets.findFirst({ where: eq(modelAssets.id, model.id) })
-      const possiblePath = model.fileName ? path.join(this.paths.modelsDir, model.id, model.fileName) : projectLocalModelPathFor(model)
-      const pathReady = possiblePath ? await modelPathReady(model, possiblePath) : false
-      const resolvedPath = existing?.path ?? (pathReady ? possiblePath : undefined)
-      const installStatus = existing?.installStatus === "available" || pathReady ? "available" : existing?.installStatus ?? "not_configured"
+      const detectedPath = await detectedModelPathFor(model, this.paths)
+      const detectedPathReady = Boolean(detectedPath)
+      const existingPath = existing?.path && isUsablePersistedPath(existing.path, this.paths) ? existing.path : undefined
+      const resolvedPath = existingPath ?? detectedPath
+      const installStatus =
+        resolvedPath && existing?.installStatus === "available"
+          ? "available"
+          : detectedPathReady
+            ? "available"
+            : existing?.installStatus === "available"
+              ? "not_configured"
+              : existing?.installStatus ?? "not_configured"
       const downloadProgress = installStatus === "available" ? 1 : existing?.downloadProgress ?? 0
+      const installedAt = installStatus === "available" ? existing?.installedAt ?? (detectedPathReady ? new Date() : undefined) : null
       await this.db
         .insert(modelAssets)
         .values({
@@ -754,15 +763,15 @@ export class RuntimeService {
           name: model.name,
           provider: model.provider,
           version: model.version,
-          path: resolvedPath,
-          sizeBytes: existing?.sizeBytes,
-          checksum: existing?.checksum,
+          path: resolvedPath ?? null,
+          sizeBytes: installStatus === "available" ? existing?.sizeBytes : null,
+          checksum: installStatus === "available" ? existing?.checksum : null,
           license: model.license,
           runtime: model.runtime,
           format: model.format,
           acceleratorPreference: model.acceleratorPreference,
           memoryEstimateMb: model.memoryEstimateMb,
-          checksumAlgorithm: existing?.checksumAlgorithm,
+          checksumAlgorithm: installStatus === "available" ? existing?.checksumAlgorithm : null,
           sourceUrl: model.sourceUrl,
           installStatus,
           downloadProgress,
@@ -770,7 +779,7 @@ export class RuntimeService {
             ...model.metadata,
             engineId: model.engineId
           },
-          installedAt: existing?.installedAt ?? (pathReady ? new Date() : undefined),
+          installedAt,
           updatedAt: new Date()
         })
         .onConflictDoUpdate({
@@ -785,32 +794,38 @@ export class RuntimeService {
             acceleratorPreference: model.acceleratorPreference,
             memoryEstimateMb: model.memoryEstimateMb,
             sourceUrl: model.sourceUrl,
-            path: resolvedPath,
+            path: resolvedPath ?? null,
+            sizeBytes: installStatus === "available" ? existing?.sizeBytes : null,
+            checksum: installStatus === "available" ? existing?.checksum : null,
+            checksumAlgorithm: installStatus === "available" ? existing?.checksumAlgorithm : null,
             installStatus,
             downloadProgress,
             metadataJson: {
               ...model.metadata,
               engineId: model.engineId
             },
-            installedAt: existing?.installedAt ?? (pathReady ? new Date() : undefined),
+            installedAt,
             updatedAt: new Date()
           }
         })
       if (installStatus === "available" && model.engineId && resolvedPath) {
         await this.markTtsEngineInstalled(model, resolvedPath)
+      } else if (model.engineId) {
+        await this.markTtsEngineUninstalled(model.engineId)
       }
     }
     for (const manifest of recommendedRuntimeManifests) {
       const existing = await this.db.query.runtimeManifests.findFirst({ where: eq(runtimeManifests.id, manifest.id) })
-      const detectedRuntime = await detectedRuntimeForManifest(manifest.adapterId)
+      const detectedRuntime = await detectedRuntimeForManifest(manifest.adapterId, this.paths)
       const disabled = existing?.environmentJson?.disabled === true
-      const executablePath = disabled ? undefined : existing?.executablePath ?? detectedRuntime?.executablePath
+      const existingExecutablePath = existing?.executablePath && isUsablePersistedPath(existing.executablePath, this.paths) ? existing.executablePath : undefined
+      const executablePath = disabled ? undefined : existingExecutablePath ?? detectedRuntime?.executablePath
       const environmentJson = disabled
         ? { disabled: true }
-        : existing?.executablePath
+        : existingExecutablePath && existing
         ? existing.environmentJson
         : detectedRuntime?.environmentJson ?? existing?.environmentJson ?? {}
-      const healthcheckCommand = disabled ? undefined : existing?.healthcheckCommand ?? detectedRuntime?.healthcheckCommand
+      const healthcheckCommand = disabled ? undefined : existingExecutablePath ? existing?.healthcheckCommand : detectedRuntime?.healthcheckCommand
       await this.db
         .insert(runtimeManifests)
         .values({
@@ -820,8 +835,8 @@ export class RuntimeService {
           version: manifest.version,
           capabilitiesJson: manifest.capabilities,
           environmentJson,
-          executablePath,
-          healthcheckCommand,
+          executablePath: executablePath ?? null,
+          healthcheckCommand: healthcheckCommand ?? null,
           updatedAt: new Date()
         })
         .onConflictDoUpdate({
@@ -832,8 +847,8 @@ export class RuntimeService {
             version: manifest.version,
             capabilitiesJson: manifest.capabilities,
             environmentJson,
-            executablePath,
-            healthcheckCommand,
+            executablePath: executablePath ?? null,
+            healthcheckCommand: healthcheckCommand ?? null,
             updatedAt: new Date()
           }
         })
@@ -1020,11 +1035,14 @@ export class RuntimeService {
 
       const pythonExecutable = await this.ensureLocalPython(operationId, 0.05, 0.35)
       await this.ensurePythonPackage(operationId, pythonExecutable, "huggingface_hub", 0.35, 0.45)
-      const localDir = path.join(projectRoot(), localFolder)
+      const localDir = managedModelPathFor(model, this.paths)
+      if (!localDir) {
+        throw new AppError("model_install_unavailable", "This model does not expose an automatic installer")
+      }
       await mkdir(localDir, { recursive: true })
       const huggingFaceToken = await this.readHuggingFaceToken()
       this.appendOperationLog(operationId, "info", "modelManager.log.backendSelected", { backend })
-      this.appendOperationLog(operationId, "info", "modelManager.log.modelSnapshotStarted", { repo: repoId, path: localFolder })
+      this.appendOperationLog(operationId, "info", "modelManager.log.modelSnapshotStarted", { repo: repoId, path: localDir })
       this.updateOperation(operationId, {
         progress: 0.5,
         progressLabelKey: "modelManager.progress.downloading"
@@ -1046,10 +1064,10 @@ export class RuntimeService {
           localDir
         ],
         {
-          cwd: projectRoot(),
+          cwd: this.paths.userData,
           env: {
             ...process.env,
-            HF_HOME: path.join(projectLocalRoot(), "huggingface"),
+            HF_HOME: this.paths.huggingFaceDir,
             ...(huggingFaceToken ? { HF_TOKEN: huggingFaceToken } : {})
           },
           progressStart: 0.5,
@@ -1097,7 +1115,7 @@ export class RuntimeService {
       })
       this.appendOperationLog(operationId, "info", "modelManager.log.backendSelected", { backend })
       const pythonExecutable = await this.ensureLocalPython(operationId, 0.05, 0.45)
-      const pipSteps = pipInstallStepsForAdapter(sidecar.adapterId, backend)
+      const pipSteps = pipInstallStepsForAdapter(sidecar.adapterId, backend, this.paths.sidecarsDir)
       if (pipSteps.length === 0) {
         throw new AppError("sidecar_install_unavailable", "Sidecar installer is not configured")
       }
@@ -1105,14 +1123,14 @@ export class RuntimeService {
       for (const [index, step] of pipSteps.entries()) {
         this.appendOperationLog(operationId, "info", "modelManager.log.pipInstalling", { target: step.label })
         await this.runProcess(operationId, pythonExecutable, step.args, {
-          cwd: projectRoot(),
+          cwd: this.paths.userData,
           env: process.env,
           progressStart: 0.45 + index * stepSize,
           progressEnd: 0.45 + (index + 1) * stepSize,
           progressLabelKey: "modelManager.progress.installingDependencies"
         })
       }
-      const detectedRuntime = await detectedRuntimeForManifest(sidecar.adapterId, backend)
+      const detectedRuntime = await detectedRuntimeForManifest(sidecar.adapterId, this.paths, backend)
       if (!detectedRuntime) {
         throw new AppError("sidecar_runtime_not_detected", "Sidecar runtime could not be detected after installation")
       }
@@ -1187,24 +1205,25 @@ export class RuntimeService {
   }
 
   private async ensureLocalPython(operationId: string, progressStart: number, progressEnd: number): Promise<string> {
-    const localRoot = projectLocalRoot()
-    const pythonDir = path.join(localRoot, "python")
-    const pythonExecutable = localPythonExecutablePath()
-    if (await exists(pythonExecutable)) {
-      this.appendOperationLog(operationId, "info", "modelManager.log.pythonDetected", { path: pythonExecutable })
+    const detectedRuntime = await detectedPythonRuntime(this.paths)
+    if (detectedRuntime) {
+      this.appendOperationLog(operationId, "info", "modelManager.log.pythonDetected", { path: detectedRuntime.executablePath })
       this.updateOperation(operationId, {
         progress: progressEnd,
         progressLabelKey: "modelManager.progress.pythonReady"
       })
-      return pythonExecutable
+      return detectedRuntime.executablePath
     }
 
-    await mkdir(path.join(localRoot, "downloads"), { recursive: true })
+    const pythonDir = this.paths.pythonDir
+    const pythonExecutable = localPythonExecutablePath(this.paths)
+
+    await mkdir(this.paths.runtimeDownloadsDir, { recursive: true })
     const target = standalonePythonTarget()
     this.appendOperationLog(operationId, "info", "modelManager.log.pythonFinding", { target })
     const asset = await findStandalonePythonAsset(target)
-    const archivePath = path.join(localRoot, "downloads", asset.name)
-    const extractDir = path.join(localRoot, "downloads", "python-extract")
+    const archivePath = path.join(this.paths.runtimeDownloadsDir, asset.name)
+    const extractDir = path.join(this.paths.runtimeDownloadsDir, "python-extract")
     await rm(extractDir, { force: true, recursive: true })
     await mkdir(extractDir, { recursive: true })
 
@@ -1218,7 +1237,7 @@ export class RuntimeService {
     this.appendOperationLog(operationId, "info", "modelManager.log.pythonExtracting", { path: archivePath })
     await rm(pythonDir, { force: true, recursive: true })
     await this.runProcess(operationId, "tar", ["-xzf", archivePath, "-C", extractDir], {
-      cwd: projectRoot(),
+      cwd: this.paths.userData,
       env: process.env,
       progressStart: Math.max(progressStart, progressEnd - 0.2),
       progressEnd: Math.max(progressStart, progressEnd - 0.06),
@@ -1230,7 +1249,7 @@ export class RuntimeService {
     }
     await rename(extractedPythonDir, pythonDir)
     if (!(await exists(pythonExecutable))) {
-      const pythonAliasTarget = await firstExistingPath(localPythonExecutableCandidates())
+      const pythonAliasTarget = await firstExistingPath(localPythonExecutableCandidates(this.paths))
       if (!pythonAliasTarget) {
         throw new AppError("python_archive_invalid", "Standalone Python did not provide a python executable")
       }
@@ -1257,7 +1276,7 @@ export class RuntimeService {
   ): Promise<void> {
     this.appendOperationLog(operationId, "info", "modelManager.log.pipInstalling", { target: packageName })
     await this.runProcess(operationId, pythonExecutable, ["-m", "pip", "install", packageName], {
-      cwd: projectRoot(),
+      cwd: this.paths.userData,
       env: process.env,
       progressStart,
       progressEnd,
@@ -1402,12 +1421,34 @@ async function pathSize(filePath: string): Promise<number | undefined> {
   }
 }
 
-function isSafeManagedModelPath(modelPath: string, userModelsDir: string): boolean {
-  return isPathInside(modelPath, userModelsDir) || isPathInside(modelPath, path.join(projectLocalRoot(), "models"))
+function isSafeManagedModelPath(modelPath: string, paths: AppPaths): boolean {
+  return isPathInside(modelPath, paths.modelsDir)
 }
 
-function isManagedProjectPath(candidatePath: string): boolean {
-  return isPathInside(candidatePath, projectLocalRoot())
+function isManagedRuntimePath(candidatePath: string, paths: AppPaths): boolean {
+  return isPathInside(candidatePath, paths.runtimeDir)
+}
+
+async function runtimeSizeForExecutable(executablePath: string, paths: AppPaths): Promise<number | undefined> {
+  if (isManagedRuntimePath(executablePath, paths)) {
+    return pathSize(paths.pythonDir)
+  }
+  if (isDevPathLayout(paths) && isPathInside(executablePath, projectLocalPythonDir(paths))) {
+    return pathSize(projectLocalPythonDir(paths))
+  }
+  return undefined
+}
+
+function isLegacyProjectLocalPath(candidatePath: string): boolean {
+  return /(^|[\\/])\.dreamreader-local([\\/]|$)/.test(candidatePath)
+}
+
+function isDevPathLayout(paths: AppPaths): boolean {
+  return path.resolve(paths.resourcesDir) === path.resolve(paths.appRoot) && !path.resolve(paths.appRoot).endsWith(".asar")
+}
+
+function isUsablePersistedPath(candidatePath: string, paths: AppPaths): boolean {
+  return !isLegacyProjectLocalPath(candidatePath) || isDevPathLayout(paths)
 }
 
 function isPathInside(candidatePath: string, rootPath: string): boolean {
@@ -1439,15 +1480,15 @@ function sidecarName(adapterId: string): string {
   return adapterId
 }
 
-function requirementsPathForAdapter(adapterId: string): string | undefined {
+function requirementsPathForAdapter(adapterId: string, sidecarsDir: string): string | undefined {
   if (adapterId === "qwen3-tts-mlx") {
-    return path.join(projectRoot(), "sidecars", "tts", "requirements-qwen3-tts-mlx.txt")
+    return path.join(sidecarsDir, "tts", "requirements-qwen3-tts-mlx.txt")
   }
   if (adapterId === "chatterbox-mlx") {
-    return path.join(projectRoot(), "sidecars", "tts", "requirements-chatterbox-mlx.txt")
+    return path.join(sidecarsDir, "tts", "requirements-chatterbox-mlx.txt")
   }
   if (adapterId === "f5-tts-pt-br") {
-    return path.join(projectRoot(), "sidecars", "tts", "requirements-f5-tts-ptbr.txt")
+    return path.join(sidecarsDir, "tts", "requirements-f5-tts-ptbr.txt")
   }
   return undefined
 }
@@ -1503,13 +1544,13 @@ function assertSidecarBackendSupported(adapterId: string, backend: ResolvedInsta
   }
 }
 
-function pipInstallStepsForAdapter(adapterId: string, backend: ResolvedInstallBackend): PipInstallStep[] {
-  const requirementsPath = requirementsPathForAdapter(adapterId)
+function pipInstallStepsForAdapter(adapterId: string, backend: ResolvedInstallBackend, sidecarsDir: string): PipInstallStep[] {
+  const requirementsPath = requirementsPathForAdapter(adapterId, sidecarsDir)
   if (adapterId !== "f5-tts-pt-br") {
     return requirementsPath ? [{ label: path.basename(requirementsPath), args: ["-m", "pip", "install", "-r", requirementsPath] }] : []
   }
 
-  const baseRequirementsPath = path.join(projectRoot(), "sidecars", "tts", "requirements-f5-tts-ptbr-base.txt")
+  const baseRequirementsPath = path.join(sidecarsDir, "tts", "requirements-f5-tts-ptbr-base.txt")
   if (backend === "cuda") {
     return [
       {
@@ -1833,21 +1874,64 @@ function capabilitiesForModel(model: RecommendedModel): Record<string, unknown> 
   }
 }
 
-function projectLocalModelPathFor(model: RecommendedModel): string | undefined {
+function managedModelPathFor(model: RecommendedModel, paths: AppPaths): string | undefined {
+  if (model.fileName) {
+    return path.join(paths.modelsDir, model.id, model.fileName)
+  }
   if (model.id === "model_qwen3_tts_06b_base_mlx") {
-    return path.join(projectLocalRoot(), "models", QWEN3_TTS_06B_MODEL_DIR_NAME)
+    return path.join(paths.modelsDir, QWEN3_TTS_06B_MODEL_DIR_NAME)
   }
   if (model.id === "model_qwen3_tts_17b_customvoice_mlx") {
-    return path.join(projectLocalRoot(), "models", QWEN3_TTS_17B_MODEL_DIR_NAME)
+    return path.join(paths.modelsDir, QWEN3_TTS_17B_MODEL_DIR_NAME)
   }
   if (model.id === "model_qwen3_tts_17b_base_mlx") {
-    return path.join(projectLocalRoot(), "models", QWEN3_TTS_17B_BASE_MODEL_DIR_NAME)
+    return path.join(paths.modelsDir, QWEN3_TTS_17B_BASE_MODEL_DIR_NAME)
   }
   if (model.id === "model_chatterbox_multilingual_mlx") {
-    return path.join(projectLocalRoot(), "models", CHATTERBOX_MULTILINGUAL_MODEL_DIR_NAME)
+    return path.join(paths.modelsDir, CHATTERBOX_MULTILINGUAL_MODEL_DIR_NAME)
   }
   if (model.id === "model_f5_tts_ptbr_pytorch") {
-    return path.join(projectLocalRoot(), "models", F5_TTS_MODEL_DIR_NAME)
+    return path.join(paths.modelsDir, F5_TTS_MODEL_DIR_NAME)
+  }
+  return undefined
+}
+
+async function detectedModelPathFor(model: RecommendedModel, paths: AppPaths): Promise<string | undefined> {
+  const managedPath = managedModelPathFor(model, paths)
+  if (managedPath && (await modelPathReady(model, managedPath))) {
+    return managedPath
+  }
+
+  const projectLocalPath = projectLocalModelPathFor(model, paths)
+  if (projectLocalPath && (await modelPathReady(model, projectLocalPath))) {
+    return projectLocalPath
+  }
+
+  return undefined
+}
+
+function projectLocalModelPathFor(model: RecommendedModel, paths: AppPaths): string | undefined {
+  if (!isDevPathLayout(paths)) {
+    return undefined
+  }
+  const modelsRoot = path.join(projectLocalRoot(paths), "models")
+  if (model.fileName) {
+    return path.join(modelsRoot, model.id, model.fileName)
+  }
+  if (model.id === "model_qwen3_tts_06b_base_mlx") {
+    return path.join(modelsRoot, QWEN3_TTS_06B_MODEL_DIR_NAME)
+  }
+  if (model.id === "model_qwen3_tts_17b_customvoice_mlx") {
+    return path.join(modelsRoot, QWEN3_TTS_17B_MODEL_DIR_NAME)
+  }
+  if (model.id === "model_qwen3_tts_17b_base_mlx") {
+    return path.join(modelsRoot, QWEN3_TTS_17B_BASE_MODEL_DIR_NAME)
+  }
+  if (model.id === "model_chatterbox_multilingual_mlx") {
+    return path.join(modelsRoot, CHATTERBOX_MULTILINGUAL_MODEL_DIR_NAME)
+  }
+  if (model.id === "model_f5_tts_ptbr_pytorch") {
+    return path.join(modelsRoot, F5_TTS_MODEL_DIR_NAME)
   }
   return undefined
 }
@@ -1870,7 +1954,7 @@ async function modelPathReady(model: RecommendedModel, modelPath: string): Promi
   return true
 }
 
-async function detectedRuntimeForManifest(adapterId: string, backend: ResolvedInstallBackend = resolveRuntimeInstallBackend("auto")): Promise<
+async function detectedRuntimeForManifest(adapterId: string, paths: AppPaths, backend: ResolvedInstallBackend = resolveRuntimeInstallBackend("auto")): Promise<
   | {
       environmentJson: Record<string, unknown>
       executablePath: string
@@ -1878,42 +1962,42 @@ async function detectedRuntimeForManifest(adapterId: string, backend: ResolvedIn
     }
   | undefined
 > {
-  const pythonExecutable = localPythonExecutablePath()
-  const sidecarScript = sidecarScriptForAdapter(adapterId)
+  const pythonRuntime = await detectedPythonRuntime(paths)
+  const sidecarScript = sidecarScriptForAdapter(adapterId, paths.sidecarsDir)
   try {
     assertSidecarBackendSupported(adapterId, backend)
   } catch {
     return undefined
   }
-  if (!sidecarScript || !(await exists(pythonExecutable)) || !(await exists(sidecarScript))) {
+  if (!pythonRuntime || !sidecarScript || !(await exists(sidecarScript))) {
     return undefined
   }
   const runtimeEnv = backendRuntimeEnvironment(adapterId, backend)
   return {
-    executablePath: pythonExecutable,
+    executablePath: pythonRuntime.executablePath,
     environmentJson: {
       args: [sidecarScript],
       env: {
-        HF_HOME: path.join(projectLocalRoot(), "huggingface"),
-        MPLCONFIGDIR: path.join(projectLocalRoot(), "cache", "matplotlib"),
+        HF_HOME: pythonRuntime.huggingFaceDir,
+        MPLCONFIGDIR: path.join(pythonRuntime.runtimeCacheDir, "matplotlib"),
         PYTHONUNBUFFERED: "1",
         ...runtimeEnv
       },
       timeoutMs: 30 * 60 * 1000
     },
-    healthcheckCommand: `${pythonExecutable} ${sidecarScript} --health`
+    healthcheckCommand: `${pythonRuntime.executablePath} ${sidecarScript} --health`
   }
 }
 
-function sidecarScriptForAdapter(adapterId: string): string | undefined {
+function sidecarScriptForAdapter(adapterId: string, sidecarsDir: string): string | undefined {
   if (adapterId === "qwen3-tts-mlx") {
-    return path.join(projectRoot(), "sidecars", "tts", "qwen3_tts_mlx_sidecar.py")
+    return path.join(sidecarsDir, "tts", "qwen3_tts_mlx_sidecar.py")
   }
   if (adapterId === "chatterbox-mlx") {
-    return path.join(projectRoot(), "sidecars", "tts", "chatterbox_mlx_sidecar.py")
+    return path.join(sidecarsDir, "tts", "chatterbox_mlx_sidecar.py")
   }
   if (adapterId === "f5-tts-pt-br") {
-    return path.join(projectRoot(), "sidecars", "tts", "f5_tts_ptbr_sidecar.py")
+    return path.join(sidecarsDir, "tts", "f5_tts_ptbr_sidecar.py")
   }
   return undefined
 }
@@ -1932,24 +2016,64 @@ async function hasAnyModelFile(directory: string, extensions: string[]): Promise
   return false
 }
 
-function projectLocalRoot(): string {
-  return path.join(projectRoot(), ".dreamreader-local")
+function localPythonExecutablePath(paths: AppPaths): string {
+  return path.join(paths.pythonDir, process.platform === "win32" ? "python.exe" : path.join("bin", "python"))
 }
 
-function localPythonExecutablePath(): string {
-  return path.join(projectLocalRoot(), "python", process.platform === "win32" ? "python.exe" : path.join("bin", "python"))
-}
-
-function localPythonExecutableCandidates(): string[] {
-  const pythonRoot = path.join(projectLocalRoot(), "python")
+function localPythonExecutableCandidates(paths: AppPaths): string[] {
+  const pythonRoot = paths.pythonDir
   if (process.platform === "win32") {
     return [path.join(pythonRoot, "python.exe")]
   }
   return [path.join(pythonRoot, "bin", "python"), path.join(pythonRoot, "bin", "python3")]
 }
 
-function projectRoot(): string {
-  return process.env.DREAMREADER_PROJECT_ROOT ? path.resolve(process.env.DREAMREADER_PROJECT_ROOT) : process.cwd()
+type DetectedPythonRuntime = {
+  executablePath: string
+  huggingFaceDir: string
+  runtimeCacheDir: string
+}
+
+async function detectedPythonRuntime(paths: AppPaths): Promise<DetectedPythonRuntime | undefined> {
+  const managedExecutable = await firstExistingPath(localPythonExecutableCandidates(paths))
+  if (managedExecutable) {
+    return {
+      executablePath: managedExecutable,
+      huggingFaceDir: paths.huggingFaceDir,
+      runtimeCacheDir: paths.runtimeCacheDir
+    }
+  }
+
+  if (!isDevPathLayout(paths)) {
+    return undefined
+  }
+
+  const projectLocalExecutable = await firstExistingPath(projectLocalPythonExecutableCandidates(paths))
+  if (!projectLocalExecutable) {
+    return undefined
+  }
+  const localRoot = projectLocalRoot(paths)
+  return {
+    executablePath: projectLocalExecutable,
+    huggingFaceDir: path.join(localRoot, "huggingface"),
+    runtimeCacheDir: path.join(localRoot, "cache")
+  }
+}
+
+function projectLocalRoot(paths: AppPaths): string {
+  return path.join(paths.appRoot, ".dreamreader-local")
+}
+
+function projectLocalPythonDir(paths: AppPaths): string {
+  return path.join(projectLocalRoot(paths), "python")
+}
+
+function projectLocalPythonExecutableCandidates(paths: AppPaths): string[] {
+  const pythonRoot = projectLocalPythonDir(paths)
+  if (process.platform === "win32") {
+    return [path.join(pythonRoot, "python.exe")]
+  }
+  return [path.join(pythonRoot, "bin", "python"), path.join(pythonRoot, "bin", "python3")]
 }
 
 function sidecarReady(

@@ -8,6 +8,7 @@ from pathlib import Path
 
 
 SCHEMA_VERSION = "dreamreader-tts-sidecar-result/v1"
+MAX_GENERATION_SEED = 4_294_967_295
 F5_REFERENCE_MAX_MS = 12_000
 F5_REFERENCE_MIN_MS = 1_500
 F5_REFERENCE_MAX_TEXT_BYTES_PER_SECOND = 45
@@ -64,6 +65,7 @@ def synthesize(request, emit=lambda event: None):
     vocoder_path = find_vocoder_dir(model_path)
     reference = resolve_reference(request, model_path)
     device = os.environ.get("DREAMREADER_TTS_DEVICE", default_device())
+    seed = f5_seed(request)
 
     f5tts = F5TTS(
         model=os.environ.get("DREAMREADER_F5_MODEL", "F5TTS_Base"),
@@ -91,7 +93,7 @@ def synthesize(request, emit=lambda event: None):
             progress=None,
             show_info=lambda *_args, **_kwargs: None,
             remove_silence=False,
-            seed=None,
+            seed=seed,
             speed=f5_speed(),
         )
         duration_ms = wav_duration_ms(target_path)
@@ -122,6 +124,7 @@ def synthesize(request, emit=lambda event: None):
                     "referenceOriginalSampleRate": reference["originalSampleRate"],
                     "referenceTextBytesPerSecond": reference["textBytesPerSecond"],
                     "referenceWasTrimmed": reference["wasTrimmed"],
+                    "seed": seed,
                     "segmentCount": len(rendered_segments),
                     "targetSampleRate": reference["targetSampleRate"],
                 },
@@ -145,6 +148,13 @@ def resolve_reference(request, model_path: Path):
     if not reference_text:
         raise RuntimeError("F5-TTS-pt-br requires reference text/transcript for the reference audio")
     return {"audioPath": Path(str(reference_audio)).resolve(), "text": normalize_reference_text(str(reference_text))}
+
+
+def f5_seed(request):
+    configured = request.get("seed")
+    if isinstance(configured, bool) or not isinstance(configured, int):
+        return None
+    return max(0, min(configured, MAX_GENERATION_SEED))
 
 
 def prepare_reference(reference, output_dir: Path, target_sample_rate: int):

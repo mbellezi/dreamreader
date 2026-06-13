@@ -87,20 +87,17 @@ describe("RuntimeService", () => {
     }
   })
 
-  it("detects the ignored project-local Python runtimes and TTS model folders", async () => {
-    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "dreamreader-project-root-"))
-    tempDirs.push(projectRoot)
-    const previousRoot = process.env.DREAMREADER_PROJECT_ROOT
-    process.env.DREAMREADER_PROJECT_ROOT = projectRoot
+  it("detects managed userData Python runtimes, TTS model folders, and packaged sidecars", async () => {
+    const { client, db, paths, service } = await createRuntimeService()
     try {
-      const pythonExecutable = path.join(projectRoot, ".dreamreader-local", "python", "bin", "python")
-      const qwenModelPath = path.join(projectRoot, ".dreamreader-local", "models", QWEN3_TTS_06B_MODEL_DIR_NAME)
-      const qwen17BaseModelPath = path.join(projectRoot, ".dreamreader-local", "models", QWEN3_TTS_17B_BASE_MODEL_DIR_NAME)
-      const chatterboxModelPath = path.join(projectRoot, ".dreamreader-local", "models", CHATTERBOX_MULTILINGUAL_MODEL_DIR_NAME)
-      const f5ModelPath = path.join(projectRoot, ".dreamreader-local", "models", F5_TTS_MODEL_DIR_NAME)
-      const qwenSidecarPath = path.join(projectRoot, "sidecars", "tts", "qwen3_tts_mlx_sidecar.py")
-      const chatterboxSidecarPath = path.join(projectRoot, "sidecars", "tts", "chatterbox_mlx_sidecar.py")
-      const f5SidecarPath = path.join(projectRoot, "sidecars", "tts", "f5_tts_ptbr_sidecar.py")
+      const pythonExecutable = path.join(paths.pythonDir, "bin", "python")
+      const qwenModelPath = path.join(paths.modelsDir, QWEN3_TTS_06B_MODEL_DIR_NAME)
+      const qwen17BaseModelPath = path.join(paths.modelsDir, QWEN3_TTS_17B_BASE_MODEL_DIR_NAME)
+      const chatterboxModelPath = path.join(paths.modelsDir, CHATTERBOX_MULTILINGUAL_MODEL_DIR_NAME)
+      const f5ModelPath = path.join(paths.modelsDir, F5_TTS_MODEL_DIR_NAME)
+      const qwenSidecarPath = path.join(paths.sidecarsDir, "tts", "qwen3_tts_mlx_sidecar.py")
+      const chatterboxSidecarPath = path.join(paths.sidecarsDir, "tts", "chatterbox_mlx_sidecar.py")
+      const f5SidecarPath = path.join(paths.sidecarsDir, "tts", "f5_tts_ptbr_sidecar.py")
       await mkdir(path.dirname(pythonExecutable), { recursive: true })
       await mkdir(qwenModelPath, { recursive: true })
       await mkdir(qwen17BaseModelPath, { recursive: true })
@@ -116,84 +113,201 @@ describe("RuntimeService", () => {
       await writeFile(chatterboxSidecarPath, "# chatterbox sidecar\n")
       await writeFile(f5SidecarPath, "# f5 sidecar\n")
 
-      const { client, db, service } = await createRuntimeService()
-      try {
-        const models = await service.listModels()
-        const qwenModel = models.find((model) => model.id === "model_qwen3_tts_06b_base_mlx")
-        const qwen17BaseModel = models.find((model) => model.id === "model_qwen3_tts_17b_base_mlx")
-        const chatterboxModel = models.find((model) => model.id === "model_chatterbox_multilingual_mlx")
-        const f5Model = models.find((model) => model.id === "model_f5_tts_ptbr_pytorch")
-        expect(qwenModel?.installStatus).toBe("available")
-        expect(qwenModel?.path).toBe(qwenModelPath)
-        expect(qwen17BaseModel?.installStatus).toBe("available")
-        expect(qwen17BaseModel?.path).toBe(qwen17BaseModelPath)
-        expect(chatterboxModel?.installStatus).toBe("available")
-        expect(chatterboxModel?.path).toBe(chatterboxModelPath)
-        expect(f5Model?.installStatus).toBe("available")
-        expect(f5Model?.path).toBe(f5ModelPath)
+      const models = await service.listModels()
+      const qwenModel = models.find((model) => model.id === "model_qwen3_tts_06b_base_mlx")
+      const qwen17BaseModel = models.find((model) => model.id === "model_qwen3_tts_17b_base_mlx")
+      const chatterboxModel = models.find((model) => model.id === "model_chatterbox_multilingual_mlx")
+      const f5Model = models.find((model) => model.id === "model_f5_tts_ptbr_pytorch")
+      expect(qwenModel?.installStatus).toBe("available")
+      expect(qwenModel?.path).toBe(qwenModelPath)
+      expect(qwen17BaseModel?.installStatus).toBe("available")
+      expect(qwen17BaseModel?.path).toBe(qwen17BaseModelPath)
+      expect(chatterboxModel?.installStatus).toBe("available")
+      expect(chatterboxModel?.path).toBe(chatterboxModelPath)
+      expect(f5Model?.installStatus).toBe("available")
+      expect(f5Model?.path).toBe(f5ModelPath)
 
-        const qwenEngine = await db.query.ttsEngines.findFirst({
-          where: (table, { eq }) => eq(table.id, "qwen3-tts-06b-mlx")
-        })
-        const f5Engine = await db.query.ttsEngines.findFirst({
-          where: (table, { eq }) => eq(table.id, "f5-tts-pt-br")
-        })
-        const chatterboxEngine = await db.query.ttsEngines.findFirst({
-          where: (table, { eq }) => eq(table.id, "chatterbox-multilingual-mlx")
-        })
-        const qwen17BaseEngine = await db.query.ttsEngines.findFirst({
-          where: (table, { eq }) => eq(table.id, "qwen3-tts-17b-base-mlx")
-        })
-        expect(qwenEngine?.installed).toBe(true)
-        expect(qwenEngine?.installPath).toBe(qwenModelPath)
-        expect(qwenEngine?.adapterId).toBe("qwen3-tts-mlx")
-        expect(qwenEngine?.capabilitiesJson).toMatchObject({ supportsVoiceClone: true })
-        expect(qwen17BaseEngine?.installed).toBe(true)
-        expect(qwen17BaseEngine?.installPath).toBe(qwen17BaseModelPath)
-        expect(qwen17BaseEngine?.adapterId).toBe("qwen3-tts-mlx")
-        expect(qwen17BaseEngine?.capabilitiesJson).toMatchObject({ supportsVoiceClone: true })
-        expect(chatterboxEngine?.installed).toBe(true)
-        expect(chatterboxEngine?.installPath).toBe(chatterboxModelPath)
-        expect(chatterboxEngine?.adapterId).toBe("chatterbox-mlx")
-        expect(chatterboxEngine?.capabilitiesJson).toMatchObject({ supportsVoiceClone: true, supportsDiscreteEmotion: true })
-        expect(f5Engine?.installed).toBe(true)
-        expect(f5Engine?.installPath).toBe(f5ModelPath)
-        expect(f5Engine?.adapterId).toBe("f5-tts-pt-br")
+      const qwenEngine = await db.query.ttsEngines.findFirst({
+        where: (table, { eq }) => eq(table.id, "qwen3-tts-06b-mlx")
+      })
+      const f5Engine = await db.query.ttsEngines.findFirst({
+        where: (table, { eq }) => eq(table.id, "f5-tts-pt-br")
+      })
+      const chatterboxEngine = await db.query.ttsEngines.findFirst({
+        where: (table, { eq }) => eq(table.id, "chatterbox-multilingual-mlx")
+      })
+      const qwen17BaseEngine = await db.query.ttsEngines.findFirst({
+        where: (table, { eq }) => eq(table.id, "qwen3-tts-17b-base-mlx")
+      })
+      expect(qwenEngine?.installed).toBe(true)
+      expect(qwenEngine?.installPath).toBe(qwenModelPath)
+      expect(qwenEngine?.adapterId).toBe("qwen3-tts-mlx")
+      expect(qwenEngine?.capabilitiesJson).toMatchObject({ supportsVoiceClone: true })
+      expect(qwen17BaseEngine?.installed).toBe(true)
+      expect(qwen17BaseEngine?.installPath).toBe(qwen17BaseModelPath)
+      expect(qwen17BaseEngine?.adapterId).toBe("qwen3-tts-mlx")
+      expect(qwen17BaseEngine?.capabilitiesJson).toMatchObject({ supportsVoiceClone: true })
+      expect(chatterboxEngine?.installed).toBe(true)
+      expect(chatterboxEngine?.installPath).toBe(chatterboxModelPath)
+      expect(chatterboxEngine?.adapterId).toBe("chatterbox-mlx")
+      expect(chatterboxEngine?.capabilitiesJson).toMatchObject({ supportsVoiceClone: true, supportsDiscreteEmotion: true })
+      expect(f5Engine?.installed).toBe(true)
+      expect(f5Engine?.installPath).toBe(f5ModelPath)
+      expect(f5Engine?.adapterId).toBe("f5-tts-pt-br")
 
-        const qwenManifest = await db.query.runtimeManifests.findFirst({
-          where: (table, { eq }) => eq(table.adapterId, "qwen3-tts-mlx")
-        })
-        const f5Manifest = await db.query.runtimeManifests.findFirst({
-          where: (table, { eq }) => eq(table.adapterId, "f5-tts-pt-br")
-        })
-        const chatterboxManifest = await db.query.runtimeManifests.findFirst({
-          where: (table, { eq }) => eq(table.adapterId, "chatterbox-mlx")
-        })
-        expect(qwenManifest?.executablePath).toBe(pythonExecutable)
-        expect(qwenManifest?.environmentJson).toMatchObject({ args: [qwenSidecarPath] })
-        expect(chatterboxManifest?.executablePath).toBe(pythonExecutable)
-        expect(chatterboxManifest?.environmentJson).toMatchObject({ args: [chatterboxSidecarPath] })
-        expect(f5Manifest?.executablePath).toBe(pythonExecutable)
-        expect(f5Manifest?.environmentJson).toMatchObject({ args: [f5SidecarPath] })
+      const qwenManifest = await db.query.runtimeManifests.findFirst({
+        where: (table, { eq }) => eq(table.adapterId, "qwen3-tts-mlx")
+      })
+      const f5Manifest = await db.query.runtimeManifests.findFirst({
+        where: (table, { eq }) => eq(table.adapterId, "f5-tts-pt-br")
+      })
+      const chatterboxManifest = await db.query.runtimeManifests.findFirst({
+        where: (table, { eq }) => eq(table.adapterId, "chatterbox-mlx")
+      })
+      expect(qwenManifest?.executablePath).toBe(pythonExecutable)
+      expect(qwenManifest?.environmentJson).toMatchObject({ args: [qwenSidecarPath] })
+      expect(chatterboxManifest?.executablePath).toBe(pythonExecutable)
+      expect(chatterboxManifest?.environmentJson).toMatchObject({ args: [chatterboxSidecarPath] })
+      expect(f5Manifest?.executablePath).toBe(pythonExecutable)
+      expect(f5Manifest?.environmentJson).toMatchObject({ args: [f5SidecarPath] })
 
-        const sidecars = await service.listSidecars()
-        expect(sidecars.find((sidecar) => sidecar.id === "runtime_qwen3_tts_mlx_sidecar")?.status).toBe("available")
-        expect(sidecars.find((sidecar) => sidecar.id === "runtime_chatterbox_mlx_sidecar")?.status).toBe("available")
-        expect(sidecars.find((sidecar) => sidecar.id === "runtime_f5_tts_pt_br_pytorch_sidecar")?.status).toBe("available")
+      const sidecars = await service.listSidecars()
+      expect(sidecars.find((sidecar) => sidecar.id === "runtime_qwen3_tts_mlx_sidecar")?.status).toBe("available")
+      expect(sidecars.find((sidecar) => sidecar.id === "runtime_chatterbox_mlx_sidecar")?.status).toBe("available")
+      expect(sidecars.find((sidecar) => sidecar.id === "runtime_f5_tts_pt_br_pytorch_sidecar")?.status).toBe("available")
 
-        const diagnostics = await service.diagnostics()
-        expect(diagnostics.find((item) => item.id === "qwen3-tts-sidecar")?.status).toBe("available")
-        expect(diagnostics.find((item) => item.id === "chatterbox-tts-sidecar")?.status).toBe("available")
-        expect(diagnostics.find((item) => item.id === "f5-tts-sidecar")?.status).toBe("available")
-      } finally {
-        await client.close()
-      }
+      const diagnostics = await service.diagnostics()
+      expect(diagnostics.find((item) => item.id === "qwen3-tts-sidecar")?.status).toBe("available")
+      expect(diagnostics.find((item) => item.id === "chatterbox-tts-sidecar")?.status).toBe("available")
+      expect(diagnostics.find((item) => item.id === "f5-tts-sidecar")?.status).toBe("available")
     } finally {
-      if (previousRoot === undefined) {
-        delete process.env.DREAMREADER_PROJECT_ROOT
-      } else {
-        process.env.DREAMREADER_PROJECT_ROOT = previousRoot
-      }
+      await client.close()
+    }
+  })
+
+  it("keeps project-local .dreamreader-local Python and TTS model paths in dev layouts", async () => {
+    const { client, db, paths, service } = await createRuntimeService()
+    try {
+      const localRoot = path.join(paths.appRoot, ".dreamreader-local")
+      const pythonExecutable = path.join(localRoot, "python", "bin", "python")
+      const qwenModelPath = path.join(localRoot, "models", QWEN3_TTS_06B_MODEL_DIR_NAME)
+      const qwenSidecarPath = path.join(paths.sidecarsDir, "tts", "qwen3_tts_mlx_sidecar.py")
+      await mkdir(path.dirname(pythonExecutable), { recursive: true })
+      await mkdir(qwenModelPath, { recursive: true })
+      await mkdir(path.dirname(qwenSidecarPath), { recursive: true })
+      await writeFile(pythonExecutable, "#!/usr/bin/env python3\n")
+      await writeFile(path.join(qwenModelPath, "config.json"), "{}\n")
+      await writeFile(qwenSidecarPath, "# qwen sidecar\n")
+
+      const models = await service.listModels()
+      const qwenModel = models.find((model) => model.id === "model_qwen3_tts_06b_base_mlx")
+      expect(qwenModel?.installStatus).toBe("available")
+      expect(qwenModel?.path).toBe(qwenModelPath)
+
+      const qwenEngine = await db.query.ttsEngines.findFirst({
+        where: (table, { eq }) => eq(table.id, "qwen3-tts-06b-mlx")
+      })
+      expect(qwenEngine?.installed).toBe(true)
+      expect(qwenEngine?.installPath).toBe(qwenModelPath)
+
+      const qwenManifest = await db.query.runtimeManifests.findFirst({
+        where: (table, { eq }) => eq(table.adapterId, "qwen3-tts-mlx")
+      })
+      expect(qwenManifest?.executablePath).toBe(pythonExecutable)
+      expect(qwenManifest?.environmentJson).toMatchObject({
+        args: [qwenSidecarPath],
+        env: {
+          HF_HOME: path.join(localRoot, "huggingface"),
+          MPLCONFIGDIR: path.join(localRoot, "cache", "matplotlib")
+        }
+      })
+
+      const sidecars = await service.listSidecars()
+      const qwenSidecar = sidecars.find((sidecar) => sidecar.id === "runtime_qwen3_tts_mlx_sidecar")
+      expect(qwenSidecar?.status).toBe("available")
+      expect(qwenSidecar?.executablePath).toBe(pythonExecutable)
+    } finally {
+      await client.close()
+    }
+  })
+
+  it("invalidates legacy .dreamreader-local model and sidecar paths from persisted catalogs", async () => {
+    const { client, db, paths, service } = await createRuntimeService()
+    try {
+      paths.resourcesDir = path.join(paths.appRoot, "DreamReader.app", "Contents", "Resources")
+      paths.sidecarsDir = path.join(paths.resourcesDir, "sidecars")
+      const legacyRoot = path.join(paths.appRoot, ".dreamreader-local")
+      const legacyModelPath = path.join(legacyRoot, "models", QWEN3_TTS_06B_MODEL_DIR_NAME)
+      const legacyPythonPath = path.join(legacyRoot, "python", "bin", "python")
+      await mkdir(path.dirname(legacyPythonPath), { recursive: true })
+      await mkdir(legacyModelPath, { recursive: true })
+      await writeFile(legacyPythonPath, "#!/usr/bin/env python3\n")
+      await writeFile(path.join(legacyModelPath, "config.json"), "{}\n")
+      await db.insert(schema.modelAssets).values({
+        id: "model_qwen3_tts_06b_base_mlx",
+        kind: "tts",
+        name: "Qwen3-TTS 12Hz 0.6B Base",
+        provider: "Qwen",
+        version: "12Hz-0.6B-Base",
+        path: legacyModelPath,
+        sizeBytes: 1234,
+        license: "apache-2.0",
+        runtime: "mlx-sidecar",
+        format: "mlx",
+        acceleratorPreference: "mlx",
+        installStatus: "available",
+        downloadProgress: 1,
+        metadataJson: {
+          engineId: "qwen3-tts-06b-mlx"
+        },
+        installedAt: new Date()
+      })
+      await db.insert(schema.ttsEngines).values({
+        id: "qwen3-tts-06b-mlx",
+        displayName: "Qwen3-TTS 12Hz 0.6B Base",
+        version: "12Hz-0.6B-Base",
+        adapterId: "qwen3-tts-mlx",
+        runtime: "mlx",
+        modelFormat: "mlx",
+        accelerator: "apple_metal",
+        capabilitiesJson: {},
+        performanceProfileJson: {},
+        installed: true,
+        installPath: legacyModelPath
+      })
+      await db.insert(schema.runtimeManifests).values({
+        id: "runtime_qwen3_tts_mlx_sidecar",
+        adapterId: "qwen3-tts-mlx",
+        runtime: "mlx",
+        version: "sidecar-v1",
+        capabilitiesJson: {
+          engines: ["qwen3-tts-06b-mlx"]
+        },
+        executablePath: legacyPythonPath,
+        environmentJson: {
+          args: [path.join(legacyRoot, "sidecars", "tts", "qwen3_tts_mlx_sidecar.py")]
+        },
+        healthcheckCommand: `${legacyPythonPath} --health`
+      })
+
+      const models = await service.listModels()
+      const qwenModel = models.find((model) => model.id === "model_qwen3_tts_06b_base_mlx")
+      expect(qwenModel?.installStatus).toBe("not_configured")
+      expect(qwenModel?.path).toBeUndefined()
+      expect(qwenModel?.sizeBytes).toBeUndefined()
+
+      const qwenEngine = await db.query.ttsEngines.findFirst({
+        where: (table, { eq }) => eq(table.id, "qwen3-tts-06b-mlx")
+      })
+      expect(qwenEngine?.installed).toBe(false)
+      expect(qwenEngine?.installPath).toBeNull()
+
+      const sidecars = await service.listSidecars()
+      const qwenSidecar = sidecars.find((sidecar) => sidecar.id === "runtime_qwen3_tts_mlx_sidecar")
+      expect(qwenSidecar?.status).toBe("not_configured")
+      expect(qwenSidecar?.executablePath).toBeUndefined()
+    } finally {
+      await client.close()
     }
   })
 
@@ -291,6 +405,8 @@ async function createRuntimeService() {
   const db = drizzle(client, { schema })
   await migrate(db, { migrationsFolder: path.resolve("drizzle") })
   const paths = {
+    appRoot: tempDir,
+    resourcesDir: tempDir,
     userData: tempDir,
     dbDir: path.join(tempDir, "db"),
     booksDir: path.join(tempDir, "library", "books"),
@@ -300,6 +416,12 @@ async function createRuntimeService() {
     audiobooksDir: path.join(tempDir, "audiobooks"),
     voicesDir: path.join(tempDir, "voices"),
     modelsDir: path.join(tempDir, "models"),
+    runtimeDir: path.join(tempDir, "runtimes"),
+    pythonDir: path.join(tempDir, "runtimes", "python"),
+    runtimeDownloadsDir: path.join(tempDir, "runtimes", "downloads"),
+    runtimeCacheDir: path.join(tempDir, "runtime-cache"),
+    huggingFaceDir: path.join(tempDir, "huggingface"),
+    sidecarsDir: path.join(tempDir, "sidecars"),
     logsDir: path.join(tempDir, "logs"),
     backupsDir: path.join(tempDir, "backups")
   }

@@ -1,13 +1,15 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { PGlite } from "@electric-sql/pglite"
 import { drizzle } from "drizzle-orm/pglite"
 import { migrate } from "drizzle-orm/pglite/migrator"
+import { eq } from "drizzle-orm"
 import { afterEach, describe, expect, it } from "vitest"
 import type { AppDatabase } from "../../src/main/db/client"
 import * as schema from "../../src/main/db/schema"
-import { assets, books, ttsEngines, ttsJobs } from "../../src/main/db/schema"
+import { assets, audiobookBuildJobs, books, ttsEngines, ttsJobs } from "../../src/main/db/schema"
+import { probeAudio } from "../../src/main/lib/audio-transcode"
 import { AudiobookService } from "../../src/main/services/audiobook-service"
 
 const tempDirs: string[] = []
@@ -93,6 +95,161 @@ describe("AudiobookService.listLibraryStatus", () => {
   })
 })
 
+describe("AudiobookService.rebuild", () => {
+  it("builds a real M4B asset from ready chapter audio", async () => {
+    const { audiobook, db, paths } = await createTestServices()
+
+    await seedBook(db, paths, "book-with-audio", "Livro com Áudio", 1)
+    expect(await audiobook.exportFileName("book-with-audio")).toBe("Livro com Áudio - DreamReader.m4b")
+    await db.insert(ttsEngines).values({
+      id: "dreamreader-local-tts",
+      displayName: "DreamReader Local TTS",
+      version: "0.1.0",
+      adapterId: "dreamreader-local-wav",
+      runtime: "cpu",
+      modelFormat: "unknown",
+      accelerator: "cpu",
+      installed: true,
+      updatedAt: new Date()
+    })
+
+    const chapterPath = path.join(paths.audioCacheDir, "chapter-1.wav")
+    await mkdir(path.dirname(chapterPath), { recursive: true })
+    await writeFile(chapterPath, createSilentWav(1_000, 22_050))
+    await db.insert(assets).values({
+      id: "asset-1",
+      kind: "audio_chapter",
+      bookId: "book-with-audio",
+      path: chapterPath,
+      mimeType: "audio/wav",
+      contentHash: "audio-hash",
+      sizeBytes: (await readFile(chapterPath)).byteLength
+    })
+
+    await audiobook.recordChapterAudio({
+      audioAssetId: "asset-1",
+      audioHash: "audio-hash",
+      bookId: "book-with-audio",
+      chapterHref: "chapter-1",
+      chapterIndex: 0,
+      contentHash: "content-hash",
+      durationMs: 1_000,
+      engineId: "dreamreader-local-tts",
+      title: "Capitulo 1"
+    })
+
+    const rebuilt = await audiobook.rebuild("book-with-audio")
+
+    expect(rebuilt.status).toBe("complete")
+    expect(rebuilt.assetId).toBeTruthy()
+    expect(rebuilt.draftAssetId).toBe(rebuilt.assetId)
+
+    const asset = await db.query.assets.findFirst({
+      where: (table, { eq }) => eq(table.id, rebuilt.assetId ?? "")
+    })
+    expect(asset).toMatchObject({
+      kind: "audiobook_m4b",
+      mimeType: "audio/mp4"
+    })
+    expect(asset?.path.endsWith(".m4b")).toBe(true)
+    await expect(access(asset?.path ?? "")).resolves.toBeUndefined()
+    expect((await readFile(asset?.path ?? "")).subarray(4, 8).toString()).toBe("ftyp")
+    expect((await probeAudio(asset?.path ?? "")).durationMs).toBeGreaterThan(900)
+    await expect(access(await audiobook.getExportFilePath("book-with-audio"))).resolves.toBeUndefined()
+  })
+
+  it("waits for active audio jobs before rebuilding automatic M4B", async () => {
+    const { audiobook, db, paths } = await createTestServices()
+
+    await seedBook(db, paths, "book-with-audio", "Livro com Áudio", 2)
+    await db.insert(ttsEngines).values({
+      id: "dreamreader-local-tts",
+      displayName: "DreamReader Local TTS",
+      version: "0.1.0",
+      adapterId: "dreamreader-local-wav",
+      runtime: "cpu",
+      modelFormat: "unknown",
+      accelerator: "cpu",
+      installed: true,
+      updatedAt: new Date()
+    })
+    await audiobook.setAutoBuild("book-with-audio", true)
+    await db.insert(ttsJobs).values([
+      {
+        id: "job-1",
+        bookId: "book-with-audio",
+        chapterHref: "chapter-1",
+        engineId: "dreamreader-local-tts",
+        status: "updating_m4b",
+        progress: 0.94,
+        updatedAt: new Date()
+      },
+      {
+        id: "job-2",
+        bookId: "book-with-audio",
+        chapterHref: "chapter-2",
+        engineId: "dreamreader-local-tts",
+        status: "queued",
+        progress: 0,
+        updatedAt: new Date()
+      }
+    ])
+
+    for (const index of [1, 2]) {
+      const chapterPath = path.join(paths.audioCacheDir, `chapter-${index}.wav`)
+      await mkdir(path.dirname(chapterPath), { recursive: true })
+      await writeFile(chapterPath, createSilentWav(1_000, 22_050))
+      await db.insert(assets).values({
+        id: `asset-${index}`,
+        kind: "audio_chapter",
+        bookId: "book-with-audio",
+        path: chapterPath,
+        mimeType: "audio/wav",
+        contentHash: `audio-hash-${index}`,
+        sizeBytes: (await readFile(chapterPath)).byteLength
+      })
+    }
+
+    const first = await audiobook.recordChapterAudio({
+      audioAssetId: "asset-1",
+      audioHash: "audio-hash-1",
+      bookId: "book-with-audio",
+      chapterHref: "chapter-1",
+      chapterIndex: 0,
+      contentHash: "content-hash-1",
+      durationMs: 1_000,
+      engineId: "dreamreader-local-tts",
+      title: "Capitulo 1"
+    })
+    expect(first.draftAssetId).toBeUndefined()
+    await db.update(ttsJobs).set({ status: "completed", progress: 1, finishedAt: new Date() }).where(eq(ttsJobs.id, "job-1"))
+    expect((await audiobook.rebuildAutoIfIdle("book-with-audio"))?.draftAssetId).toBeUndefined()
+    expect(await db.query.audiobookBuildJobs.findMany()).toEqual([])
+
+    await audiobook.recordChapterAudio({
+      audioAssetId: "asset-2",
+      audioHash: "audio-hash-2",
+      bookId: "book-with-audio",
+      chapterHref: "chapter-2",
+      chapterIndex: 1,
+      contentHash: "content-hash-2",
+      durationMs: 1_000,
+      engineId: "dreamreader-local-tts",
+      title: "Capitulo 2"
+    })
+    await db.update(ttsJobs).set({ status: "completed", progress: 1, finishedAt: new Date() }).where(eq(ttsJobs.id, "job-2"))
+
+    const rebuilt = await audiobook.rebuildAutoIfIdle("book-with-audio")
+    const buildJobs = await db.query.audiobookBuildJobs.findMany()
+
+    expect(rebuilt.status).toBe("complete")
+    expect(rebuilt.draftAssetId).toBeTruthy()
+    expect(buildJobs).toHaveLength(1)
+    expect(buildJobs[0].status).toBe("completed")
+    expect((await audiobook.getLatestBuildJob("book-with-audio"))?.progress).toBe(1)
+  })
+})
+
 async function createTestServices() {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "dreamreader-audiobook-"))
   tempDirs.push(tempDir)
@@ -100,6 +257,8 @@ async function createTestServices() {
   const db = drizzle(client, { schema })
   await migrate(db, { migrationsFolder: path.resolve("drizzle") })
   const paths = {
+    appRoot: tempDir,
+    resourcesDir: tempDir,
     userData: tempDir,
     dbDir: path.join(tempDir, "db"),
     booksDir: path.join(tempDir, "library", "books"),
@@ -109,6 +268,12 @@ async function createTestServices() {
     audiobooksDir: path.join(tempDir, "audiobooks"),
     voicesDir: path.join(tempDir, "voices"),
     modelsDir: path.join(tempDir, "models"),
+    runtimeDir: path.join(tempDir, "runtimes"),
+    pythonDir: path.join(tempDir, "runtimes", "python"),
+    runtimeDownloadsDir: path.join(tempDir, "runtimes", "downloads"),
+    runtimeCacheDir: path.join(tempDir, "runtime-cache"),
+    huggingFaceDir: path.join(tempDir, "huggingface"),
+    sidecarsDir: path.join(tempDir, "sidecars"),
     logsDir: path.join(tempDir, "logs"),
     backupsDir: path.join(tempDir, "backups")
   }
@@ -146,4 +311,26 @@ async function seedBook(db: AppDatabase, paths: { booksDir: string }, id: string
       tableOfContents: chapters.map((chapter) => ({ href: chapter.href, title: chapter.title }))
     }
   })
+}
+
+function createSilentWav(durationMs: number, sampleRate: number): Buffer {
+  const channelCount = 1
+  const bytesPerSample = 2
+  const frameCount = Math.max(1, Math.round((durationMs / 1000) * sampleRate))
+  const dataSize = frameCount * channelCount * bytesPerSample
+  const buffer = Buffer.alloc(44 + dataSize)
+  buffer.write("RIFF", 0)
+  buffer.writeUInt32LE(36 + dataSize, 4)
+  buffer.write("WAVE", 8)
+  buffer.write("fmt ", 12)
+  buffer.writeUInt32LE(16, 16)
+  buffer.writeUInt16LE(1, 20)
+  buffer.writeUInt16LE(channelCount, 22)
+  buffer.writeUInt32LE(sampleRate, 24)
+  buffer.writeUInt32LE(sampleRate * channelCount * bytesPerSample, 28)
+  buffer.writeUInt16LE(channelCount * bytesPerSample, 32)
+  buffer.writeUInt16LE(bytesPerSample * 8, 34)
+  buffer.write("data", 36)
+  buffer.writeUInt32LE(dataSize, 40)
+  return buffer
 }

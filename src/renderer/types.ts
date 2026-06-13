@@ -10,7 +10,15 @@ export type AnnotationKind = "highlight" | "note" | "favorite"
 
 export type HighlightColor = "yellow" | "green" | "blue" | "rose" | "purple"
 
-export type ReaderFontFamily = "georgia" | "palatino" | "charter" | "system-serif" | "system-sans"
+export type ReaderFontFamily =
+  | "georgia"
+  | "palatino"
+  | "charter"
+  | "system-serif"
+  | "atkinson"
+  | "avenir"
+  | "verdana"
+  | "system-sans"
 
 export type ReaderTextAlign = "start" | "justify"
 
@@ -81,6 +89,11 @@ export type AnnotationUpdateDraft = {
   id: string
   color?: HighlightColor
   note?: string
+}
+
+export type ExportNotesResult = {
+  exported: boolean
+  filePath?: string
 }
 
 export type ReaderPreferences = {
@@ -233,6 +246,7 @@ export type AudiobookExport = {
   bookId: string
   status: "none" | "partial" | "stale" | "complete" | "error"
   autoBuildEnabled: boolean
+  assetId?: string
   draftAssetId?: string
   manifest?: {
     chapters: AudiobookChapter[]
@@ -243,6 +257,22 @@ export type AudiobookExport = {
   durationMs?: number
   stale: boolean
   errorMessage?: string
+}
+
+export type AudiobookBuildJob = {
+  id: string
+  bookId: string
+  audiobookExportId: string
+  status: "queued" | "building" | "validating" | "completed" | "failed" | "cancelled"
+  progress: number
+  reason: string
+  resultAssetId?: string
+  errorCode?: string
+  errorMessage?: string
+  createdAt: string
+  updatedAt: string
+  startedAt?: string
+  finishedAt?: string
 }
 
 export type LibraryAudioStatus = {
@@ -403,7 +433,7 @@ export type DreamReaderBridge = {
     createAnnotation?: (draft: AnnotationDraft) => Promise<Annotation>
     updateAnnotation?: (draft: AnnotationUpdateDraft) => Promise<Annotation>
     deleteAnnotation?: (annotationId: string) => Promise<void>
-    exportNotes?: (bookId: string, format: "markdown" | "json") => Promise<string>
+    exportNotes?: (bookId: string, format: "markdown" | "json") => Promise<ExportNotesResult>
   }
   settings?: {
     getSettings?: () => Promise<AppSettings>
@@ -456,6 +486,8 @@ export type DreamReaderBridge = {
     listLibraryStatus?: () => Promise<unknown[]>
     enableAutoBuild?: (bookId: string, enabled: boolean) => Promise<unknown>
     rebuild?: (bookId: string) => Promise<unknown>
+    getBuildJob?: (bookId: string) => Promise<unknown>
+    save?: (bookId: string) => Promise<unknown>
     reveal?: (bookId: string) => Promise<unknown>
   }
   pronunciation?: {

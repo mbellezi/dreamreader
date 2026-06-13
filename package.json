@@ -1,13 +1,17 @@
 {
   "name": "dreamreader",
+  "productName": "DreamReader",
   "version": "0.1.0",
   "description": "Local-first desktop ebook reader with PT-BR focused audio generation.",
+  "author": "DreamReader",
   "private": true,
   "type": "module",
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "tsc --noEmit && electron-vite build",
+    "pack:mac": "npm run build && electron-builder --mac --dir -c.mac.identity=-",
+    "dist:mac": "npm run build && electron-builder --mac dmg zip --arm64",
     "preview": "electron-vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -51,8 +55,39 @@
     "vitest": "^4.0.14"
   },
   "build": {
+    "appId": "com.dreamreader.app",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "files": [
+      "out/**",
+      "drizzle/**"
+    ],
+    "extraResources": [
+      {
+        "from": "sidecars",
+        "to": "sidecars",
+        "filter": [
+          "tts/*.py",
+          "tts/requirements-*.txt"
+        ]
+      }
+    ],
     "asarUnpack": [
-      "node_modules/ffmpeg-static/**"
-    ]
+      "node_modules/ffmpeg-static/**",
+      "node_modules/node-llama-cpp/**"
+    ],
+    "mac": {
+      "icon": "build/icon.icns",
+      "category": "public.app-category.education",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "notarize": true,
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "dmg": {
+      "sign": false
+    }
   }
 }

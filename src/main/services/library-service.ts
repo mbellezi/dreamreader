@@ -48,6 +48,9 @@ type EpubManifestItem = {
   properties?: string
 }
 
+type AnnotationRow = typeof annotations.$inferSelect
+type BookRow = typeof books.$inferSelect
+
 const parser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: "",
@@ -388,24 +391,26 @@ export class LibraryService {
     const bookRows = input.bookId
       ? [await this.getBook(input.bookId)]
       : await this.db.query.books.findMany()
-    const titleByBookId = new Map(bookRows.map((book) => [book.id, book.title]))
-    const lines = [input.bookId ? `# ${titleByBookId.get(input.bookId) ?? "DreamReader"}` : "# Anotacoes DreamReader", ""]
-    let currentBookId = ""
-    for (const item of visible) {
-      if (!input.bookId && item.bookId !== currentBookId) {
-        currentBookId = item.bookId
-        lines.push(`## ${titleByBookId.get(item.bookId) ?? item.bookId}`, "")
-      }
-      lines.push(`> ${item.quote}`)
-      if (item.note) {
-        lines.push("", item.note)
-      }
-      if (item.tags.length) {
-        lines.push("", `Tags: ${item.tags.map((tag) => `#${tag}`).join(" ")}`)
-      }
-      lines.push("")
-    }
-    return lines.join("\n")
+    return renderAnnotationsMarkdown(bookRows, visible, input.bookId)
+  }
+
+  async exportAnnotationsFileName(bookId?: string, format: "markdown" | "json" = "markdown"): Promise<string> {
+    const book = bookId ? await this.getBook(bookId) : undefined
+    const extension = format === "json" ? "json" : "md"
+    const suffix = format === "json" ? "annotations" : "notas"
+    const baseName = slugifyFileName(book ? `${book.title}-${suffix}` : `dreamreader-${suffix}`)
+    return `${baseName}.${extension}`
+  }
+
+  async exportAnnotationsToFile(input: {
+    bookId?: string
+    format: "markdown" | "json"
+    includeDeleted: boolean
+    targetPath: string
+  }): Promise<{ exported: true; filePath: string }> {
+    const content = await this.exportAnnotations(input)
+    await writeFile(input.targetPath, content, "utf8")
+    return { exported: true, filePath: input.targetPath }
   }
 
   async getSettings() {
@@ -845,6 +850,161 @@ export async function writeJsonAsset(filePath: string, data: unknown): Promise<s
   const json = JSON.stringify(data, null, 2)
   await writeFile(filePath, json)
   return hashBuffer(json)
+}
+
+function renderAnnotationsMarkdown(bookRows: BookRow[], annotationRows: AnnotationRow[], singleBookId?: string): string {
+  const bookById = new Map(bookRows.map((book) => [book.id, book]))
+
+  if (singleBookId) {
+    const book = bookById.get(singleBookId)
+    return book ? renderBookAnnotationsMarkdown(book, annotationRows, 1).join("\n") : "# DreamReader\n"
+  }
+
+  const lines = ["# Anotacoes DreamReader", ""]
+  const annotationsByBook = groupByBook(annotationRows)
+  for (const book of bookRows.filter((item) => annotationsByBook.has(item.id))) {
+    lines.push(...renderBookAnnotationsMarkdown(book, annotationsByBook.get(book.id) ?? [], 2), "")
+  }
+  if (!annotationsByBook.size) {
+    lines.push("_Nenhuma anotacao exportada._", "")
+  }
+  return lines.join("\n")
+}
+
+function renderBookAnnotationsMarkdown(book: BookRow, annotationRows: AnnotationRow[], titleLevel: 1 | 2): string[] {
+  const manifest = book.manifestJson as ReaderManifest
+  const sorted = sortAnnotationsForReading(annotationRows, manifest)
+  const chapterHeading = "#".repeat(titleLevel + 1)
+  const paragraphHeading = "#".repeat(titleLevel + 2)
+  const lines = [
+    `${"#".repeat(titleLevel)} ${singleLine(book.title)}`,
+    "",
+    `- **Livro:** ${singleLine(book.title)}`,
+    `- **Autor(es):** ${formatAuthors(book.authors)}`,
+    `- **Total de anotacoes:** ${sorted.length}`,
+    `- **Exportado em:** ${new Date().toISOString()}`,
+    ""
+  ]
+
+  if (!sorted.length) {
+    lines.push("_Nenhuma anotacao exportada._", "")
+    return lines
+  }
+
+  let currentChapter = ""
+  for (const annotation of sorted) {
+    const chapterHref = annotationChapterHref(annotation)
+    if (chapterHref !== currentChapter) {
+      currentChapter = chapterHref
+      lines.push(`${chapterHeading} ${singleLine(chapterTitle(manifest, chapterHref))}`, "")
+    }
+
+    lines.push(`${paragraphHeading} ${paragraphLabel(annotation)}`, "")
+    lines.push(`- **Tipo:** ${formatAnnotationKind(annotation.tags)}`)
+    lines.push(`- **Criado em:** ${toIso(annotation.createdAt)}`)
+    const displayTags = annotation.tags.filter((tag) => !["highlight", "note", "favorite"].includes(tag))
+    if (displayTags.length) {
+      lines.push(`- **Tags:** ${displayTags.map((tag) => `#${tag}`).join(" ")}`)
+    }
+    lines.push("", blockQuote(annotation.quote))
+    if (annotation.note) {
+      lines.push("", "**Nota:**", "", annotation.note.trim())
+    }
+    lines.push("")
+  }
+
+  return lines
+}
+
+function groupByBook(annotationRows: AnnotationRow[]): Map<string, AnnotationRow[]> {
+  const grouped = new Map<string, AnnotationRow[]>()
+  for (const annotation of annotationRows) {
+    grouped.set(annotation.bookId, [...(grouped.get(annotation.bookId) ?? []), annotation])
+  }
+  return grouped
+}
+
+function sortAnnotationsForReading(annotationRows: AnnotationRow[], manifest: ReaderManifest): AnnotationRow[] {
+  const chapterOrder = new Map<string, number>()
+  manifest.chapters.forEach((chapter, index) => {
+    chapterOrder.set(chapter.href, index)
+    chapterOrder.set(chapter.id, index)
+  })
+
+  return [...annotationRows].sort((left, right) => {
+    const leftChapter = chapterOrder.get(annotationChapterHref(left)) ?? Number.MAX_SAFE_INTEGER
+    const rightChapter = chapterOrder.get(annotationChapterHref(right)) ?? Number.MAX_SAFE_INTEGER
+    if (leftChapter !== rightChapter) {
+      return leftChapter - rightChapter
+    }
+
+    const leftParagraph = annotationParagraphNumber(left) ?? Number.MAX_SAFE_INTEGER
+    const rightParagraph = annotationParagraphNumber(right) ?? Number.MAX_SAFE_INTEGER
+    if (leftParagraph !== rightParagraph) {
+      return leftParagraph - rightParagraph
+    }
+
+    return toIso(left.createdAt).localeCompare(toIso(right.createdAt))
+  })
+}
+
+function annotationChapterHref(annotation: AnnotationRow): string {
+  const locator = annotation.locatorJson
+  return typeof locator.href === "string" ? locator.href : ""
+}
+
+function annotationParagraphNumber(annotation: AnnotationRow): number | undefined {
+  const locator = annotation.locatorJson
+  const text = isJsonObject(locator.text) ? locator.text : undefined
+  const index = typeof text?.anchorParagraphIndex === "number" ? text.anchorParagraphIndex : undefined
+  return typeof index === "number" && Number.isFinite(index) ? index + 1 : undefined
+}
+
+function paragraphLabel(annotation: AnnotationRow): string {
+  const paragraphNumber = annotationParagraphNumber(annotation)
+  return paragraphNumber ? `Paragrafo ${paragraphNumber}` : "Paragrafo nao informado"
+}
+
+function chapterTitle(manifest: ReaderManifest, href: string): string {
+  const chapter = manifest.chapters.find((item) => item.href === href || item.id === href)
+  const toc = manifest.tableOfContents.find((item) => item.href === href)
+  return chapter?.title ?? toc?.title ?? (href || "Capitulo sem identificacao")
+}
+
+function formatAuthors(authors: string[]): string {
+  return authors.length ? authors.map(singleLine).join(", ") : "Autor desconhecido"
+}
+
+function formatAnnotationKind(tags: string[]): string {
+  if (tags.includes("favorite")) {
+    return "Favorito"
+  }
+  if (tags.includes("note")) {
+    return "Nota"
+  }
+  return "Marcacao"
+}
+
+function blockQuote(text: string): string {
+  return text
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => `> ${line}`)
+    .join("\n")
+}
+
+function singleLine(value: string): string {
+  return value.replace(/\s+/g, " ").trim()
+}
+
+function slugifyFileName(value: string): string {
+  const slug = value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+  return slug || "dreamreader-notas"
 }
 
 function normalizeFileType(ext: string): "epub" | "txt" | "markdown" | "html" | undefined {

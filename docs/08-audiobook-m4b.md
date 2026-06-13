@@ -88,9 +88,9 @@ Marcar export como `stale` quando:
 
 - Mostrar status por livro: sem audio, parcial, desatualizado, completo, erro.
 - Mostrar progresso: capitulos prontos/total e duracao pronta.
-- Acao de reconstruir M4B.
+- Acao de reconstruir M4B com status/progresso do build.
 - Toggle de auto-build por livro e global.
-- Acao de abrir/revelar arquivo.
+- Acao de salvar o arquivo M4B em um caminho escolhido pelo usuario.
 - Aviso quando o M4B parcial nao contem todos os capitulos.
 
 ## Jobs

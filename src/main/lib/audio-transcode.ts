@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process"
-import { access, readFile } from "node:fs/promises"
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import path from "node:path"
 import { promisify } from "node:util"
 import ffmpegStaticPath from "ffmpeg-static"
 import { parseFile } from "music-metadata"
@@ -12,6 +13,19 @@ export type AudioProbe = {
   durationMs?: number
   sampleRate?: number
   channels?: number
+}
+
+export type M4bChapterInput = {
+  filePath: string
+  title: string
+  startMs: number
+  endMs: number
+}
+
+export type M4bMetadataInput = {
+  title: string
+  authors?: string[]
+  language?: string
 }
 
 /**
@@ -50,6 +64,63 @@ export async function resampleAudio(srcPath: string, destPath: string, sampleRat
   }
 }
 
+export async function buildM4bAudiobook(input: {
+  chapters: M4bChapterInput[]
+  metadata: M4bMetadataInput
+  outputPath: string
+  bitrate?: string
+}): Promise<void> {
+  if (!input.chapters.length) {
+    throw new Error("At least one chapter audio file is required")
+  }
+
+  const ffmpegPath = await bundledFfmpegPath()
+  if (!ffmpegPath) {
+    throw new Error("Bundled FFmpeg binary is unavailable")
+  }
+
+  await mkdir(path.dirname(input.outputPath), { recursive: true })
+  const workDir = await mkdtemp(path.join(path.dirname(input.outputPath), ".m4b-build-"))
+  const metadataPath = path.join(workDir, "metadata.ffmetadata")
+
+  try {
+    await writeFile(metadataPath, ffmetadataFor(input.metadata, input.chapters))
+
+    const metadataInputIndex = input.chapters.length
+    const filterInputs = input.chapters.map((_, index) => `[${index}:a:0]`).join("")
+    const args = ["-y"]
+    for (const chapter of input.chapters) {
+      args.push("-i", chapter.filePath)
+    }
+    args.push(
+      "-i",
+      metadataPath,
+      "-filter_complex",
+      `${filterInputs}concat=n=${input.chapters.length}:v=0:a=1[aout]`,
+      "-map",
+      "[aout]",
+      "-map_metadata",
+      String(metadataInputIndex),
+      "-map_chapters",
+      String(metadataInputIndex),
+      "-vn",
+      "-c:a",
+      "aac",
+      "-b:a",
+      input.bitrate ?? "96k",
+      "-movflags",
+      "+faststart",
+      "-f",
+      "mp4",
+      input.outputPath
+    )
+
+    await execFileAsync(ffmpegPath, args, { maxBuffer: 8 * 1024 * 1024 })
+  } finally {
+    await rm(workDir, { force: true, recursive: true })
+  }
+}
+
 async function bundledFfmpegPath(): Promise<string | undefined> {
   if (!ffmpegStaticPath) {
     return undefined
@@ -75,6 +146,31 @@ async function fileExists(filePath: string): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+function ffmetadataFor(metadata: M4bMetadataInput, chapters: M4bChapterInput[]): string {
+  const lines = [
+    ";FFMETADATA1",
+    `title=${escapeFfmetadataValue(metadata.title)}`,
+    metadata.authors?.length ? `artist=${escapeFfmetadataValue(metadata.authors.join(", "))}` : undefined,
+    metadata.language ? `language=${escapeFfmetadataValue(metadata.language)}` : undefined
+  ].filter((line): line is string => Boolean(line))
+
+  for (const chapter of chapters) {
+    lines.push(
+      "[CHAPTER]",
+      "TIMEBASE=1/1000",
+      `START=${Math.max(0, Math.round(chapter.startMs))}`,
+      `END=${Math.max(Math.round(chapter.startMs) + 1, Math.round(chapter.endMs))}`,
+      `title=${escapeFfmetadataValue(chapter.title)}`
+    )
+  }
+
+  return `${lines.join("\n")}\n`
+}
+
+function escapeFfmetadataValue(value: string): string {
+  return value.replace(/\r?\n/g, " ").replace(/([=;#\\])/g, "\\$1")
 }
 
 async function probeWavHeader(filePath: string): Promise<AudioProbe> {

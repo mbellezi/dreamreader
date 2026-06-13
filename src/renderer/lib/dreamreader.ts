@@ -3,9 +3,11 @@ import type {
   AnnotationDraft,
   AnnotationUpdateDraft,
   AppSettings,
+  AudiobookBuildJob,
   AudiobookExport,
   BookDetails,
   BookSummary,
+  ExportNotesResult,
   ImportBooksResult,
   LibraryAudioStatus,
   LibraryQuery,
@@ -127,21 +129,53 @@ function exportAnnotations(book: BookDetails | undefined, annotations: Annotatio
   }
 
   const title = book?.title ?? "DreamReader"
-  const lines = [`# ${title}`, ""]
+  const lines = [
+    `# ${title}`,
+    "",
+    `- **Livro:** ${title}`,
+    `- **Autor(es):** ${book?.authors.length ? book.authors.join(", ") : "Autor desconhecido"}`,
+    `- **Total de anotacoes:** ${annotations.length}`,
+    `- **Exportado em:** ${new Date().toISOString()}`,
+    ""
+  ]
+  const sorted = [...annotations].sort((left, right) => {
+    const leftChapter = book?.chapters.findIndex((chapter) => chapter.id === left.chapterId) ?? -1
+    const rightChapter = book?.chapters.findIndex((chapter) => chapter.id === right.chapterId) ?? -1
+    if (leftChapter !== rightChapter) {
+      return leftChapter - rightChapter
+    }
+    return (left.anchorParagraphIndex ?? Number.MAX_SAFE_INTEGER) - (right.anchorParagraphIndex ?? Number.MAX_SAFE_INTEGER)
+  })
+  let currentChapterId = ""
 
-  annotations.forEach((annotation) => {
-    const chapter = book?.chapters.find((item) => item.id === annotation.chapterId)
-    lines.push(`## ${chapter?.title ?? annotation.chapterId}`)
-    lines.push("")
-    lines.push(`> ${annotation.excerpt}`)
+  sorted.forEach((annotation) => {
+    if (annotation.chapterId !== currentChapterId) {
+      currentChapterId = annotation.chapterId
+      const chapter = book?.chapters.find((item) => item.id === annotation.chapterId)
+      lines.push(`## ${chapter?.title ?? annotation.chapterId}`, "")
+    }
+    const paragraphNumber = typeof annotation.anchorParagraphIndex === "number" ? annotation.anchorParagraphIndex + 1 : undefined
+    lines.push(`### ${paragraphNumber ? `Paragrafo ${paragraphNumber}` : "Paragrafo nao informado"}`, "")
+    lines.push(`- **Tipo:** ${annotation.kind === "favorite" ? "Favorito" : annotation.kind === "note" ? "Nota" : "Marcacao"}`)
+    lines.push(`- **Criado em:** ${annotation.createdAt}`, "")
+    lines.push(annotation.excerpt.trim().split(/\r?\n/).map((line) => `> ${line}`).join("\n"))
     if (annotation.note) {
-      lines.push("")
-      lines.push(annotation.note)
+      lines.push("", "**Nota:**", "", annotation.note)
     }
     lines.push("")
   })
 
   return lines.join("\n")
+}
+
+function downloadTextFile(fileName: string, content: string, mimeType: string): void {
+  const blob = new Blob([content], { type: mimeType })
+  const url = window.URL.createObjectURL(blob)
+  const anchor = window.document.createElement("a")
+  anchor.href = url
+  anchor.download = fileName
+  anchor.click()
+  window.URL.revokeObjectURL(url)
 }
 
 export const dreamreaderClient = {
@@ -279,7 +313,7 @@ export const dreamreaderClient = {
     writeFallbackState(state)
   },
 
-  async exportNotes(bookId: string, format: "markdown" | "json"): Promise<string> {
+  async exportNotes(bookId: string, format: "markdown" | "json"): Promise<ExportNotesResult> {
     const bridgeExport = window.dreamreader?.reader?.exportNotes
 
     if (bridgeExport) {
@@ -289,7 +323,12 @@ export const dreamreaderClient = {
     const state = readFallbackState()
     const book = state.books.find((item) => item.id === bookId)
     const annotations = state.annotations.filter((annotation) => annotation.bookId === bookId)
-    return exportAnnotations(book, annotations, format)
+    const content = exportAnnotations(book, annotations, format)
+    const extension = format === "json" ? "json" : "md"
+    const suffix = format === "json" ? "annotations" : "notas"
+    const fileName = `${(book ? `${book.title}-${suffix}` : `dreamreader-${suffix}`).normalize("NFD").toLowerCase().replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "dreamreader-notas"}.${extension}`
+    downloadTextFile(fileName, content, format === "json" ? "application/json" : "text/markdown")
+    return { exported: true, filePath: fileName }
   },
 
   async getSettings(): Promise<AppSettings> {
@@ -480,6 +519,45 @@ export const dreamreaderClient = {
     }
 
     return null
+  },
+
+  async getAudiobookBuildJob(bookId: string): Promise<AudiobookBuildJob | null> {
+    const bridgeGet = window.dreamreader?.audiobook?.getBuildJob
+
+    if (bridgeGet) {
+      return toAudiobookBuildJob(await bridgeGet(bookId))
+    }
+
+    return null
+  },
+
+  async saveAudiobook(bookId: string): Promise<{ saved: boolean; filePath?: string }> {
+    const bridgeSave = window.dreamreader?.audiobook?.save
+
+    if (bridgeSave) {
+      const result = (await bridgeSave(bookId)) as Record<string, unknown>
+      return {
+        saved: Boolean(result.saved),
+        filePath: optionalString(result.filePath)
+      }
+    }
+
+    throw Object.assign(new Error("Audiobook export save requires the Electron bridge"), {
+      code: "audiobook_save_requires_app_bridge"
+    })
+  },
+
+  async revealAudiobook(bookId: string): Promise<void> {
+    const bridgeReveal = window.dreamreader?.audiobook?.reveal
+
+    if (bridgeReveal) {
+      await bridgeReveal(bookId)
+      return
+    }
+
+    throw Object.assign(new Error("Audiobook export reveal requires the Electron bridge"), {
+      code: "audiobook_reveal_requires_app_bridge"
+    })
   },
 
   async listModelDiagnostics(): Promise<RuntimeDiagnostic[]> {
@@ -847,6 +925,7 @@ function toAudiobookExport(input: unknown): AudiobookExport | null {
     bookId: String(item.bookId ?? ""),
     status: toAudiobookStatus(item.status),
     autoBuildEnabled: Boolean(item.autoBuildEnabled),
+    assetId: optionalString(item.assetId),
     draftAssetId: optionalString(item.draftAssetId),
     manifest: manifest
       ? {
@@ -878,6 +957,28 @@ function toAudiobookExport(input: unknown): AudiobookExport | null {
   }
 }
 
+function toAudiobookBuildJob(input: unknown): AudiobookBuildJob | null {
+  if (!input) {
+    return null
+  }
+  const item = input as Record<string, unknown>
+  return {
+    id: String(item.id ?? ""),
+    bookId: String(item.bookId ?? ""),
+    audiobookExportId: String(item.audiobookExportId ?? ""),
+    status: toAudiobookBuildStatus(item.status),
+    progress: clampProgress(item.progress),
+    reason: String(item.reason ?? ""),
+    resultAssetId: optionalString(item.resultAssetId),
+    errorCode: optionalString(item.errorCode),
+    errorMessage: optionalString(item.errorMessage),
+    createdAt: String(item.createdAt ?? new Date().toISOString()),
+    updatedAt: String(item.updatedAt ?? new Date().toISOString()),
+    startedAt: optionalString(item.startedAt),
+    finishedAt: optionalString(item.finishedAt)
+  }
+}
+
 function toLibraryAudioStatus(input: unknown): LibraryAudioStatus {
   const item = (input ?? {}) as Record<string, unknown>
   return {
@@ -893,6 +994,16 @@ function toLibraryAudioStatus(input: unknown): LibraryAudioStatus {
     hasActiveJob: Boolean(item.hasActiveJob),
     updatedAt: String(item.updatedAt ?? new Date().toISOString())
   }
+}
+
+function toAudiobookBuildStatus(status: unknown): AudiobookBuildJob["status"] {
+  return status === "building" ||
+    status === "validating" ||
+    status === "completed" ||
+    status === "failed" ||
+    status === "cancelled"
+    ? status
+    : "queued"
 }
 
 function toRuntimeDiagnostic(input: unknown): RuntimeDiagnostic {

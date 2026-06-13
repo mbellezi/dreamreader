@@ -3,6 +3,7 @@ import {
   AnnotationSchema,
   AppSettingsSchema,
   ExportAnnotationsInputSchema,
+  ExportAnnotationsResultSchema,
   ImportBooksInputSchema,
   NarrationPlanSchema,
   SaveReadingPositionInputSchema,
@@ -156,6 +157,7 @@ describe("shared contracts", () => {
     ).toBe(true);
 
     expect(ExportAnnotationsInputSchema.parse({}).format).toBe("markdown");
+    expect(ExportAnnotationsResultSchema.parse({ exported: true, filePath: "/tmp/notas.md" }).exported).toBe(true);
   });
 
   it("validates adapter capabilities", () => {

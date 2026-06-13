@@ -39,13 +39,13 @@ As fases 0, 1, 2 e 3 estao implementadas. O produto atual e um MVP leitor deskto
 - Exportacao de anotacoes em Markdown/JSON no main process; a UI atual expoe Markdown.
 - Configuracoes iniciais de idioma, aparencia e preferencias do leitor.
 - Fallback renderer com dados de exemplo quando o app roda sem bridge Electron.
-- Fila TTS persistente por capitulo, segmentacao/normalizacao PT-BR basica, adapter local WAV, cache de audio, player por capitulo e manifesto parcial de audiobook.
+- Fila TTS persistente por capitulo, segmentacao/normalizacao PT-BR basica, adapter local WAV, cache de audio, player por capitulo e export M4B real a partir dos capitulos prontos.
 - Narracao expressiva opcional com analisador local estruturado, cache de prosodia por segmento, fallback neutro validado por Zod e comparacao entre audio neutro e expressivo na UI.
 
 Ainda planejado:
 
 - Busca no texto completo, filtros avancados, tags/colecoes completas e monitoramento de pastas.
-- Runtime GGUF/MLX real para prosodia, TTS neural local, adapters Qwen/F5, voice cloning persistente e encoder M4B real.
+- Runtime GGUF/MLX real para prosodia, TTS neural local, adapters Qwen/F5, voice cloning persistente e empacotamento M4B avancado com capa/metadados finais.
 
 ## Nao-objetivos iniciais
 

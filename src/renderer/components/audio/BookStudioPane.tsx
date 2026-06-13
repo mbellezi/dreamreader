@@ -1,4 +1,4 @@
-import { ArrowLeft, RefreshCw, Wand2 } from "lucide-react"
+import { ArrowLeft, RefreshCw, Save, Wand2 } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { ChapterDetail } from "@renderer/components/audio/ChapterDetail"
 import { ChapterList } from "@renderer/components/audio/ChapterList"
@@ -8,6 +8,7 @@ import { useGenerationConfig } from "@renderer/app/useGenerationConfig"
 import type { TranslationFn } from "@renderer/app/types"
 import type {
   AudioSettings,
+  AudiobookBuildJob,
   AudiobookExport,
   BookDetails,
   RuntimeModel,
@@ -44,6 +45,7 @@ type GenerateChaptersInput = {
 
 export function BookStudioPane({
   audiobook,
+  audiobookBuildJob,
   audioSettings,
   book,
   jobs,
@@ -60,12 +62,14 @@ export function BookStudioPane({
   onListSegments,
   onPauseJob,
   onRebuildAudiobook,
+  onSaveAudiobook,
   onResumeJob,
   onRetryJob,
   onToggleAutoBuild,
   onUpdateAudioSettings
 }: {
   audiobook: AudiobookExport | null
+  audiobookBuildJob: AudiobookBuildJob | null
   audioSettings: AudioSettings
   book: BookDetails | null
   jobs: TtsJob[]
@@ -82,6 +86,7 @@ export function BookStudioPane({
   onListSegments: (jobId: string) => Promise<TtsSegment[]>
   onPauseJob: (jobId: string) => Promise<void> | void
   onRebuildAudiobook: () => Promise<void> | void
+  onSaveAudiobook: () => Promise<void> | void
   onResumeJob: (jobId: string) => Promise<void> | void
   onRetryJob: (jobId: string) => Promise<void> | void
   onToggleAutoBuild: (enabled: boolean) => Promise<void> | void
@@ -114,6 +119,12 @@ export function BookStudioPane({
     () => chapters.find((chapter) => chapter.id === activeChapterId) ?? null,
     [activeChapterId, chapters]
   )
+  const activeBuildJob = audiobookBuildJob && ["queued", "building", "validating"].includes(audiobookBuildJob.status)
+    ? audiobookBuildJob
+    : null
+  const activeAudioJobs = jobs.some((job) => !["completed", "failed", "cancelled", "paused"].includes(job.status))
+  const waitingForAudioBeforeM4b = Boolean(audiobook?.autoBuildEnabled && audiobook.stale && activeAudioJobs && !activeBuildJob)
+  const buildProgress = Math.round((activeBuildJob?.progress ?? 0) * 100)
 
   if (!book) {
     return (
@@ -221,13 +232,43 @@ export function BookStudioPane({
                 onChange={(event) => onToggleAutoBuild(event.target.checked)}
               />
             </label>
-            <button className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border bg-card px-3 text-sm disabled:opacity-50" disabled={!audiobook?.chaptersReady} onClick={onRebuildAudiobook}>
-              <RefreshCw className="h-4 w-4" aria-hidden="true" />
-              {t("audio.rebuild")}
-            </button>
-            <p className="rounded-md border bg-card p-3 text-xs text-muted-foreground">
-              {audiobook?.draftAssetId ? t("audio.partialReady") : t("audio.partialPending")}
-            </p>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <button
+                className="inline-flex h-10 min-w-0 items-center justify-center gap-2 rounded-md border bg-card px-3 text-sm disabled:opacity-50"
+                disabled={loading || Boolean(activeBuildJob) || !audiobook?.chaptersReady}
+                onClick={onRebuildAudiobook}
+              >
+                <RefreshCw className={`h-4 w-4 shrink-0 ${activeBuildJob ? "animate-spin" : ""}`} aria-hidden="true" />
+                <span className="truncate">{activeBuildJob ? t("audio.m4bBuilding") : t("audio.rebuild")}</span>
+              </button>
+              <button
+                className="inline-flex h-10 min-w-0 items-center justify-center gap-2 rounded-md border bg-card px-3 text-sm disabled:opacity-50"
+                disabled={loading || Boolean(activeBuildJob) || !(audiobook?.assetId ?? audiobook?.draftAssetId)}
+                onClick={onSaveAudiobook}
+              >
+                <Save className="h-4 w-4 shrink-0" aria-hidden="true" />
+                <span className="truncate">{t("audio.saveExport")}</span>
+              </button>
+            </div>
+            <div className="rounded-md border bg-card p-3 text-xs text-muted-foreground">
+              <p>
+                {activeBuildJob
+                  ? t("audio.m4bBuildProgress", {
+                      progress: buildProgress,
+                      status: t(`audio.m4bBuildStatus.${activeBuildJob.status}`)
+                    })
+                  : waitingForAudioBeforeM4b
+                    ? t("audio.m4bWaitingForAudio")
+                    : audiobook?.draftAssetId
+                      ? t("audio.partialReady")
+                      : t("audio.partialPending")}
+              </p>
+              {activeBuildJob ? (
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
+                  <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${buildProgress}%` }} />
+                </div>
+              ) : null}
+            </div>
           </section>
 
           <JobQueue
