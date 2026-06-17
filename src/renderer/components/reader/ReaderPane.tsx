@@ -8,7 +8,8 @@ import {
   MessageSquareText,
   Minimize2,
   Trash2,
-  Undo2
+  Undo2,
+  X
 } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactElement } from "react"
 import type { TranslationFn } from "@renderer/app/types"
@@ -59,11 +60,19 @@ type AnnotationMenuState = {
   y: number
 }
 
+type FootnotePopupState = {
+  marker: string
+  note: string
+  x: number
+  y: number
+}
+
 type PageEdgeHint = "previous" | "next"
 
 type ReaderDisplayBlock =
   | {
       blockIndex: number
+      footnotes?: ReaderFootnoteReference[]
       paragraphIndex: number
       text: string
       type: "paragraph"
@@ -74,6 +83,13 @@ type ReaderDisplayBlock =
       src: string
       type: "image"
     }
+
+type ReaderFootnoteReference = {
+  marker: string
+  note: string
+  offset: number
+  target: string
+}
 
 type CreateAnnotationDraft = {
   anchorParagraphIndex?: number
@@ -148,6 +164,7 @@ export function ReaderPane({
   const columnAnchorRef = useRef<ColumnAnchor | undefined>(undefined)
   const savePositionTimerRef = useRef<number | null>(null)
   const [annotationMenu, setAnnotationMenu] = useState<AnnotationMenuState | null>(null)
+  const [footnotePopup, setFootnotePopup] = useState<FootnotePopupState | null>(null)
   const [pageEdgeHint, setPageEdgeHint] = useState<PageEdgeHint | null>(null)
   const [pageCount, setPageCount] = useState(1)
   const [pageIndex, setPageIndex] = useState(0)
@@ -190,6 +207,21 @@ export function ReaderPane({
   // When the page has wide enough side gutters, those whole areas become the
   // page-turn buttons; otherwise we fall back to clicking the text's outer thirds.
   const hasSideMargins = isPaginated && pageLayout.sideMargin >= MIN_SIDE_MARGIN_FOR_BUTTON
+
+  const openFootnotePopup = useCallback((footnote: ReaderFootnoteReference, event: MouseEvent<HTMLElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    setFootnotePopup({
+      marker: footnote.marker,
+      note: footnote.note,
+      x: clamp(event.clientX, 24, Math.max(24, window.innerWidth - 24)),
+      y: clamp(event.clientY + 14, 12, Math.max(12, window.innerHeight - 180))
+    })
+  }, [])
+
+  useEffect(() => {
+    setFootnotePopup(null)
+  }, [chapter?.id])
 
   // Geometry of one page for the current viewport + preferences. Pure: depends
   // only on the article box and reader settings, never on prior navigation.
@@ -745,7 +777,17 @@ export function ReaderPane({
                           data-readable-block
                           style={{ marginTop: block.blockIndex === 0 ? 0 : paginatedParagraphSpacing }}
                         >
-                          {renderParagraphWithAnnotations(block.text, block.paragraphIndex, chapterAnnotations, annotationPlacements, activeAnnotationId, openAnnotationMenu)}
+                          {renderParagraphWithAnnotations(
+                            block.text,
+                            block.paragraphIndex,
+                            chapterAnnotations,
+                            annotationPlacements,
+                            activeAnnotationId,
+                            openAnnotationMenu,
+                            block.footnotes ?? [],
+                            t,
+                            openFootnotePopup
+                          )}
                         </p>
                       ) : (
                         <ReaderImageBlock
@@ -796,7 +838,17 @@ export function ReaderPane({
                           data-readable-block
                           style={{ marginTop: block.blockIndex === 0 ? 0 : `${preferences.paragraphSpacing}em` }}
                         >
-                          {renderParagraphWithAnnotations(block.text, block.paragraphIndex, chapterAnnotations, annotationPlacements, activeAnnotationId, openAnnotationMenu)}
+                          {renderParagraphWithAnnotations(
+                            block.text,
+                            block.paragraphIndex,
+                            chapterAnnotations,
+                            annotationPlacements,
+                            activeAnnotationId,
+                            openAnnotationMenu,
+                            block.footnotes ?? [],
+                            t,
+                            openFootnotePopup
+                          )}
                         </p>
                       ) : (
                         <ReaderImageBlock
@@ -943,6 +995,13 @@ export function ReaderPane({
               }}
             />
           ) : null}
+          {footnotePopup ? (
+            <FootnotePopup
+              footnote={footnotePopup}
+              t={t}
+              onClose={() => setFootnotePopup(null)}
+            />
+          ) : null}
         </div>
       ) : (
         <div className="flex h-full min-h-0 items-center justify-center p-6">
@@ -1001,6 +1060,37 @@ function ReaderImageBlock({
         style={{ maxHeight }}
       />
     </figure>
+  )
+}
+
+function FootnotePopup({
+  footnote,
+  t,
+  onClose
+}: {
+  footnote: FootnotePopupState
+  t: TranslationFn
+  onClose: () => void
+}) {
+  return (
+    <div
+      className="reader-footnote-popup fixed z-50 w-[min(88vw,390px)] -translate-x-1/2 rounded-md border bg-card p-3 text-card-foreground shadow-xl"
+      style={{ left: footnote.x, top: footnote.y }}
+      onMouseDown={(event) => event.preventDefault()}
+    >
+      <div className="flex items-start gap-3">
+        <sup className="mt-0.5 shrink-0 text-xs font-semibold text-primary">{footnote.marker}</sup>
+        <p className="max-h-52 min-w-0 flex-1 overflow-auto text-sm leading-relaxed">{footnote.note}</p>
+        <button
+          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-foreground"
+          title={t("reader.closeFootnote")}
+          aria-label={t("reader.closeFootnote")}
+          onClick={onClose}
+        >
+          <X className="h-4 w-4" aria-hidden="true" />
+        </button>
+      </div>
+    </div>
   )
 }
 
@@ -1128,47 +1218,108 @@ function renderParagraphWithAnnotations(
   annotations: Annotation[],
   placements: Map<string, AnnotationPlacement>,
   activeAnnotationId: string | null,
-  onOpenAnnotationMenu: (annotation: Annotation, x: number, y: number) => void
+  onOpenAnnotationMenu: (annotation: Annotation, x: number, y: number) => void,
+  footnotes: ReaderFootnoteReference[],
+  t: TranslationFn,
+  onOpenFootnote: (footnote: ReaderFootnoteReference, event: MouseEvent<HTMLElement>) => void
 ) {
   const ranges = findAnnotationRanges(paragraphIndex, annotations, placements)
+  const sortedFootnotes = footnotes
+    .filter((footnote) => Number.isFinite(footnote.offset) && footnote.offset >= 0 && footnote.offset <= paragraph.length)
+    .sort((left, right) => left.offset - right.offset)
 
-  if (!ranges.length) {
+  if (!ranges.length && !sortedFootnotes.length) {
     return paragraph
   }
 
   const nodes: ReactElement[] = []
   let cursor = 0
+  let footnoteIndex = 0
+
+  const pushFootnotesAt = (offset: number) => {
+    while (footnoteIndex < sortedFootnotes.length && sortedFootnotes[footnoteIndex].offset === offset) {
+      const footnote = sortedFootnotes[footnoteIndex]
+      nodes.push(
+        <sup key={`footnote-${footnote.target}-${footnoteIndex}`} className="reader-footnote-sup">
+          <button
+            type="button"
+            className="reader-footnote-ref"
+            data-marker={footnote.marker}
+            title={t("reader.footnoteReference", { marker: footnote.marker })}
+            aria-label={t("reader.footnoteReference", { marker: footnote.marker })}
+            onClick={(event) => onOpenFootnote(footnote, event)}
+          />
+        </sup>
+      )
+      footnoteIndex += 1
+    }
+  }
+
+  const pushText = (start: number, end: number, annotation?: Annotation) => {
+    let segmentStart = start
+    pushFootnotesAt(segmentStart)
+    while (footnoteIndex < sortedFootnotes.length && sortedFootnotes[footnoteIndex].offset < end) {
+      const footnoteOffset = sortedFootnotes[footnoteIndex].offset
+      pushTextNode(paragraph, segmentStart, footnoteOffset, annotation, activeAnnotationId, onOpenAnnotationMenu, nodes)
+      pushFootnotesAt(footnoteOffset)
+      segmentStart = footnoteOffset
+    }
+    pushTextNode(paragraph, segmentStart, end, annotation, activeAnnotationId, onOpenAnnotationMenu, nodes)
+  }
 
   ranges.forEach(({ annotation, end, start }) => {
     if (start > cursor) {
-      nodes.push(<span key={`text-${cursor}`}>{paragraph.slice(cursor, start)}</span>)
+      pushText(cursor, start)
     }
 
-    nodes.push(
-      <mark
-        key={annotation.id}
-        className={cn(
-          "box-decoration-clone cursor-pointer rounded-[2px] px-[0.08em] decoration-transparent transition",
-          inlineHighlightClasses[annotation.color],
-          annotation.id === activeAnnotationId && "brightness-95"
-        )}
-        data-annotation-id={annotation.id}
-        title={annotation.note}
-        onClick={(event) => {
-          event.preventDefault()
-          event.stopPropagation()
-          onOpenAnnotationMenu(annotation, event.clientX, Math.max(event.clientY - 64, 12))
-        }}
-      >
-        {paragraph.slice(start, end)}
-      </mark>
-    )
+    pushText(start, end, annotation)
     cursor = end
   })
 
   if (cursor < paragraph.length) {
-    nodes.push(<span key={`text-${cursor}`}>{paragraph.slice(cursor)}</span>)
+    pushText(cursor, paragraph.length)
   }
+  pushFootnotesAt(paragraph.length)
 
   return nodes
+}
+
+function pushTextNode(
+  paragraph: string,
+  start: number,
+  end: number,
+  annotation: Annotation | undefined,
+  activeAnnotationId: string | null,
+  onOpenAnnotationMenu: (annotation: Annotation, x: number, y: number) => void,
+  nodes: ReactElement[]
+) {
+  if (end <= start) {
+    return
+  }
+
+  const text = paragraph.slice(start, end)
+  if (!annotation) {
+    nodes.push(<span key={`text-${start}-${end}`}>{text}</span>)
+    return
+  }
+
+  nodes.push(
+    <mark
+      key={`${annotation.id}-${start}-${end}`}
+      className={cn(
+        "box-decoration-clone cursor-pointer rounded-[2px] px-[0.08em] decoration-transparent transition",
+        inlineHighlightClasses[annotation.color],
+        annotation.id === activeAnnotationId && "brightness-95"
+      )}
+      data-annotation-id={annotation.id}
+      title={annotation.note}
+      onClick={(event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        onOpenAnnotationMenu(annotation, event.clientX, Math.max(event.clientY - 64, 12))
+      }}
+    >
+      {text}
+    </mark>
+  )
 }

@@ -22,6 +22,7 @@ import {
 } from "../../src/main/db/schema"
 import { AudiobookService } from "../../src/main/services/audiobook-service"
 import { DEFAULT_TTS_ENGINE_ID, DEFAULT_VOICE_PROFILE_ID, TtsService } from "../../src/main/services/tts-service"
+import { AUDIOBOOK_INTRO_CHAPTER_HREF } from "../../src/shared/audiobook-intro"
 
 const tempDirs: string[] = []
 
@@ -67,11 +68,13 @@ describe("TtsService", () => {
 
       const partial = await audiobook.getExport("book-audio")
       expect(partial.chaptersReady).toBe(1)
+      expect(partial.chaptersTotal).toBe(2)
       expect(partial.manifest?.chapters[0].audioAssetId).toBe(chapterAsset?.id)
+      expect(partial.manifest?.chapters[0].chapterIndex).toBe(1)
       expect(partial.stale).toBe(true)
 
       const rebuilt = await audiobook.rebuild("book-audio")
-      expect(rebuilt.status).toBe("complete")
+      expect(rebuilt.status).toBe("partial")
       expect(rebuilt.draftAssetId).toBeTruthy()
 
       const cached = await tts.enqueueChapter({
@@ -806,11 +809,19 @@ setInterval(() => {}, 1000)
         quality: "draft",
         useExpressiveNarration: false
       })
-      expect(jobs).toHaveLength(1)
+      expect(jobs).toHaveLength(2)
+      expect(jobs.map((job) => job.chapterHref)).toEqual([AUDIOBOOK_INTRO_CHAPTER_HREF, "chapter-1"])
 
       await tts.drainQueue()
       const exportState = await audiobook.getExport("book-audio")
-      expect(exportState.chaptersReady).toBe(1)
+      expect(exportState.chaptersReady).toBe(2)
+      expect(exportState.chaptersTotal).toBe(2)
+      expect(exportState.manifest?.chapters.map((chapter) => chapter.chapterHref)).toEqual([
+        AUDIOBOOK_INTRO_CHAPTER_HREF,
+        "chapter-1"
+      ])
+      expect(exportState.manifest?.chapters.map((chapter) => chapter.chapterIndex)).toEqual([0, 1])
+      expect(exportState.manifest?.chapters[0].title).toBe("Livro com Audio - DreamReader - 1968")
     } finally {
       await client.close()
     }
@@ -864,6 +875,7 @@ async function seedBook(db: AppDatabase, paths: { booksDir: string }) {
     title: "Livro com Audio",
     authors: ["DreamReader"],
     language: "pt-BR",
+    publishedAt: "1968-01-01",
     libraryPath,
     manifestJson: {
       format: "txt",

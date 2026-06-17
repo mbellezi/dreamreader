@@ -34,6 +34,7 @@ export type BookSummary = {
   progress: number
   tags: string[]
   collection?: string
+  publishedAt?: string
   updatedAt: string
   coverColor: string
   coverImageUrl?: string
@@ -42,6 +43,12 @@ export type BookSummary = {
 export type Chapter = {
   blocks?: Array<
     | {
+        footnotes?: Array<{
+          marker: string
+          note: string
+          offset: number
+          target: string
+        }>
         type: "paragraph"
         text: string
       }

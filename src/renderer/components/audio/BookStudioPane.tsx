@@ -1,4 +1,4 @@
-import { ArrowLeft, RefreshCw, Save, Wand2 } from "lucide-react"
+import { ArrowLeft, RefreshCw, Save, Square, Trash2, Wand2 } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { ChapterDetail } from "@renderer/components/audio/ChapterDetail"
 import { ChapterList } from "@renderer/components/audio/ChapterList"
@@ -6,6 +6,8 @@ import { GenerationControls } from "@renderer/components/audio/GenerationControl
 import { JobQueue } from "@renderer/components/audio/JobQueue"
 import { useGenerationConfig } from "@renderer/app/useGenerationConfig"
 import type { TranslationFn } from "@renderer/app/types"
+import { audioChaptersForBook } from "@renderer/lib/audioChapters"
+import { isTerminalJobStatus } from "@renderer/lib/jobQueue"
 import type {
   AudioSettings,
   AudiobookBuildJob,
@@ -54,6 +56,8 @@ export function BookStudioPane({
   t,
   voices,
   onBack,
+  onCancelQueuedJobs,
+  onClearAllChapterAudio,
   onCancelJob,
   onClearChapterAudio,
   onClearTerminalJobs,
@@ -78,6 +82,8 @@ export function BookStudioPane({
   t: TranslationFn
   voices: VoiceProfile[]
   onBack: () => void
+  onCancelQueuedJobs: (jobIds: string[]) => Promise<void> | void
+  onClearAllChapterAudio: (chapterHrefs: string[]) => Promise<void> | void
   onCancelJob: (jobId: string) => Promise<void> | void
   onClearChapterAudio: (chapterHref: string) => Promise<void> | void
   onClearTerminalJobs: () => Promise<void> | void
@@ -96,7 +102,7 @@ export function BookStudioPane({
   const [selectedChapters, setSelectedChapters] = useState<Set<string>>(new Set())
   const [activeChapterId, setActiveChapterId] = useState<string | null>(null)
 
-  const chapters = book?.chapters ?? []
+  const chapters = useMemo(() => audioChaptersForBook(book), [book])
 
   useEffect(() => {
     setActiveChapterId((current) => {
@@ -123,13 +129,21 @@ export function BookStudioPane({
     ? audiobookBuildJob
     : null
   const activeAudioJobs = jobs.some((job) => !["completed", "failed", "cancelled", "paused"].includes(job.status))
+  const cancellableJobs = jobs.filter((job) => !isTerminalJobStatus(job.status))
+  const hasBlockingJobs = jobs.some((job) => !isTerminalJobStatus(job.status))
+  const hasAnyChapterAudio = chapters.some((chapter) => {
+    return (
+      jobs.some((job) => job.chapterHref === chapter.id) ||
+      Boolean(audiobook?.manifest?.chapters.some((item) => item.chapterHref === chapter.id))
+    )
+  })
   const waitingForAudioBeforeM4b = Boolean(audiobook?.autoBuildEnabled && audiobook.stale && activeAudioJobs && !activeBuildJob)
   const buildProgress = Math.round((activeBuildJob?.progress ?? 0) * 100)
 
   if (!book) {
     return (
       <div className="flex h-full min-h-0 flex-col">
-        <StudioHeader audiobook={audiobook} book={book} t={t} onBack={onBack} />
+        <StudioHeader audiobook={audiobook} book={book} chaptersTotal={chapters.length} t={t} onBack={onBack} />
         <div className="min-h-0 flex-1 overflow-auto px-6 py-4">
           <p className="rounded-md border bg-card p-3 text-sm text-muted-foreground">{t("audio.noChapter")}</p>
         </div>
@@ -147,11 +161,11 @@ export function BookStudioPane({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <StudioHeader audiobook={audiobook} book={book} t={t} onBack={onBack} />
+      <StudioHeader audiobook={audiobook} book={book} chaptersTotal={chapters.length} t={t} onBack={onBack} />
 
       <div className="min-h-0 flex-1 overflow-auto px-6 py-4">
         <div className="mx-auto w-full max-w-6xl space-y-4">
-          <section className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <section className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
             <button
               className="inline-flex h-10 min-w-0 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground disabled:opacity-50"
               disabled={loading || !config.canGenerate}
@@ -168,13 +182,29 @@ export function BookStudioPane({
               <Wand2 className="h-4 w-4 shrink-0" aria-hidden="true" />
               <span className="truncate">{t("audio.batch.generateSelected", { count: selectedChapters.size })}</span>
             </button>
+            <button
+              className="inline-flex h-10 min-w-0 items-center justify-center gap-2 rounded-md border bg-card px-3 text-sm disabled:opacity-50"
+              disabled={!cancellableJobs.length || loading}
+              onClick={() => void onCancelQueuedJobs(cancellableJobs.map((job) => job.id))}
+            >
+              <Square className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span className="truncate">{t("audio.batch.cancelQueue")}</span>
+            </button>
+            <button
+              className="inline-flex h-10 min-w-0 items-center justify-center gap-2 rounded-md border bg-card px-3 text-sm text-destructive disabled:opacity-50"
+              disabled={!hasAnyChapterAudio || hasBlockingJobs || loading}
+              onClick={() => void onClearAllChapterAudio(chapters.map((chapter) => chapter.id))}
+            >
+              <Trash2 className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span className="truncate">{t("audio.batch.clearAllAudio")}</span>
+            </button>
           </section>
 
           <GenerationControls config={config} t={t} />
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
             <ChapterList
-              book={book}
+              chapters={chapters}
               audiobook={audiobook}
               jobs={jobs}
               loading={loading}
@@ -197,7 +227,7 @@ export function BookStudioPane({
                   return next
                 })
               }}
-              onSelectAll={() => setSelectedChapters(new Set(book.chapters.map((chapter) => chapter.id)))}
+              onSelectAll={() => setSelectedChapters(new Set(chapters.map((chapter) => chapter.id)))}
               onClearSelection={() => setSelectedChapters(new Set())}
               onGenerateChapter={handleGenerateChapter}
               onClearChapter={(chapterId) => onClearChapterAudio(chapterId)}
@@ -275,7 +305,7 @@ export function BookStudioPane({
             jobs={jobs}
             loading={loading}
             t={t}
-            describeJob={(job) => ({ title: chapterTitleFor(book, job.chapterHref) })}
+            describeJob={(job) => ({ title: chapterTitleFor(chapters, job.chapterHref) })}
             onCancelJob={onCancelJob}
             onPauseJob={onPauseJob}
             onResumeJob={onResumeJob}
@@ -291,16 +321,18 @@ export function BookStudioPane({
 function StudioHeader({
   audiobook,
   book,
+  chaptersTotal,
   t,
   onBack
 }: {
   audiobook: AudiobookExport | null
   book: BookDetails | null
+  chaptersTotal: number
   t: TranslationFn
   onBack: () => void
 }) {
   const ready = audiobook?.chaptersReady ?? 0
-  const total = audiobook?.chaptersTotal || (book?.chapters.length ?? 0)
+  const total = audiobook?.chaptersTotal || chaptersTotal
   const m4bStatus = audiobook?.status ?? "none"
   return (
     <header className="flex shrink-0 flex-col gap-3 border-b bg-background/95 px-6 py-4">
@@ -329,6 +361,6 @@ function StudioHeader({
   )
 }
 
-function chapterTitleFor(book: BookDetails, chapterHref: string): string {
-  return book.chapters.find((chapter) => chapter.id === chapterHref)?.title ?? chapterHref
+function chapterTitleFor(chapters: Array<{ id: string; title: string }>, chapterHref: string): string {
+  return chapters.find((chapter) => chapter.id === chapterHref)?.title ?? chapterHref
 }

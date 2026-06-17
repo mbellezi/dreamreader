@@ -15,6 +15,11 @@ import {
   type TtsModelSettings,
   type TtsSegmentSummary
 } from "@shared/contracts/ai"
+import {
+  AUDIOBOOK_INTRO_CHAPTER_HREF,
+  buildAudiobookIntroHtml,
+  buildAudiobookIntroTitle
+} from "@shared/audiobook-intro"
 import type { AppDatabase } from "@main/db/client"
 import {
   assets,
@@ -1271,21 +1276,53 @@ export class TtsService {
       chapters?: Array<{ href: string; id?: string; title?: string; content?: string }>
     }
     const chapters = manifest.chapters ?? []
-    return chapters
+    const contentChapters = chapters
       .map((chapter, index) => ({
         href: chapter.href ?? chapter.id ?? `chapter-${index + 1}`,
-        index,
+        index: index + 1,
         title: chapter.title ?? `Capitulo ${index + 1}`,
         hasContent: Boolean(chapter.content)
       }))
       .filter((chapter) => chapter.hasContent)
       .map(({ href, index, title }) => ({ href, index, title }))
+    return [
+      {
+        href: AUDIOBOOK_INTRO_CHAPTER_HREF,
+        index: 0,
+        title: buildAudiobookIntroTitle({
+          authors: book.authors,
+          publishedAt: book.publishedAt,
+          title: book.title
+        })
+      },
+      ...contentChapters
+    ]
   }
 
   private async getChapterSource(bookId: string, chapterHref: string): Promise<ChapterSource> {
     const book = await this.db.query.books.findFirst({ where: eq(books.id, bookId) })
     if (!book) {
       throw new AppError("book_not_found", "Book not found")
+    }
+    if (chapterHref === AUDIOBOOK_INTRO_CHAPTER_HREF) {
+      const title = buildAudiobookIntroTitle({
+        authors: book.authors,
+        publishedAt: book.publishedAt,
+        title: book.title
+      })
+      const html = buildAudiobookIntroHtml({
+        authors: book.authors,
+        publishedAt: book.publishedAt,
+        title: book.title
+      })
+      return {
+        chapterHref: AUDIOBOOK_INTRO_CHAPTER_HREF,
+        chapterIndex: 0,
+        contentHash: hashBuffer(`${book.contentHash}:${AUDIOBOOK_INTRO_CHAPTER_HREF}:${title}`),
+        html,
+        language: book.language,
+        title
+      }
     }
     const manifest = book.manifestJson as {
       chapters?: Array<{ href: string; id?: string; title?: string; content?: string }>
@@ -1296,10 +1333,11 @@ export class TtsService {
     if (!chapter?.content) {
       throw new AppError("resource_not_found", "Book chapter not found")
     }
-    const chapterHash = hashBuffer(`${book.contentHash}:${chapter.href}:${chapter.content}`)
+    const resolvedHref = chapter.href ?? chapter.id ?? chapterHref
+    const chapterHash = hashBuffer(`${book.contentHash}:${resolvedHref}:${chapter.content}`)
     return {
-      chapterHref: chapter.href,
-      chapterIndex,
+      chapterHref: resolvedHref,
+      chapterIndex: chapterIndex + 1,
       contentHash: chapterHash,
       html: chapter.content,
       language: book.language,

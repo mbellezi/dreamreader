@@ -113,7 +113,7 @@ export function buildNarrationPlan(input: ChapterNarrationInput): NarrationPlan 
 export function htmlToReadableText(html: string): string {
   return sanitizeReadableText(
     decodeHtmlEntities(
-      html
+      removeFootnotesFromHtml(html)
         .replace(/<head[\s\S]*?<\/head>/gi, "")
         .replace(/<script[\s\S]*?<\/script>/gi, "")
         .replace(/<style[\s\S]*?<\/style>/gi, "")
@@ -129,6 +129,12 @@ export function htmlToReadableText(html: string): string {
     .replace(/\n{3,}/g, "\n\n")
     .trim()
   )
+}
+
+function removeFootnotesFromHtml(html: string): string {
+  return html
+    .replace(/<p\b[^>]*\bclass\s*=\s*(?:"[^"]*\bfootnote[\w-]*\b[^"]*"|'[^']*\bfootnote[\w-]*\b[^']*')[^>]*>[\s\S]*?<\/p>/gi, "")
+    .replace(/<sup\b[^>]*>\s*<a\b[^>]*\bhref\s*=\s*(?:"#[^"]*fn[-_]\d+[^"]*"|'#[^']*fn[-_]\d+[^']*')[^>]*>[\s\S]*?<\/a>\s*<\/sup>/gi, "")
 }
 
 export function limitParagraphs(text: string, limit: number): string {

@@ -5,6 +5,7 @@ import { PGlite } from "@electric-sql/pglite"
 import { drizzle } from "drizzle-orm/pglite"
 import { migrate } from "drizzle-orm/pglite/migrator"
 import { eq } from "drizzle-orm"
+import { parseFile } from "music-metadata"
 import { afterEach, describe, expect, it } from "vitest"
 import type { AppDatabase } from "../../src/main/db/client"
 import * as schema from "../../src/main/db/schema"
@@ -77,7 +78,7 @@ describe("AudiobookService.listLibraryStatus", () => {
     expect(withAudio).toMatchObject({
       title: "Livro com Áudio",
       chaptersReady: 1,
-      chaptersTotal: 2,
+      chaptersTotal: 3,
       hasChapterAudio: true,
       hasActiveJob: true
     })
@@ -88,7 +89,7 @@ describe("AudiobookService.listLibraryStatus", () => {
       title: "Livro sem Áudio",
       status: "none",
       chaptersReady: 0,
-      chaptersTotal: 3,
+      chaptersTotal: 4,
       hasChapterAudio: false,
       hasActiveJob: false
     })
@@ -101,6 +102,19 @@ describe("AudiobookService.rebuild", () => {
 
     await seedBook(db, paths, "book-with-audio", "Livro com Áudio", 1)
     expect(await audiobook.exportFileName("book-with-audio")).toBe("Livro com Áudio - DreamReader.m4b")
+    const coverPath = path.join(paths.coversDir, "cover.png")
+    await mkdir(path.dirname(coverPath), { recursive: true })
+    await writeFile(coverPath, createTinyPng())
+    await db.insert(assets).values({
+      id: "cover-1",
+      kind: "cover",
+      bookId: "book-with-audio",
+      path: coverPath,
+      mimeType: "image/png",
+      contentHash: "cover-hash",
+      sizeBytes: (await readFile(coverPath)).byteLength
+    })
+    await db.update(books).set({ coverAssetId: "cover-1" }).where(eq(books.id, "book-with-audio"))
     await db.insert(ttsEngines).values({
       id: "dreamreader-local-tts",
       displayName: "DreamReader Local TTS",
@@ -140,12 +154,12 @@ describe("AudiobookService.rebuild", () => {
 
     const rebuilt = await audiobook.rebuild("book-with-audio")
 
-    expect(rebuilt.status).toBe("complete")
-    expect(rebuilt.assetId).toBeTruthy()
-    expect(rebuilt.draftAssetId).toBe(rebuilt.assetId)
+    expect(rebuilt.status).toBe("partial")
+    expect(rebuilt.assetId).toBeUndefined()
+    expect(rebuilt.draftAssetId).toBeTruthy()
 
     const asset = await db.query.assets.findFirst({
-      where: (table, { eq }) => eq(table.id, rebuilt.assetId ?? "")
+      where: (table, { eq }) => eq(table.id, rebuilt.draftAssetId ?? "")
     })
     expect(asset).toMatchObject({
       kind: "audiobook_m4b",
@@ -155,6 +169,8 @@ describe("AudiobookService.rebuild", () => {
     await expect(access(asset?.path ?? "")).resolves.toBeUndefined()
     expect((await readFile(asset?.path ?? "")).subarray(4, 8).toString()).toBe("ftyp")
     expect((await probeAudio(asset?.path ?? "")).durationMs).toBeGreaterThan(900)
+    const metadata = await parseFile(asset?.path ?? "")
+    expect(metadata.common.picture?.[0]?.format).toBe("image/jpeg")
     await expect(access(await audiobook.getExportFilePath("book-with-audio"))).resolves.toBeUndefined()
   })
 
@@ -242,7 +258,7 @@ describe("AudiobookService.rebuild", () => {
     const rebuilt = await audiobook.rebuildAutoIfIdle("book-with-audio")
     const buildJobs = await db.query.audiobookBuildJobs.findMany()
 
-    expect(rebuilt.status).toBe("complete")
+    expect(rebuilt.status).toBe("partial")
     expect(rebuilt.draftAssetId).toBeTruthy()
     expect(buildJobs).toHaveLength(1)
     expect(buildJobs[0].status).toBe("completed")
@@ -333,4 +349,11 @@ function createSilentWav(durationMs: number, sampleRate: number): Buffer {
   buffer.write("data", 36)
   buffer.writeUInt32LE(dataSize, 40)
   return buffer
+}
+
+function createTinyPng(): Buffer {
+  return Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
+    "base64"
+  )
 }

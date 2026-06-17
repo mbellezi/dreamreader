@@ -66,6 +66,7 @@ export async function resampleAudio(srcPath: string, destPath: string, sampleRat
 
 export async function buildM4bAudiobook(input: {
   chapters: M4bChapterInput[]
+  coverPath?: string
   metadata: M4bMetadataInput
   outputPath: string
   bitrate?: string
@@ -86,11 +87,15 @@ export async function buildM4bAudiobook(input: {
   try {
     await writeFile(metadataPath, ffmetadataFor(input.metadata, input.chapters))
 
-    const metadataInputIndex = input.chapters.length
+    const metadataInputIndex = input.chapters.length + (input.coverPath ? 1 : 0)
     const filterInputs = input.chapters.map((_, index) => `[${index}:a:0]`).join("")
     const args = ["-y"]
     for (const chapter of input.chapters) {
       args.push("-i", chapter.filePath)
+    }
+    const coverInputIndex = input.coverPath ? input.chapters.length : undefined
+    if (input.coverPath) {
+      args.push("-i", input.coverPath)
     }
     args.push(
       "-i",
@@ -102,8 +107,19 @@ export async function buildM4bAudiobook(input: {
       "-map_metadata",
       String(metadataInputIndex),
       "-map_chapters",
-      String(metadataInputIndex),
-      "-vn",
+      String(metadataInputIndex)
+    )
+    if (coverInputIndex !== undefined) {
+      args.push(
+        "-map",
+        `${coverInputIndex}:v:0`,
+        "-c:v",
+        "mjpeg",
+        "-disposition:v:0",
+        "attached_pic"
+      )
+    }
+    args.push(
       "-c:a",
       "aac",
       "-b:a",

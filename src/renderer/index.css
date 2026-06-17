@@ -116,6 +116,38 @@ button:disabled {
   font-family: inherit;
 }
 
+.reader-footnote-sup {
+  line-height: 0;
+}
+
+.reader-footnote-ref {
+  align-items: center;
+  border-radius: 999px;
+  color: hsl(var(--primary));
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 0.7em;
+  font-weight: 650;
+  justify-content: center;
+  line-height: 1;
+  margin-left: 0.08em;
+  min-height: 1.6em;
+  min-width: 1.6em;
+  padding: 0 0.18em;
+  text-decoration: underline;
+  text-decoration-thickness: 0.08em;
+  text-underline-offset: 0.12em;
+  vertical-align: middle;
+}
+
+.reader-footnote-ref::before {
+  content: attr(data-marker);
+}
+
+.reader-footnote-popup {
+  border-color: hsl(var(--border));
+}
+
 .reader-light {
   --reader: 45 38% 98%;
   --reader-border: 210 18% 82%;

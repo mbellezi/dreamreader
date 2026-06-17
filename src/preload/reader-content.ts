@@ -1,5 +1,6 @@
 export type ReaderContentBlock =
   | {
+      footnotes?: ReaderFootnoteReference[]
       type: "paragraph"
       text: string
     }
@@ -8,6 +9,13 @@ export type ReaderContentBlock =
       alt?: string
       src: string
     }
+
+export type ReaderFootnoteReference = {
+  marker: string
+  note: string
+  offset: number
+  target: string
+}
 
 type ReaderContentOptions = {
   bookId?: string
@@ -52,14 +60,20 @@ const NAMED_ENTITIES: Record<string, string> = {
 export function htmlToReaderBlocks(html: string, options: ReaderContentOptions = {}): ReaderContentBlock[] {
   const blocks: ReaderContentBlock[] = []
   let currentText = ""
-  const body = stripUnsafeHtmlSections(html)
+  let currentFootnotes: ReaderFootnoteReference[] = []
+  const extractedFootnotes = extractFootnotes(stripUnsafeHtmlSections(html))
+  const body = markFootnoteReferences(extractedFootnotes.html, extractedFootnotes.notes)
   const tokens = body.match(/<[^>]+>|[^<]+/g) ?? []
 
   const flushParagraph = () => {
     const text = normalizeReaderText(currentText)
+    const footnotes = currentFootnotes
+      .filter((footnote) => footnote.offset <= text.length)
+      .map((footnote) => ({ ...footnote, offset: Math.max(0, footnote.offset) }))
     currentText = ""
+    currentFootnotes = []
     if (text) {
-      blocks.push({ type: "paragraph", text })
+      blocks.push({ type: "paragraph", text, ...(footnotes.length ? { footnotes } : {}) })
     }
   }
 
@@ -92,6 +106,20 @@ export function htmlToReaderBlocks(html: string, options: ReaderContentOptions =
       continue
     }
 
+    if (tagName === "dr-footnote") {
+      const target = attributeValue(token, "data-target")
+      const note = target ? extractedFootnotes.notes.get(target) : undefined
+      if (target && note) {
+        currentFootnotes.push({
+          marker: attributeValue(token, "data-marker") ?? target,
+          note,
+          offset: normalizeReaderText(currentText).length,
+          target
+        })
+      }
+      continue
+    }
+
     if (BLOCK_TAGS.has(tagName)) {
       flushParagraph()
     }
@@ -113,6 +141,80 @@ function stripUnsafeHtmlSections(html: string): string {
     .replace(/<head[\s\S]*?<\/head>/gi, "")
     .replace(/<script[\s\S]*?<\/script>/gi, "")
     .replace(/<style[\s\S]*?<\/style>/gi, "")
+}
+
+function extractFootnotes(html: string): { html: string; notes: Map<string, string> } {
+  const notes = new Map<string, string>()
+  let currentTarget: string | undefined
+  const cleanHtml = html.replace(/<p\b[^>]*\bclass\s*=\s*(?:"[^"]*\bfootnote[\w-]*\b[^"]*"|'[^']*\bfootnote[\w-]*\b[^']*')[^>]*>[\s\S]*?<\/p>/gi, (match) => {
+    const target = footnoteTargetFromParagraph(match)
+    const noteText = footnoteParagraphText(match)
+    if (target) {
+      currentTarget = target
+      if (noteText) {
+        notes.set(target, noteText)
+      }
+    } else if (currentTarget && noteText) {
+      const existing = notes.get(currentTarget)
+      notes.set(currentTarget, existing ? `${existing}\n\n${noteText}` : noteText)
+    }
+    return ""
+  })
+  return { html: cleanHtml, notes }
+}
+
+function footnoteTargetFromParagraph(html: string): string | undefined {
+  const match = html.match(/\bid\s*=\s*(?:"(fn[-_][^"]+)"|'(fn[-_][^']+)')/i)
+  const id = match?.[1] ?? match?.[2]
+  return id ? normalizeFootnoteTarget(id) : undefined
+}
+
+function footnoteParagraphText(html: string): string {
+  return htmlFragmentToText(
+    html.replace(/<a\b[^>]*\bid\s*=\s*(?:"fn[-_][^"]+"|'fn[-_][^']+')[^>]*>\s*<sup\b[^>]*>[\s\S]*?<\/sup>\s*<\/a>/i, "")
+  )
+}
+
+function markFootnoteReferences(html: string, notes: Map<string, string>): string {
+  if (!notes.size) {
+    return html
+  }
+  return html.replace(/<sup\b[^>]*>\s*<a\b([^>]*)>([\s\S]*?)<\/a>\s*<\/sup>/gi, (match, attributes: string, markerHtml: string) => {
+    const target = normalizeFootnoteTarget(attributeValue(`<a ${attributes}>`, "href"))
+    if (!target || !notes.has(target)) {
+      return match
+    }
+    const marker = htmlFragmentToText(markerHtml) || target
+    return `<dr-footnote data-target="${escapeHtmlAttribute(target)}" data-marker="${escapeHtmlAttribute(marker)}"></dr-footnote>`
+  })
+}
+
+function normalizeFootnoteTarget(value: string | undefined): string | undefined {
+  const clean = decodePathSafely(value?.replace(/^#/, "").trim() ?? "")
+  return clean ? clean : undefined
+}
+
+function htmlFragmentToText(html: string): string {
+  return normalizeReaderText(
+    decodeHtmlEntities(
+      html
+        .replace(/<head[\s\S]*?<\/head>/gi, "")
+        .replace(/<script[\s\S]*?<\/script>/gi, "")
+        .replace(/<style[\s\S]*?<\/style>/gi, "")
+        .replace(/<[^>]+\bepub:type\s*=\s*["']pagebreak["'][^>]*>/gi, "")
+        .replace(/<img\b[^>]*>/gi, " ")
+        .replace(/<br\s*\/?>/gi, "\n")
+        .replace(/<[^>]+>/g, "")
+    )
+  )
+}
+
+function escapeHtmlAttribute(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("\"", "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
 }
 
 function isIgnorableTag(tag: string): boolean {

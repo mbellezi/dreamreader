@@ -81,6 +81,19 @@ describe("TTS pipeline", () => {
     expect(segmentTextForTts(text)).toEqual(["THERE is a mushroom.", "I PHONED Alice."])
   })
 
+  it("removes EPUB footnote references and footnote bodies before audiobook narration", () => {
+    const text = htmlToReadableText(`
+      <article>
+        <p>Text with a note.<sup><a href="#fn-1" id="fn_1">1</a></sup> Next sentence.</p>
+        <p>Scientific notation still uses x<sup>-10</sup>.</p>
+        <p class="footnote"><a href="#fn_1" id="fn-1"><sup>1</sup></a> Footnote body.</p>
+        <p class="footnote1">Continuation paragraph.</p>
+      </article>
+    `)
+
+    expect(text).toBe("Text with a note. Next sentence.\n\nScientific notation still uses x-10.")
+  })
+
   it("keeps normalizedText within the TTS limit when normalization expands numbers", () => {
     const sentence = "O valor foi de R$ 999,99 em 25/12/1999 às 23h59 com 99% de desconto."
     const paragraph = Array.from({ length: 8 }, () => sentence).join(" ")

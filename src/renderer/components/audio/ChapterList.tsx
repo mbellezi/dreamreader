@@ -1,11 +1,12 @@
+import { useEffect, useRef } from "react"
 import { ChapterRow } from "@renderer/components/audio/ChapterRow"
 import type { TranslationFn } from "@renderer/app/types"
 import { getChapterAudioStatus } from "@renderer/lib/chapterStatus"
 import { isActiveJob } from "@renderer/lib/jobQueue"
-import type { AudiobookExport, BookDetails, TtsJob } from "@renderer/types"
+import type { AudiobookExport, Chapter, TtsJob } from "@renderer/types"
 
 export function ChapterList({
-  book,
+  chapters,
   audiobook,
   jobs,
   loading,
@@ -20,7 +21,7 @@ export function ChapterList({
   onGenerateChapter,
   onClearChapter
 }: {
-  book: BookDetails
+  chapters: Chapter[]
   audiobook: AudiobookExport | null
   jobs: TtsJob[]
   loading: boolean
@@ -35,21 +36,40 @@ export function ChapterList({
   onGenerateChapter: (chapterId: string) => void
   onClearChapter: (chapterId: string) => void
 }) {
+  const selectAllRef = useRef<HTMLInputElement>(null)
+  const allSelected = chapters.length > 0 && selectedChapters.size === chapters.length
+  const partiallySelected = selectedChapters.size > 0 && !allSelected
+
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = partiallySelected
+    }
+  }, [partiallySelected])
+
   return (
     <section className="space-y-3">
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-sm font-semibold">{t("studio.book.chapters")}</h3>
-        <div className="flex shrink-0 gap-2 text-xs">
-          <button className="text-muted-foreground hover:text-foreground" onClick={onSelectAll}>
-            {t("audio.batch.selectAll")}
-          </button>
-          <button className="text-muted-foreground hover:text-foreground" onClick={onClearSelection}>
-            {t("audio.batch.clear")}
-          </button>
-        </div>
+        <label className="inline-flex h-8 shrink-0 items-center gap-2 rounded-md border bg-card px-2.5 text-xs text-muted-foreground">
+          <input
+            ref={selectAllRef}
+            className="h-4 w-4 accent-primary"
+            type="checkbox"
+            checked={allSelected}
+            disabled={!chapters.length}
+            onChange={(event) => {
+              if (event.target.checked) {
+                onSelectAll()
+              } else {
+                onClearSelection()
+              }
+            }}
+          />
+          <span>{t("audio.batch.selectAll")}</span>
+        </label>
       </div>
       <div className="space-y-2">
-        {book.chapters.map((chapter) => {
+        {chapters.map((chapter) => {
           const status = getChapterAudioStatus(chapter.id, audiobook, jobs)
           const manifestChapter = audiobook?.manifest?.chapters.find((item) => item.chapterHref === chapter.id)
           const chapterJobs = jobs.filter((job) => job.chapterHref === chapter.id)

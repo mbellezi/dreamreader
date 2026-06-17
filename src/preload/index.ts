@@ -242,6 +242,7 @@ function toRendererBookSummary(input: unknown) {
     status: progress > 0 ? "reading" : "unread",
     progress,
     tags: [],
+    publishedAt: optionalString(book.publishedAt),
     updatedAt: String(book.updatedAt ?? new Date().toISOString()),
     coverColor: colorFromId(String(book.id ?? book.title ?? "book")),
     coverImageUrl: optionalString(book.coverImageUrl)

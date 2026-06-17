@@ -241,10 +241,12 @@ export class AudiobookService {
       await this.updateBuildJob(buildJob.id, { status: "building", progress: 0.28 })
       const manifest = refreshed.manifest
       const m4bChapters = await this.resolveM4bChapters(manifest)
+      const coverPath = await this.resolveM4bCoverPath(manifest)
       await this.updateBuildJob(buildJob.id, { status: "building", progress: 0.42 })
       const manifestHash = hashBuffer(
         JSON.stringify({
           ...manifest,
+          coverPath,
           container: {
             encoder: "ffmpeg-static",
             format: "m4b",
@@ -259,6 +261,7 @@ export class AudiobookService {
         await this.updateBuildJob(buildJob.id, { status: "building", progress: 0.55 })
         await buildM4bAudiobook({
           chapters: m4bChapters,
+          coverPath,
           metadata: {
             authors: manifest.authors,
             language: manifest.language,
@@ -375,6 +378,24 @@ export class AudiobookService {
     }
 
     return chapters
+  }
+
+  private async resolveM4bCoverPath(manifest: AudiobookManifest): Promise<string | undefined> {
+    if (!manifest.coverAssetId) {
+      return undefined
+    }
+    const cover = await this.db.query.assets.findFirst({
+      where: eq(assets.id, manifest.coverAssetId)
+    })
+    if (!cover?.path) {
+      return undefined
+    }
+    try {
+      await access(cover.path)
+      return cover.path
+    } catch {
+      return undefined
+    }
   }
 
   private async hasActiveAudioJobs(bookId: string): Promise<boolean> {
@@ -502,7 +523,7 @@ export class AudiobookService {
 
 function totalChaptersFor(book: typeof books.$inferSelect): number {
   const manifest = book.manifestJson as { chapters?: unknown[]; tableOfContents?: unknown[] }
-  return manifest.chapters?.length ?? manifest.tableOfContents?.length ?? 0
+  return (manifest.chapters?.length ?? manifest.tableOfContents?.length ?? 0) + 1
 }
 
 function toAudiobookExport(row: typeof audiobookExports.$inferSelect): AudiobookExport {

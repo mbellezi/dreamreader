@@ -472,6 +472,20 @@ export function App(): ReactElement {
     await refreshActiveAudioView()
   }
 
+  const cancelQueuedTtsJobs = async (jobIds: string[]) => {
+    if (!jobIds.length) {
+      return
+    }
+
+    setAudioLoading(true)
+    try {
+      await Promise.all(jobIds.map((jobId) => dreamreaderClient.cancelTtsJob(jobId)))
+      await refreshActiveAudioView()
+    } finally {
+      setAudioLoading(false)
+    }
+  }
+
   const pauseTtsJob = async (jobId: string) => {
     await dreamreaderClient.pauseTtsJob(jobId)
     await refreshActiveAudioView()
@@ -552,6 +566,25 @@ export function App(): ReactElement {
         bookId: audioBook.id,
         chapterHref
       })
+      await refreshAudioState(audioBook.id)
+    } finally {
+      setAudioLoading(false)
+    }
+  }
+
+  const clearAllChapterAudio = async (chapterHrefs: string[]) => {
+    if (!audioBook || !chapterHrefs.length) {
+      return
+    }
+
+    setAudioLoading(true)
+    try {
+      for (const chapterHref of chapterHrefs) {
+        await dreamreaderClient.clearChapterAudio({
+          bookId: audioBook.id,
+          chapterHref
+        })
+      }
       await refreshAudioState(audioBook.id)
     } finally {
       setAudioLoading(false)
@@ -917,6 +950,8 @@ export function App(): ReactElement {
                 t={t}
                 voices={voices}
                 onBack={closeBookAudio}
+                onCancelQueuedJobs={cancelQueuedTtsJobs}
+                onClearAllChapterAudio={clearAllChapterAudio}
                 onCancelJob={cancelTtsJob}
                 onClearChapterAudio={clearChapterAudio}
                 onClearTerminalJobs={clearTerminalTtsJobs}
