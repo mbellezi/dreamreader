@@ -536,6 +536,16 @@ export const dreamreaderClient = {
     return null
   },
 
+  async deleteAudiobookExport(bookId: string): Promise<AudiobookExport | null> {
+    const bridgeDelete = window.dreamreader?.audiobook?.deleteExport
+
+    if (bridgeDelete) {
+      return toAudiobookExport(await bridgeDelete(bookId))
+    }
+
+    return null
+  },
+
   async getAudiobookBuildJob(bookId: string): Promise<AudiobookBuildJob | null> {
     const bridgeGet = window.dreamreader?.audiobook?.getBuildJob
 

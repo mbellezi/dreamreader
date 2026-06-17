@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it } from "vitest"
 import type { AppDatabase } from "../../src/main/db/client"
 import * as schema from "../../src/main/db/schema"
 import { assets, audiobookBuildJobs, books, ttsEngines, ttsJobs } from "../../src/main/db/schema"
-import { probeAudio } from "../../src/main/lib/audio-transcode"
+import { probeAudio, transcodeAudioToAac } from "../../src/main/lib/audio-transcode"
 import { AudiobookService } from "../../src/main/services/audiobook-service"
 
 const tempDirs: string[] = []
@@ -127,22 +127,28 @@ describe("AudiobookService.rebuild", () => {
       updatedAt: new Date()
     })
 
-    const chapterPath = path.join(paths.audioCacheDir, "chapter-1.wav")
-    await mkdir(path.dirname(chapterPath), { recursive: true })
-    await writeFile(chapterPath, createSilentWav(1_000, 22_050))
+    const wavPath = path.join(paths.audioCacheDir, "chapter-1.wav")
+    const chapterPath = path.join(paths.audioCacheDir, "chapter-1.m4a")
+    await mkdir(path.dirname(wavPath), { recursive: true })
+    await writeFile(wavPath, createSilentWav(1_000, 22_050))
+    const encodedChapter = await transcodeAudioToAac({
+      srcPath: wavPath,
+      destPath: chapterPath,
+      durationMs: 1_000
+    })
     await db.insert(assets).values({
       id: "asset-1",
       kind: "audio_chapter",
       bookId: "book-with-audio",
       path: chapterPath,
-      mimeType: "audio/wav",
-      contentHash: "audio-hash",
-      sizeBytes: (await readFile(chapterPath)).byteLength
+      mimeType: encodedChapter.mimeType,
+      contentHash: encodedChapter.contentHash,
+      sizeBytes: encodedChapter.sizeBytes
     })
 
     await audiobook.recordChapterAudio({
       audioAssetId: "asset-1",
-      audioHash: "audio-hash",
+      audioHash: encodedChapter.contentHash,
       bookId: "book-with-audio",
       chapterHref: "chapter-1",
       chapterIndex: 0,
@@ -171,7 +177,28 @@ describe("AudiobookService.rebuild", () => {
     expect((await probeAudio(asset?.path ?? "")).durationMs).toBeGreaterThan(900)
     const metadata = await parseFile(asset?.path ?? "")
     expect(metadata.common.picture?.[0]?.format).toBe("image/jpeg")
+    const exportRow = await db.query.audiobookExports.findFirst({
+      where: (table, { eq }) => eq(table.bookId, "book-with-audio")
+    })
+    expect(exportRow?.metadataJson).toMatchObject({
+      audioMode: "copy",
+      encoder: "copy"
+    })
     await expect(access(await audiobook.getExportFilePath("book-with-audio"))).resolves.toBeUndefined()
+
+    const deleted = await audiobook.deleteExport("book-with-audio")
+    expect(deleted).toMatchObject({
+      assetId: undefined,
+      draftAssetId: undefined,
+      status: "none",
+      chaptersReady: 1,
+      stale: true
+    })
+    await expect(access(asset?.path ?? "")).rejects.toThrow()
+    await expect(access(chapterPath)).resolves.toBeUndefined()
+    expect(await db.query.assets.findFirst({ where: (table, { eq }) => eq(table.id, asset?.id ?? "") })).toBeUndefined()
+    expect(await db.query.assets.findFirst({ where: (table, { eq }) => eq(table.id, "asset-1") })).toBeTruthy()
+    expect(deleted.manifest?.chapters[0]?.audioAssetId).toBe("asset-1")
   })
 
   it("waits for active audio jobs before rebuilding automatic M4B", async () => {

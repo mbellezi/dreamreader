@@ -63,8 +63,9 @@ describe("TtsService", () => {
       const chapterAsset = await db.query.assets.findFirst({
         where: (table, { eq }) => eq(table.kind, "audio_chapter")
       })
-      expect(chapterAsset?.mimeType).toBe("audio/wav")
-      expect((await readFile(chapterAsset?.path ?? "")).subarray(0, 4).toString()).toBe("RIFF")
+      expect(chapterAsset?.mimeType).toBe("audio/mp4")
+      expect((await readFile(chapterAsset?.path ?? "")).subarray(4, 8).toString()).toBe("ftyp")
+      expect(chapterAsset?.path.endsWith(".m4a")).toBe(true)
 
       const partial = await audiobook.getExport("book-audio")
       expect(partial.chaptersReady).toBe(1)

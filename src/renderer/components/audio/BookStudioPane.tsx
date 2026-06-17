@@ -1,4 +1,4 @@
-import { ArrowLeft, RefreshCw, Save, Square, Trash2, Wand2 } from "lucide-react"
+import { ArrowLeft, FileX, RefreshCw, Save, Square, Trash2, Wand2 } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { ChapterDetail } from "@renderer/components/audio/ChapterDetail"
 import { ChapterList } from "@renderer/components/audio/ChapterList"
@@ -61,6 +61,7 @@ export function BookStudioPane({
   onCancelJob,
   onClearChapterAudio,
   onClearTerminalJobs,
+  onDeleteAudiobookExport,
   onGenerateChapter,
   onGenerateChapters,
   onListSegments,
@@ -87,6 +88,7 @@ export function BookStudioPane({
   onCancelJob: (jobId: string) => Promise<void> | void
   onClearChapterAudio: (chapterHref: string) => Promise<void> | void
   onClearTerminalJobs: () => Promise<void> | void
+  onDeleteAudiobookExport: () => Promise<void> | void
   onGenerateChapter: (input: GenerateChapterInput) => Promise<void> | void
   onGenerateChapters: (input: GenerateChaptersInput) => Promise<void> | void
   onListSegments: (jobId: string) => Promise<TtsSegment[]>
@@ -131,6 +133,7 @@ export function BookStudioPane({
   const activeAudioJobs = jobs.some((job) => !["completed", "failed", "cancelled", "paused"].includes(job.status))
   const cancellableJobs = jobs.filter((job) => !isTerminalJobStatus(job.status))
   const hasBlockingJobs = jobs.some((job) => !isTerminalJobStatus(job.status))
+  const hasCompiledM4b = Boolean(audiobook?.assetId ?? audiobook?.draftAssetId)
   const hasAnyChapterAudio = chapters.some((chapter) => {
     return (
       jobs.some((job) => job.chapterHref === chapter.id) ||
@@ -165,7 +168,7 @@ export function BookStudioPane({
 
       <div className="min-h-0 flex-1 overflow-auto px-6 py-4">
         <div className="mx-auto w-full max-w-6xl space-y-4">
-          <section className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          <section className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
             <button
               className="inline-flex h-10 min-w-0 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground disabled:opacity-50"
               disabled={loading || !config.canGenerate}
@@ -197,6 +200,14 @@ export function BookStudioPane({
             >
               <Trash2 className="h-4 w-4 shrink-0" aria-hidden="true" />
               <span className="truncate">{t("audio.batch.clearAllAudio")}</span>
+            </button>
+            <button
+              className="inline-flex h-10 min-w-0 items-center justify-center gap-2 rounded-md border bg-card px-3 text-sm text-destructive disabled:opacity-50"
+              disabled={!hasCompiledM4b || Boolean(activeBuildJob) || loading}
+              onClick={() => void onDeleteAudiobookExport()}
+            >
+              <FileX className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span className="truncate">{t("audio.deleteM4b")}</span>
             </button>
           </section>
 

@@ -178,6 +178,9 @@ export function registerIpc(services: Services): void {
     services.audiobook.setAutoBuild(input.bookId, input.enabled)
   )
   handle("audiobook.rebuild", contract["audiobook.rebuild"].request, (input) => services.audiobook.rebuild(input.bookId))
+  handle("audiobook.deleteExport", contract["audiobook.deleteExport"].request, (input) =>
+    services.audiobook.deleteExport(input.bookId)
+  )
   handle("audiobook.getBuildJob", contract["audiobook.getBuildJob"].request, (input) =>
     services.audiobook.getLatestBuildJob(input.bookId)
   )

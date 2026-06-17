@@ -600,6 +600,24 @@ export function App(): ReactElement {
     }
   }
 
+  const deleteAudiobookExport = async () => {
+    if (!audioBook) {
+      return
+    }
+    const confirmed = window.confirm(t("audio.deleteM4bConfirm"))
+    if (!confirmed) {
+      return
+    }
+
+    setAudioLoading(true)
+    try {
+      setAudiobookExport(await dreamreaderClient.deleteAudiobookExport(audioBook.id))
+      await refreshAudioState(audioBook.id)
+    } finally {
+      setAudioLoading(false)
+    }
+  }
+
   const clearChapterAudio = async (chapterHref: string) => {
     if (!audioBook) {
       return
@@ -1007,6 +1025,7 @@ export function App(): ReactElement {
                 onListSegments={listTtsSegments}
                 onPauseJob={pauseTtsJob}
                 onRebuildAudiobook={rebuildAudiobook}
+                onDeleteAudiobookExport={deleteAudiobookExport}
                 onSaveAudiobook={saveAudiobook}
                 onResumeJob={resumeTtsJob}
                 onRetryJob={retryTtsJob}

@@ -205,6 +205,7 @@ const api = {
     enableAutoBuild: (bookId: string, enabled: boolean) =>
       invoke("audiobook.enableAutoBuild", { bookId, enabled }),
     rebuild: (bookId: string) => invoke("audiobook.rebuild", { bookId }),
+    deleteExport: (bookId: string) => invoke("audiobook.deleteExport", { bookId }),
     getBuildJob: (bookId: string) => invoke("audiobook.getBuildJob", { bookId }),
     save: (bookId: string) => invoke("audiobook.save", { bookId }),
     reveal: (bookId: string) => invoke("audiobook.reveal", { bookId })

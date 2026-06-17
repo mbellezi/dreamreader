@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process"
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { promisify } from "node:util"
 import ffmpegStaticPath from "ffmpeg-static"
 import { parseFile } from "music-metadata"
+import { hashFile } from "@main/lib/hash"
 
 const execFileAsync = promisify(execFile)
 
@@ -17,6 +18,7 @@ export type AudioProbe = {
 
 export type M4bChapterInput = {
   filePath: string
+  mimeType?: string
   title: string
   startMs: number
   endMs: number
@@ -27,6 +29,22 @@ export type M4bMetadataInput = {
   authors?: string[]
   language?: string
 }
+
+export type AacTranscodeResult = {
+  audioPath: string
+  contentHash: string
+  durationMs: number
+  encoder: "aac" | "aac_at"
+  mimeType: "audio/mp4"
+  sizeBytes: number
+}
+
+export type M4bBuildResult = {
+  audioMode: "copy" | "encode"
+  encoder: "aac" | "aac_at" | "copy"
+}
+
+let preferredAacEncoderPromise: Promise<"aac" | "aac_at"> | undefined
 
 /**
  * Probe audio metadata in-process, falling back to a minimal WAV header parse.
@@ -64,13 +82,52 @@ export async function resampleAudio(srcPath: string, destPath: string, sampleRat
   }
 }
 
+export async function transcodeAudioToAac(input: {
+  srcPath: string
+  destPath: string
+  bitrate?: string
+  durationMs?: number
+}): Promise<AacTranscodeResult> {
+  const ffmpegPath = await bundledFfmpegPath()
+  if (!ffmpegPath) {
+    throw new Error("Bundled FFmpeg binary is unavailable")
+  }
+
+  await mkdir(path.dirname(input.destPath), { recursive: true })
+  const encoder = await execWithAacFallback(ffmpegPath, (candidate) => [
+    "-y",
+    "-i",
+    input.srcPath,
+    "-vn",
+    "-map",
+    "0:a:0",
+    "-c:a",
+    candidate,
+    "-b:a",
+    input.bitrate ?? "96k",
+    "-movflags",
+    "+faststart",
+    input.destPath
+  ], input.destPath)
+
+  const probe = await probeAudio(input.destPath)
+  return {
+    audioPath: input.destPath,
+    contentHash: await hashFile(input.destPath),
+    durationMs: probe.durationMs ?? input.durationMs ?? 0,
+    encoder,
+    mimeType: "audio/mp4",
+    sizeBytes: (await stat(input.destPath)).size
+  }
+}
+
 export async function buildM4bAudiobook(input: {
   chapters: M4bChapterInput[]
   coverPath?: string
   metadata: M4bMetadataInput
   outputPath: string
   bitrate?: string
-}): Promise<void> {
+}): Promise<M4bBuildResult> {
   if (!input.chapters.length) {
     throw new Error("At least one chapter audio file is required")
   }
@@ -86,52 +143,28 @@ export async function buildM4bAudiobook(input: {
 
   try {
     await writeFile(metadataPath, ffmetadataFor(input.metadata, input.chapters))
-
-    const metadataInputIndex = input.chapters.length + (input.coverPath ? 1 : 0)
-    const filterInputs = input.chapters.map((_, index) => `[${index}:a:0]`).join("")
-    const args = ["-y"]
-    for (const chapter of input.chapters) {
-      args.push("-i", chapter.filePath)
-    }
-    const coverInputIndex = input.coverPath ? input.chapters.length : undefined
-    if (input.coverPath) {
-      args.push("-i", input.coverPath)
-    }
-    args.push(
-      "-i",
-      metadataPath,
-      "-filter_complex",
-      `${filterInputs}concat=n=${input.chapters.length}:v=0:a=1[aout]`,
-      "-map",
-      "[aout]",
-      "-map_metadata",
-      String(metadataInputIndex),
-      "-map_chapters",
-      String(metadataInputIndex)
-    )
-    if (coverInputIndex !== undefined) {
-      args.push(
-        "-map",
-        `${coverInputIndex}:v:0`,
-        "-c:v",
-        "mjpeg",
-        "-disposition:v:0",
-        "attached_pic"
+    if (input.chapters.every(isCopyCompatibleAacChapter)) {
+      const concatListPath = path.join(workDir, "chapters.txt")
+      await writeFile(
+        concatListPath,
+        `${input.chapters.map((chapter) => `file '${escapeConcatFilePath(chapter.filePath)}'`).join("\n")}\n`
       )
+      try {
+        await execFileAsync(ffmpegPath, m4bCopyArgs(input, concatListPath, metadataPath), {
+          maxBuffer: 8 * 1024 * 1024
+        })
+        return { audioMode: "copy", encoder: "copy" }
+      } catch {
+        await rm(input.outputPath, { force: true })
+      }
     }
-    args.push(
-      "-c:a",
-      "aac",
-      "-b:a",
-      input.bitrate ?? "96k",
-      "-movflags",
-      "+faststart",
-      "-f",
-      "mp4",
+
+    const encoder = await execWithAacFallback(
+      ffmpegPath,
+      (candidate) => m4bEncodeArgs(input, metadataPath, candidate),
       input.outputPath
     )
-
-    await execFileAsync(ffmpegPath, args, { maxBuffer: 8 * 1024 * 1024 })
+    return { audioMode: "encode", encoder }
   } finally {
     await rm(workDir, { force: true, recursive: true })
   }
@@ -153,6 +186,143 @@ async function bundledFfmpegPath(): Promise<string | undefined> {
 
 function pathSeparator(): string {
   return process.platform === "win32" ? "\\" : "/"
+}
+
+async function preferredAacEncoder(ffmpegPath: string): Promise<"aac" | "aac_at"> {
+  preferredAacEncoderPromise ??= detectPreferredAacEncoder(ffmpegPath)
+  return preferredAacEncoderPromise
+}
+
+async function detectPreferredAacEncoder(ffmpegPath: string): Promise<"aac" | "aac_at"> {
+  if (process.platform !== "darwin") {
+    return "aac"
+  }
+  try {
+    const encoders = await execFileAsync(ffmpegPath, ["-hide_banner", "-encoders"], {
+      maxBuffer: 1024 * 1024
+    })
+    return /\baac_at\b/.test(encoders.stdout) ? "aac_at" : "aac"
+  } catch {
+    return "aac"
+  }
+}
+
+async function execWithAacFallback(
+  ffmpegPath: string,
+  argsFor: (encoder: "aac" | "aac_at") => string[],
+  outputPath: string
+): Promise<"aac" | "aac_at"> {
+  const encoder = await preferredAacEncoder(ffmpegPath)
+  try {
+    await execFileAsync(ffmpegPath, argsFor(encoder), { maxBuffer: 8 * 1024 * 1024 })
+    return encoder
+  } catch (error) {
+    if (encoder !== "aac_at") {
+      throw error
+    }
+    preferredAacEncoderPromise = Promise.resolve("aac")
+    await rm(outputPath, { force: true }).catch(() => undefined)
+    await execFileAsync(ffmpegPath, argsFor("aac"), { maxBuffer: 8 * 1024 * 1024 })
+    return "aac"
+  }
+}
+
+function m4bCopyArgs(input: {
+  chapters: M4bChapterInput[]
+  coverPath?: string
+  metadata: M4bMetadataInput
+  outputPath: string
+}, concatListPath: string, metadataPath: string): string[] {
+  const args = ["-y", "-f", "concat", "-safe", "0", "-i", concatListPath]
+  const coverInputIndex = input.coverPath ? 1 : undefined
+  if (input.coverPath) {
+    args.push("-i", input.coverPath)
+  }
+  const metadataInputIndex = input.coverPath ? 2 : 1
+  args.push(
+    "-i",
+    metadataPath,
+    "-map",
+    "0:a:0",
+    "-map_metadata",
+    String(metadataInputIndex),
+    "-map_chapters",
+    String(metadataInputIndex)
+  )
+  if (coverInputIndex !== undefined) {
+    args.push(
+      "-map",
+      `${coverInputIndex}:v:0`,
+      "-c:v",
+      "mjpeg",
+      "-disposition:v:0",
+      "attached_pic"
+    )
+  }
+  args.push("-c:a", "copy", "-movflags", "+faststart", "-f", "mp4", input.outputPath)
+  return args
+}
+
+function m4bEncodeArgs(input: {
+  chapters: M4bChapterInput[]
+  coverPath?: string
+  metadata: M4bMetadataInput
+  outputPath: string
+  bitrate?: string
+}, metadataPath: string, encoder: "aac" | "aac_at"): string[] {
+  const metadataInputIndex = input.chapters.length + (input.coverPath ? 1 : 0)
+  const filterInputs = input.chapters.map((_, index) => `[${index}:a:0]`).join("")
+  const args = ["-y"]
+  for (const chapter of input.chapters) {
+    args.push("-i", chapter.filePath)
+  }
+  const coverInputIndex = input.coverPath ? input.chapters.length : undefined
+  if (input.coverPath) {
+    args.push("-i", input.coverPath)
+  }
+  args.push(
+    "-i",
+    metadataPath,
+    "-filter_complex",
+    `${filterInputs}concat=n=${input.chapters.length}:v=0:a=1[aout]`,
+    "-map",
+    "[aout]",
+    "-map_metadata",
+    String(metadataInputIndex),
+    "-map_chapters",
+    String(metadataInputIndex)
+  )
+  if (coverInputIndex !== undefined) {
+    args.push(
+      "-map",
+      `${coverInputIndex}:v:0`,
+      "-c:v",
+      "mjpeg",
+      "-disposition:v:0",
+      "attached_pic"
+    )
+  }
+  args.push(
+    "-c:a",
+    encoder,
+    "-b:a",
+    input.bitrate ?? "96k",
+    "-movflags",
+    "+faststart",
+    "-f",
+    "mp4",
+    input.outputPath
+  )
+  return args
+}
+
+function isCopyCompatibleAacChapter(chapter: M4bChapterInput): boolean {
+  const extension = path.extname(chapter.filePath).toLowerCase()
+  return chapter.mimeType === "audio/mp4" && [".m4a", ".mp4", ".m4b"].includes(extension)
+}
+
+function escapeConcatFilePath(filePath: string): string {
+  return filePath.replace(/'/g, "'\\''")
 }
 
 async function fileExists(filePath: string): Promise<boolean> {

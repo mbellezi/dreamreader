@@ -505,6 +505,7 @@ export type DreamReaderBridge = {
     listLibraryStatus?: () => Promise<unknown[]>
     enableAutoBuild?: (bookId: string, enabled: boolean) => Promise<unknown>
     rebuild?: (bookId: string) => Promise<unknown>
+    deleteExport?: (bookId: string) => Promise<unknown>
     getBuildJob?: (bookId: string) => Promise<unknown>
     save?: (bookId: string) => Promise<unknown>
     reveal?: (bookId: string) => Promise<unknown>

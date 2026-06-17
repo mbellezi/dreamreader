@@ -212,6 +212,7 @@ export const IpcChannelSchema = z.enum([
   "audiobook.listLibraryStatus",
   "audiobook.enableAutoBuild",
   "audiobook.rebuild",
+  "audiobook.deleteExport",
   "audiobook.getBuildJob",
   "audiobook.save",
   "audiobook.reveal",
@@ -421,6 +422,10 @@ export const IpcContractSchemas = {
     response: createIpcResponseSchema(AudiobookExportSchema),
   },
   "audiobook.rebuild": {
+    request: BookIdRequestSchema,
+    response: createIpcResponseSchema(AudiobookExportSchema),
+  },
+  "audiobook.deleteExport": {
     request: BookIdRequestSchema,
     response: createIpcResponseSchema(AudiobookExportSchema),
   },

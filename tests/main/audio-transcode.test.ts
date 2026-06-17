@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
-import { probeAudio, resampleAudio, TARGET_SAMPLE_RATE } from "../../src/main/lib/audio-transcode"
+import { probeAudio, resampleAudio, TARGET_SAMPLE_RATE, transcodeAudioToAac } from "../../src/main/lib/audio-transcode"
 
 const tempDirs: string[] = []
 
@@ -34,6 +34,27 @@ describe("audio-transcode", () => {
       channels: 1,
       sampleRate: TARGET_SAMPLE_RATE
     })
+  })
+
+  it("transcodes chapter audio to an AAC M4A asset", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "dreamreader-audio-transcode-"))
+    tempDirs.push(tempDir)
+    const inputPath = path.join(tempDir, "chapter.wav")
+    const outputPath = path.join(tempDir, "chapter.m4a")
+    await writeFile(inputPath, createSilentWav(1_000, TARGET_SAMPLE_RATE))
+
+    const result = await transcodeAudioToAac({
+      srcPath: inputPath,
+      destPath: outputPath,
+      durationMs: 1_000
+    })
+
+    expect(result.mimeType).toBe("audio/mp4")
+    expect(result.audioPath).toBe(outputPath)
+    expect(result.contentHash).toHaveLength(64)
+    expect(result.sizeBytes).toBeGreaterThan(0)
+    expect((await readFile(outputPath)).subarray(4, 8).toString()).toBe("ftyp")
+    expect((await probeAudio(outputPath)).durationMs).toBeGreaterThan(900)
   })
 })
 

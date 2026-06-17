@@ -38,6 +38,7 @@ import { AppError } from "@main/lib/errors"
 import { hashBuffer } from "@main/lib/hash"
 import { createId } from "@main/lib/ids"
 import type { AppPaths } from "@main/lib/paths"
+import { transcodeAudioToAac } from "@main/lib/audio-transcode"
 import {
   builtInBindingIdFor,
   builtInBindingKindFor,
@@ -85,6 +86,22 @@ type ReadyEngine = {
   engine: TtsEngineRow
   modelPath?: string
   runtimeManifest?: SidecarRuntimeManifest
+}
+
+type SynthesizedChapterAudio = {
+  rawChapterPath: string
+  rawChapterAudioHash: string
+  rawChapterDurationMs: number
+  rawChapterMimeType: string
+  rawChapterSizeBytes: number
+}
+
+type FinalizedChapterAudio = {
+  chapterAssetId: string
+  chapterAudioHash: string
+  chapterDurationMs: number
+  encoding: "aac" | "aac_at" | "source"
+  mimeType: string
 }
 
 type TtsEngineDefinition = {
@@ -258,6 +275,7 @@ export class TtsService {
   private readonly adapter = new LocalTtsAdapter()
   private readonly sidecarAdapter = new SidecarTtsAdapter()
   private readonly sidecarAbortControllers = new Map<string, AbortController>()
+  private readonly finalizationTasks = new Set<Promise<void>>()
   private readonly pausedJobIds = new Set<string>()
   private readonly prosody: ProsodyService
   private processing = false
@@ -629,6 +647,7 @@ export class TtsService {
   async drainQueue(): Promise<void> {
     await this.ensureReady()
     await this.processQueue()
+    await this.waitForFinalizationTasks()
   }
 
   private scheduleQueue(): void {
@@ -769,58 +788,13 @@ export class TtsService {
       await this.throwIfInterrupted(job.id)
       await this.updateJob(job.id, { status: "assembling", progress: 0.86 })
       const chapterCacheHash = chapterCacheHashFor(source.contentHash, job, plan, useExpressiveNarration)
-
-      await this.updateJob(job.id, { status: "updating_m4b", progress: 0.94 })
-      let audiobookError: string | undefined
-      // Partial previews are test snippets and must not mark the chapter as ready
-      // in the audiobook manifest.
-      if (!isPartial) {
-        try {
-          await this.audiobook.recordChapterAudio({
-            audioAssetId: synthesized.chapterAssetId,
-            audioHash: synthesized.chapterAudioHash,
-            bookId: job.bookId,
-            chapterHref: job.chapterHref,
-            chapterIndex: source.chapterIndex,
-            contentHash: chapterCacheHash,
-            durationMs: synthesized.chapterDurationMs,
-            engineId: job.engineId,
-            title: source.title,
-            voiceBindingId: job.voiceBindingId ?? undefined,
-            voiceProfileId: job.voiceProfileId ?? undefined
-          })
-        } catch (error) {
-          audiobookError = error instanceof Error ? error.message : "Audiobook rebuild failed"
-        }
-      }
-
-      await this.updateJob(job.id, {
-        status: "completed",
-        progress: 1,
-        settingsJson: compactJson({
-          ...jsonObject((await this.getJobRow(job.id)).settingsJson),
-          audiobookError,
-          chapterAudioAssetId: synthesized.chapterAssetId,
-          chapterDurationMs: synthesized.chapterDurationMs,
-          chapterAudioHash: synthesized.chapterAudioHash,
-          chapterCacheHash
-        }),
-        finishedAt: new Date()
+      this.scheduleChapterFinalization({
+        chapterCacheHash,
+        isPartial,
+        job,
+        source,
+        synthesized
       })
-      this.pausedJobIds.delete(job.id)
-      if (!isPartial && !audiobookError) {
-        try {
-          await this.audiobook.rebuildAutoIfIdle(job.bookId, "chapter_completed")
-        } catch (error) {
-          const message = error instanceof Error ? error.message : "Audiobook rebuild failed"
-          await this.updateJob(job.id, {
-            settingsJson: compactJson({
-              ...jsonObject((await this.getJobRow(job.id)).settingsJson),
-              audiobookError: message
-            })
-          })
-        }
-      }
     } catch (error) {
       const current = await this.getJobRow(job.id).catch(() => job)
       const paused = this.pausedJobIds.has(job.id) || (error instanceof AppError && error.code === "tts_job_paused")
@@ -884,6 +858,208 @@ export class TtsService {
     }
   }
 
+  private scheduleChapterFinalization(input: {
+    chapterCacheHash: string
+    isPartial: boolean
+    job: TtsJobRow
+    source: ChapterSource
+    synthesized: SynthesizedChapterAudio
+  }): void {
+    let task: Promise<void>
+    task = this.finalizeChapterAudio(input)
+      .catch(() => undefined)
+      .finally(() => {
+        this.finalizationTasks.delete(task)
+      })
+    this.finalizationTasks.add(task)
+  }
+
+  private async waitForFinalizationTasks(): Promise<void> {
+    while (this.finalizationTasks.size) {
+      await Promise.allSettled([...this.finalizationTasks])
+    }
+  }
+
+  private async finalizeChapterAudio(input: {
+    chapterCacheHash: string
+    isPartial: boolean
+    job: TtsJobRow
+    source: ChapterSource
+    synthesized: SynthesizedChapterAudio
+  }): Promise<void> {
+    try {
+      await this.throwIfInterrupted(input.job.id)
+      const finalized = await this.createChapterAudioAsset(input.job, input.synthesized)
+
+      await this.throwIfInterrupted(input.job.id)
+      await this.updateJob(input.job.id, { status: "updating_m4b", progress: 0.94 })
+      let audiobookError: string | undefined
+      // Partial previews are test snippets and must not mark the chapter as ready
+      // in the audiobook manifest.
+      if (!input.isPartial) {
+        try {
+          await this.audiobook.recordChapterAudio({
+            audioAssetId: finalized.chapterAssetId,
+            audioHash: finalized.chapterAudioHash,
+            bookId: input.job.bookId,
+            chapterHref: input.job.chapterHref,
+            chapterIndex: input.source.chapterIndex,
+            contentHash: input.chapterCacheHash,
+            durationMs: finalized.chapterDurationMs,
+            engineId: input.job.engineId,
+            title: input.source.title,
+            voiceBindingId: input.job.voiceBindingId ?? undefined,
+            voiceProfileId: input.job.voiceProfileId ?? undefined
+          })
+        } catch (error) {
+          audiobookError = error instanceof Error ? error.message : "Audiobook rebuild failed"
+        }
+      }
+
+      await this.updateJob(input.job.id, {
+        status: "completed",
+        progress: 1,
+        settingsJson: compactJson({
+          ...jsonObject((await this.getJobRow(input.job.id)).settingsJson),
+          audiobookError,
+          chapterAudioAssetId: finalized.chapterAssetId,
+          chapterAudioHash: finalized.chapterAudioHash,
+          chapterAudioEncoding: finalized.encoding,
+          chapterAudioMimeType: finalized.mimeType,
+          chapterCacheHash: input.chapterCacheHash,
+          chapterDurationMs: finalized.chapterDurationMs
+        }),
+        finishedAt: new Date()
+      })
+      this.pausedJobIds.delete(input.job.id)
+      if (!input.isPartial && !audiobookError) {
+        try {
+          await this.audiobook.rebuildAutoIfIdle(input.job.bookId, "chapter_completed")
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Audiobook rebuild failed"
+          await this.updateJob(input.job.id, {
+            settingsJson: compactJson({
+              ...jsonObject((await this.getJobRow(input.job.id)).settingsJson),
+              audiobookError: message
+            })
+          })
+        }
+      }
+    } catch (error) {
+      const current = await this.getJobRow(input.job.id).catch(() => input.job)
+      const paused = this.pausedJobIds.has(input.job.id) || (error instanceof AppError && error.code === "tts_job_paused")
+      if (paused) {
+        if (current.status !== "paused") {
+          await this.updateJob(input.job.id, { status: "paused" })
+        }
+        return
+      }
+      if (current.status === "cancelled" || (error instanceof AppError && error.code === "tts_job_cancelled")) {
+        await this.cleanupTtsJobArtifacts([current], {
+          removeAudiobookChapters: "withChapterAudio"
+        })
+        await this.updateJob(input.job.id, {
+          status: "cancelled",
+          finishedAt: new Date()
+        })
+        return
+      }
+      const message = error instanceof Error ? error.message : "TTS finalization failed"
+      await this.cleanupTtsJobArtifacts([current], {
+        removeAudiobookChapters: "withChapterAudio"
+      })
+      await this.updateJob(input.job.id, {
+        status: "failed",
+        progress: 1,
+        errorCode: error instanceof AppError ? error.code : "tts_finalization_failed",
+        errorMessage: message,
+        finishedAt: new Date()
+      })
+    }
+  }
+
+  private async createChapterAudioAsset(
+    job: TtsJobRow,
+    synthesized: SynthesizedChapterAudio
+  ): Promise<FinalizedChapterAudio> {
+    const transcodePath = path.join(
+      this.paths.audioCacheDir,
+      job.bookId,
+      `${hashBuffer(`${job.id}:${synthesized.rawChapterAudioHash}`).slice(0, 16)}-${job.engineId}-${job.voiceProfileId ?? "default"}.m4a`
+    )
+    const audio = await this.transcodeChapterAudioToAac(synthesized, transcodePath)
+    const [chapterAsset] = await this.db
+      .insert(assets)
+      .values({
+        id: createId("asset"),
+        kind: "audio_chapter",
+        bookId: job.bookId,
+        path: audio.audioPath,
+        mimeType: audio.mimeType,
+        contentHash: audio.contentHash,
+        sizeBytes: audio.sizeBytes
+      })
+      .returning()
+
+    return {
+      chapterAssetId: chapterAsset.id,
+      chapterAudioHash: audio.contentHash,
+      chapterDurationMs: audio.durationMs,
+      encoding: audio.encoding,
+      mimeType: audio.mimeType
+    }
+  }
+
+  private async transcodeChapterAudioToAac(
+    synthesized: SynthesizedChapterAudio,
+    transcodePath: string
+  ): Promise<{
+    audioPath: string
+    contentHash: string
+    durationMs: number
+    encoding: "aac" | "aac_at" | "source"
+    mimeType: string
+    sizeBytes: number
+  }> {
+    if (isM4aAudio(synthesized.rawChapterPath, synthesized.rawChapterMimeType)) {
+      return {
+        audioPath: synthesized.rawChapterPath,
+        contentHash: synthesized.rawChapterAudioHash,
+        durationMs: synthesized.rawChapterDurationMs,
+        encoding: "source",
+        mimeType: synthesized.rawChapterMimeType,
+        sizeBytes: synthesized.rawChapterSizeBytes
+      }
+    }
+
+    try {
+      const transcoded = await transcodeAudioToAac({
+        srcPath: synthesized.rawChapterPath,
+        destPath: transcodePath,
+        durationMs: synthesized.rawChapterDurationMs
+      })
+      await unlink(synthesized.rawChapterPath).catch(() => undefined)
+      return {
+        audioPath: transcoded.audioPath,
+        contentHash: transcoded.contentHash,
+        durationMs: transcoded.durationMs || synthesized.rawChapterDurationMs,
+        encoding: transcoded.encoder,
+        mimeType: transcoded.mimeType,
+        sizeBytes: transcoded.sizeBytes
+      }
+    } catch {
+      await unlink(transcodePath).catch(() => undefined)
+      return {
+        audioPath: synthesized.rawChapterPath,
+        contentHash: synthesized.rawChapterAudioHash,
+        durationMs: synthesized.rawChapterDurationMs,
+        encoding: "source",
+        mimeType: synthesized.rawChapterMimeType,
+        sizeBytes: synthesized.rawChapterSizeBytes
+      }
+    }
+  }
+
   private async synthesizeJobAudio(input: {
     job: TtsJobRow
     outputDir: string
@@ -893,11 +1069,7 @@ export class TtsService {
     quality: "draft" | "standard" | "high"
     seed?: number
     readyEngine: ReadyEngine
-  }): Promise<{
-    chapterAssetId: string
-    chapterAudioHash: string
-    chapterDurationMs: number
-  }> {
+  }): Promise<SynthesizedChapterAudio> {
     if (input.readyEngine.adapterId === DEFAULT_TTS_ADAPTER_ID) {
       return this.synthesizeWithLocalAdapter(input.job, input.plan, input.seed)
     }
@@ -908,11 +1080,7 @@ export class TtsService {
     job: TtsJobRow,
     plan: NarrationPlan,
     seed?: number
-  ): Promise<{
-    chapterAssetId: string
-    chapterAudioHash: string
-    chapterDurationMs: number
-  }> {
+  ): Promise<SynthesizedChapterAudio> {
     await this.adapter.warmup()
     const outputDir = path.join(this.paths.audioCacheDir, job.bookId, sanitizePathPart(job.chapterHref), job.id)
     await mkdir(outputDir, { recursive: true })
@@ -963,30 +1131,16 @@ export class TtsService {
     }
 
     const chapterAudio = this.adapter.synthesizeChapter(plan, seed)
-    const chapterPath = path.join(
-      this.paths.audioCacheDir,
-      job.bookId,
-      `${hashBuffer(`${job.id}:${chapterAudio.contentHash}`).slice(0, 16)}-${job.engineId}-${job.voiceProfileId ?? "default"}.wav`
-    )
+    const chapterPath = path.join(outputDir, "chapter.wav")
     await mkdir(path.dirname(chapterPath), { recursive: true })
     await writeFile(chapterPath, chapterAudio.buffer)
-    const [chapterAsset] = await this.db
-      .insert(assets)
-      .values({
-        id: createId("asset"),
-        kind: "audio_chapter",
-        bookId: job.bookId,
-        path: chapterPath,
-        mimeType: chapterAudio.mimeType,
-        contentHash: chapterAudio.contentHash,
-        sizeBytes: chapterAudio.buffer.byteLength
-      })
-      .returning()
 
     return {
-      chapterAssetId: chapterAsset.id,
-      chapterAudioHash: chapterAudio.contentHash,
-      chapterDurationMs: chapterAudio.durationMs
+      rawChapterPath: chapterPath,
+      rawChapterAudioHash: chapterAudio.contentHash,
+      rawChapterDurationMs: chapterAudio.durationMs,
+      rawChapterMimeType: chapterAudio.mimeType,
+      rawChapterSizeBytes: chapterAudio.buffer.byteLength
     }
   }
 
@@ -999,11 +1153,7 @@ export class TtsService {
     quality: "draft" | "standard" | "high"
     seed?: number
     readyEngine: ReadyEngine
-  }): Promise<{
-    chapterAssetId: string
-    chapterAudioHash: string
-    chapterDurationMs: number
-  }> {
+  }): Promise<SynthesizedChapterAudio> {
     if (!input.readyEngine.runtimeManifest || !input.readyEngine.modelPath) {
       throw new AppError("tts_sidecar_not_configured", "TTS engine sidecar runtime is not configured")
     }
@@ -1090,22 +1240,12 @@ export class TtsService {
     }
 
     const chapterAudio = await importSidecarAudio(result.chapter)
-    const [chapterAsset] = await this.db
-      .insert(assets)
-      .values({
-        id: createId("asset"),
-        kind: "audio_chapter",
-        bookId: input.job.bookId,
-        path: chapterAudio.audioPath,
-        mimeType: chapterAudio.mimeType,
-        contentHash: chapterAudio.contentHash,
-        sizeBytes: chapterAudio.sizeBytes
-      })
-      .returning()
     return {
-      chapterAssetId: chapterAsset.id,
-      chapterAudioHash: chapterAudio.contentHash,
-      chapterDurationMs: chapterAudio.durationMs
+      rawChapterPath: chapterAudio.audioPath,
+      rawChapterAudioHash: chapterAudio.contentHash,
+      rawChapterDurationMs: chapterAudio.durationMs,
+      rawChapterMimeType: chapterAudio.mimeType,
+      rawChapterSizeBytes: chapterAudio.sizeBytes
     }
   }
 
@@ -1739,6 +1879,10 @@ function hasChapterAudioAsset(job: TtsJobRow): boolean {
 function chapterAudioAssetIdFor(job: TtsJobRow): string | undefined {
   const settings = jsonObject(job.settingsJson)
   return typeof settings.chapterAudioAssetId === "string" ? settings.chapterAudioAssetId : undefined
+}
+
+function isM4aAudio(filePath: string, mimeType: string): boolean {
+  return mimeType === "audio/mp4" && [".m4a", ".mp4", ".m4b"].includes(path.extname(filePath).toLowerCase())
 }
 
 async function disableStaleBuiltInBindings(db: AppDatabase, now: Date): Promise<void> {

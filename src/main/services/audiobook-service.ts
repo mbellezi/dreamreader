@@ -91,6 +91,47 @@ export class AudiobookService {
     return this.buildDraft(bookId, "manual_rebuild")
   }
 
+  async deleteExport(bookId: string): Promise<AudiobookExport> {
+    const current = await this.ensureExport(bookId)
+    if (await this.hasActiveBuildJob(bookId)) {
+      throw new AppError("audiobook_build_active", "Wait for the active audiobook build before deleting the export")
+    }
+
+    const assetIds = uniqueStrings([current.assetId, current.draftAssetId].filter((id): id is string => Boolean(id)))
+    const assetRows = assetIds.length
+      ? await this.db.query.assets.findMany({
+          where: inArray(assets.id, assetIds)
+        })
+      : []
+
+    if (assetIds.length) {
+      await this.db.delete(assets).where(inArray(assets.id, assetIds))
+    }
+    await Promise.all(assetRows.map((asset) => rm(asset.path, { force: true }).catch(() => undefined)))
+
+    const [updated] = await this.db
+      .update(audiobookExports)
+      .set({
+        assetId: null,
+        draftAssetId: null,
+        status: "none",
+        stale: current.chaptersReady > 0,
+        errorCode: null,
+        errorMessage: null,
+        lastBuiltAt: null,
+        metadataJson: {
+          ...jsonObject(current.metadata),
+          artifactMode: "m4b",
+          deletedExportAt: new Date().toISOString()
+        },
+        updatedAt: new Date()
+      })
+      .where(eq(audiobookExports.id, current.id))
+      .returning()
+
+    return toAudiobookExport(updated)
+  }
+
   async rebuildAutoIfIdle(bookId: string, reason = "chapter_completed"): Promise<AudiobookExport> {
     const current = await this.ensureExport(bookId)
     if (!current.autoBuildEnabled || current.chaptersReady <= 0 || (await this.hasActiveAudioJobs(bookId))) {
@@ -257,9 +298,10 @@ export class AudiobookService {
       await mkdir(this.paths.audiobooksDir, { recursive: true })
       const filePath = path.join(this.paths.audiobooksDir, `${bookId}-${manifestHash.slice(0, 16)}.m4b`)
       const tempPath = path.join(this.paths.audiobooksDir, `.${bookId}-${createId("m4b")}.tmp`)
+      let buildResult: Awaited<ReturnType<typeof buildM4bAudiobook>>
       try {
         await this.updateBuildJob(buildJob.id, { status: "building", progress: 0.55 })
-        await buildM4bAudiobook({
+        buildResult = await buildM4bAudiobook({
           chapters: m4bChapters,
           coverPath,
           metadata: {
@@ -301,7 +343,8 @@ export class AudiobookService {
           metadataJson: {
             ...jsonObject(refreshed.metadata),
             artifactMode: "m4b",
-            encoder: "ffmpeg-static",
+            audioMode: buildResult.audioMode,
+            encoder: buildResult.encoder === "copy" ? "copy" : `ffmpeg-static:${buildResult.encoder}`,
             lastBuildReason: reason
           },
           lastBuiltAt: new Date(),
@@ -371,6 +414,7 @@ export class AudiobookService {
       }
       chapters.push({
         filePath: asset.path,
+        mimeType: asset.mimeType,
         title: chapter.title,
         startMs: chapter.startMs,
         endMs: chapter.endMs
@@ -401,6 +445,13 @@ export class AudiobookService {
   private async hasActiveAudioJobs(bookId: string): Promise<boolean> {
     const jobs = await this.db.query.ttsJobs.findMany({
       where: eq(ttsJobs.bookId, bookId)
+    })
+    return jobs.some((job) => !TERMINAL_JOB_STATUSES.has(job.status))
+  }
+
+  private async hasActiveBuildJob(bookId: string): Promise<boolean> {
+    const jobs = await this.db.query.audiobookBuildJobs.findMany({
+      where: eq(audiobookBuildJobs.bookId, bookId)
     })
     return jobs.some((job) => !TERMINAL_JOB_STATUSES.has(job.status))
   }
@@ -604,6 +655,10 @@ function jsonObject(value: unknown): Record<string, unknown> {
 
 function optional(value: string | null | undefined): string | undefined {
   return value || undefined
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)]
 }
 
 function optionalDate(value: Date | null | undefined): string | undefined {
