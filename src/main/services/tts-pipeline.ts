@@ -2,7 +2,7 @@ import type { NarrationPlan, NarrationProsody, NarrationSegment, PronunciationEn
 import { hashBuffer } from "@main/lib/hash"
 
 export const NORMALIZER_ID = "pt-br-basic-normalizer"
-export const NORMALIZER_VERSION = "1.1.0"
+export const NORMALIZER_VERSION = "1.1.2"
 export const DICTIONARY_VERSION = "builtin-pt-br-v1"
 export const PROSODY_ANALYZER_ID = "neutral-rule-prosody"
 export const PROSODY_VERSION = "1.0.0"
@@ -152,14 +152,19 @@ export function segmentTextForTts(text: string, pronunciationEntries: Pronunciat
   const paragraphs = sanitizeReadableText(text)
     .split(/\n{2,}/)
     .map((paragraph) => paragraph.replace(/\s+/g, " ").trim())
-    .filter(Boolean)
+    .filter(hasSpeakableText)
   const segments: string[] = []
 
   for (const paragraph of paragraphs) {
     segments.push(...chunkSentencesForTts(splitSentences(paragraph), pronunciationEntries))
   }
 
-  return segments.length ? segments : [text.replace(/\s+/g, " ").trim()].filter(Boolean)
+  const speakableSegments = segments.filter(hasSpeakableText)
+  if (speakableSegments.length) {
+    return speakableSegments
+  }
+  const fallback = text.replace(/\s+/g, " ").trim()
+  return hasSpeakableText(fallback) ? [fallback] : []
 }
 
 // The engine synthesizes normalizedText, which expands numbers/dates/abbreviations,
@@ -334,6 +339,10 @@ function sanitizeReadableText(text: string): string {
     .normalize("NFC")
     .replace(/\u00ad/g, "")
     .replace(/[\u200b-\u200f\u202a-\u202e\u2060\ufeff]/g, "")
+}
+
+function hasSpeakableText(text: string): boolean {
+  return [...sanitizeReadableText(text).matchAll(/[\p{L}\p{N}]/gu)].length >= 2
 }
 
 function decodeHtmlEntities(value: string): string {

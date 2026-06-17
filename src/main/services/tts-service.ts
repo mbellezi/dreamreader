@@ -724,6 +724,9 @@ export class TtsService {
         pronunciationEntries: pronunciation,
         paragraphLimit
       })
+      if (!neutralPlan.segments.length) {
+        throw new AppError("tts_no_speakable_text", "No speakable text found for audio generation")
+      }
       const prosodyResult = await this.prosody.applyProsody(neutralPlan, useExpressiveNarration)
       const plan = prosodyResult.plan
       // Preserve segment rows (and any already-synthesized paragraph audio) across

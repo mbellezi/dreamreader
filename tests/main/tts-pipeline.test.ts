@@ -74,6 +74,12 @@ describe("TTS pipeline", () => {
     expect(segmentTextForTts("A infor\u00admação está\u200b aqui.")).toEqual(["A informação está aqui."])
   })
 
+  it("drops punctuation-only and one-character fragments before sending text to TTS", () => {
+    expect(segmentTextForTts("-, *")).toEqual([])
+    expect(segmentTextForTts("S")).toEqual([])
+    expect(segmentTextForTts("Texto antes.\n\nS\n\n* * *\n\nTexto depois.")).toEqual(["Texto antes.", "Texto depois."])
+  })
+
   it("keeps inline-styled leading letters attached to their words", () => {
     const text = htmlToReadableText("<article><p>T<small>HERE</small> is a mushroom.</p><p>I <small>PHONED</small> Alice.</p></article>")
 
