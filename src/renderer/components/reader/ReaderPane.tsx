@@ -61,6 +61,20 @@ type AnnotationMenuState = {
 
 type PageEdgeHint = "previous" | "next"
 
+type ReaderDisplayBlock =
+  | {
+      blockIndex: number
+      paragraphIndex: number
+      text: string
+      type: "paragraph"
+    }
+  | {
+      alt?: string
+      blockIndex: number
+      src: string
+      type: "image"
+    }
+
 type CreateAnnotationDraft = {
   anchorParagraphIndex?: number
   anchorTextOffset?: number
@@ -150,10 +164,8 @@ export function ReaderPane({
   const [noteDraft, setNoteDraft] = useState("")
   const [selectedColor, setSelectedColor] = useState<HighlightColor>("yellow")
   const progress = book?.chapters.length ? Math.round(((chapterIndex + 1) / book.chapters.length) * 100) : 0
-  const paragraphs = useMemo(
-    () => chapter?.text.split(/\n{2,}/).map((paragraph) => paragraph.trim()).filter(Boolean) ?? [],
-    [chapter]
-  )
+  const readerBlocks = useMemo(() => buildReaderDisplayBlocks(chapter), [chapter])
+  const paragraphs = useMemo(() => readerBlocks.filter(isParagraphBlock).map((block) => block.text), [readerBlocks])
   const chapterAnnotations = useMemo(
     () => annotations.filter((annotation) => annotation.chapterId === chapter?.id),
     [annotations, chapter?.id]
@@ -725,16 +737,25 @@ export function ReaderPane({
                     >
                       {chapter.title}
                     </h2>
-                    {paragraphs.map((paragraph, index) => (
-                      <p
-                        key={`${chapter.id}-${index}`}
-                        data-paragraph-index={index}
-                        data-readable-block
-                        style={{ marginTop: index === 0 ? 0 : paginatedParagraphSpacing }}
-                      >
-                        {renderParagraphWithAnnotations(paragraph, index, chapterAnnotations, annotationPlacements, activeAnnotationId, openAnnotationMenu)}
-                      </p>
-                    ))}
+                    {readerBlocks.map((block) =>
+                      block.type === "paragraph" ? (
+                        <p
+                          key={`${chapter.id}-${block.blockIndex}`}
+                          data-paragraph-index={block.paragraphIndex}
+                          data-readable-block
+                          style={{ marginTop: block.blockIndex === 0 ? 0 : paginatedParagraphSpacing }}
+                        >
+                          {renderParagraphWithAnnotations(block.text, block.paragraphIndex, chapterAnnotations, annotationPlacements, activeAnnotationId, openAnnotationMenu)}
+                        </p>
+                      ) : (
+                        <ReaderImageBlock
+                          key={`${chapter.id}-${block.blockIndex}`}
+                          block={block}
+                          marginTop={block.blockIndex === 0 ? 0 : paginatedParagraphSpacing}
+                          maxHeight={pageLayout.pageHeight ? Math.max(160, pageLayout.pageHeight * 0.82) : undefined}
+                        />
+                      )
+                    )}
                   </div>
                 </div>
               ) : (
@@ -766,17 +787,25 @@ export function ReaderPane({
                       columnGap: preferences.columnCount === 2 ? 72 : undefined
                     }}
                   >
-                    {paragraphs.map((paragraph, index) => (
-                      <p
-                        key={`${chapter.id}-${index}`}
-                        className="break-inside-avoid"
-                        data-paragraph-index={index}
-                        data-readable-block
-                        style={{ marginTop: index === 0 ? 0 : `${preferences.paragraphSpacing}em` }}
-                      >
-                        {renderParagraphWithAnnotations(paragraph, index, chapterAnnotations, annotationPlacements, activeAnnotationId, openAnnotationMenu)}
-                      </p>
-                    ))}
+                    {readerBlocks.map((block) =>
+                      block.type === "paragraph" ? (
+                        <p
+                          key={`${chapter.id}-${block.blockIndex}`}
+                          className="break-inside-avoid"
+                          data-paragraph-index={block.paragraphIndex}
+                          data-readable-block
+                          style={{ marginTop: block.blockIndex === 0 ? 0 : `${preferences.paragraphSpacing}em` }}
+                        >
+                          {renderParagraphWithAnnotations(block.text, block.paragraphIndex, chapterAnnotations, annotationPlacements, activeAnnotationId, openAnnotationMenu)}
+                        </p>
+                      ) : (
+                        <ReaderImageBlock
+                          key={`${chapter.id}-${block.blockIndex}`}
+                          block={block}
+                          marginTop={block.blockIndex === 0 ? 0 : `${preferences.paragraphSpacing}em`}
+                        />
+                      )
+                    )}
                   </div>
                 </div>
               )}
@@ -925,6 +954,53 @@ export function ReaderPane({
         </div>
       )}
     </section>
+  )
+}
+
+function buildReaderDisplayBlocks(chapter: BookDetails["chapters"][number] | null): ReaderDisplayBlock[] {
+  const sourceBlocks = chapter?.blocks?.length
+    ? chapter.blocks
+    : chapter?.text
+      .split(/\n{2,}/)
+      .map((paragraph) => ({ type: "paragraph" as const, text: paragraph.trim() }))
+      .filter((block) => block.text) ?? []
+  let paragraphIndex = 0
+
+  return sourceBlocks.map((block, blockIndex) => {
+    if (block.type === "image") {
+      return { ...block, blockIndex }
+    }
+    return {
+      ...block,
+      blockIndex,
+      paragraphIndex: paragraphIndex++
+    }
+  })
+}
+
+function isParagraphBlock(block: ReaderDisplayBlock): block is Extract<ReaderDisplayBlock, { type: "paragraph" }> {
+  return block.type === "paragraph"
+}
+
+function ReaderImageBlock({
+  block,
+  marginTop,
+  maxHeight
+}: {
+  block: Extract<ReaderDisplayBlock, { type: "image" }>
+  marginTop: number | string
+  maxHeight?: number
+}) {
+  return (
+    <figure className="break-inside-avoid" data-readable-block style={{ breakInside: "avoid", marginTop }}>
+      <img
+        alt={block.alt ?? ""}
+        className="mx-auto block max-w-full rounded-sm object-contain"
+        loading="lazy"
+        src={block.src}
+        style={{ maxHeight }}
+      />
+    </figure>
   )
 }
 

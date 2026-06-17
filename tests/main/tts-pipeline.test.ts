@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import {
   buildNarrationPlan,
   dictionaryVersionFor,
+  htmlToReadableText,
   limitParagraphs,
   MAX_TTS_SEGMENT_CHARS,
   normalizePtBr,
@@ -71,6 +72,13 @@ describe("TTS pipeline", () => {
 
   it("removes invisible EPUB control characters before TTS", () => {
     expect(segmentTextForTts("A infor\u00admação está\u200b aqui.")).toEqual(["A informação está aqui."])
+  })
+
+  it("keeps inline-styled leading letters attached to their words", () => {
+    const text = htmlToReadableText("<article><p>T<small>HERE</small> is a mushroom.</p><p>I <small>PHONED</small> Alice.</p></article>")
+
+    expect(text).toBe("THERE is a mushroom.\n\nI PHONED Alice.")
+    expect(segmentTextForTts(text)).toEqual(["THERE is a mushroom.", "I PHONED Alice."])
   })
 
   it("keeps normalizedText within the TTS limit when normalization expands numbers", () => {

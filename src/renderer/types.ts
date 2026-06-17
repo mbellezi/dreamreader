@@ -40,6 +40,17 @@ export type BookSummary = {
 }
 
 export type Chapter = {
+  blocks?: Array<
+    | {
+        type: "paragraph"
+        text: string
+      }
+    | {
+        type: "image"
+        alt?: string
+        src: string
+      }
+  >
   id: string
   title: string
   position: number

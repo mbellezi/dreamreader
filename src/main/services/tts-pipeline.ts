@@ -20,6 +20,24 @@ const commonAbbreviations: Record<string, string> = {
   "etc.": "etcetera"
 }
 
+const htmlEntities: Record<string, string> = {
+  amp: "&",
+  apos: "'",
+  gt: ">",
+  hellip: "...",
+  laquo: "«",
+  ldquo: "“",
+  lsquo: "‘",
+  lt: "<",
+  mdash: "—",
+  nbsp: " ",
+  ndash: "–",
+  quot: "\"",
+  raquo: "»",
+  rdquo: "”",
+  rsquo: "’"
+}
+
 const monthNames = [
   "",
   "janeiro",
@@ -94,18 +112,18 @@ export function buildNarrationPlan(input: ChapterNarrationInput): NarrationPlan 
 
 export function htmlToReadableText(html: string): string {
   return sanitizeReadableText(
-    html
-    .replace(/<head[\s\S]*?<\/head>/gi, "")
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/<style[\s\S]*?<\/style>/gi, "")
-    .replace(/<(p|div|section|article|h1|h2|h3|li)[^>]*>/gi, "\n\n")
-    .replace(/<\/(p|div|section|article|h1|h2|h3|li)>/gi, "\n\n")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
+    decodeHtmlEntities(
+      html
+        .replace(/<head[\s\S]*?<\/head>/gi, "")
+        .replace(/<script[\s\S]*?<\/script>/gi, "")
+        .replace(/<style[\s\S]*?<\/style>/gi, "")
+        .replace(/<[^>]+\bepub:type=["']pagebreak["'][^>]*>/gi, "")
+        .replace(/<(p|div|section|article|h1|h2|h3|li)[^>]*>/gi, "\n\n")
+        .replace(/<\/(p|div|section|article|h1|h2|h3|li)>/gi, "\n\n")
+        .replace(/<img\b[^>]*>/gi, "\n\n")
+        .replace(/<br\s*\/?>/gi, "\n")
+        .replace(/<[^>]+>/g, "")
+    )
     .replace(/[^\S\n]+\n/g, "\n")
     .replace(/\n[^\S\n]+/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
@@ -310,6 +328,17 @@ function sanitizeReadableText(text: string): string {
     .normalize("NFC")
     .replace(/\u00ad/g, "")
     .replace(/[\u200b-\u200f\u202a-\u202e\u2060\ufeff]/g, "")
+}
+
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&#x([0-9a-f]+);/gi, (_match, code: string) => fromCodePoint(Number.parseInt(code, 16)))
+    .replace(/&#(\d+);/g, (_match, code: string) => fromCodePoint(Number.parseInt(code, 10)))
+    .replace(/&([a-z]+);/gi, (match, name: string) => htmlEntities[name] ?? match)
+}
+
+function fromCodePoint(code: number): string {
+  return Number.isInteger(code) && code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : ""
 }
 
 export function neutralProsodyFor(text: string): NarrationProsody {

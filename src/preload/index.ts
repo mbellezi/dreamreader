@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron"
 import { buildSaveLocatorRequest, type RendererLocator } from "@preload/locator"
+import { htmlToReaderBlocks } from "@preload/reader-content"
 
 type IpcSuccess<T> = { ok: true; data: T }
 type IpcFailure = { ok: false; error: { code: string; message: string; details?: unknown } }
@@ -43,11 +44,16 @@ const api = {
           const entry = item as Record<string, unknown>
           const href = String(entry.href ?? `chapter-${index + 1}`)
           const resource = await invoke<{ content: string }>("reader.getResource", { bookId, href })
+          const blocks = htmlToReaderBlocks(resource.content, { bookId, chapterHref: href })
           return {
             id: href,
             title: String(entry.title ?? `Capitulo ${index + 1}`),
             position: index + 1,
-            text: htmlToPlainText(resource.content)
+            text: blocks
+              .filter((block) => block.type === "paragraph")
+              .map((block) => block.text)
+              .join("\n\n"),
+            blocks
           }
         })
       )
@@ -352,22 +358,6 @@ function toRendererLocator(bookId: string, position: Record<string, unknown>) {
     scrollTop: optionalNumber(locations.scrollTop),
     updatedAt: String(position.updatedAt ?? new Date().toISOString())
   }
-}
-
-function htmlToPlainText(html: string): string {
-  return html
-    .replace(/<head[\s\S]*?<\/head>/gi, "")
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/<style[\s\S]*?<\/style>/gi, "")
-    .replace(/<\/(p|div|section|article|h1|h2|h3|li)>/gi, "\n\n")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim()
 }
 
 function colorFromId(value: string): string {
