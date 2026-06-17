@@ -19,6 +19,7 @@ export type LibraryStatusDescriptor = {
   tone: LibraryStatusTone
   messageKey: string
   values?: Record<string, string | number>
+  valueKeys?: Record<string, string>
 }
 
 export type ReaderPreferenceChangeHandler = <Key extends keyof ReaderPreferences>(

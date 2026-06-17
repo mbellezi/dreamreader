@@ -102,10 +102,15 @@ export function App(): ReactElement {
   const t = useCallback((key: string, values?: Record<string, string | number>) => translate(locale, key, values), [locale])
   const selectedInstallBackend = effectiveInstallBackend(diagnostics, installBackend)
   const translateLibraryStatus = useCallback(
-    (status: LibraryStatusDescriptor): LibraryStatus => ({
-      tone: status.tone,
-      message: t(status.messageKey, status.values)
-    }),
+    (status: LibraryStatusDescriptor): LibraryStatus => {
+      const translatedValues = Object.fromEntries(
+        Object.entries(status.valueKeys ?? {}).map(([key, valueKey]) => [key, t(valueKey)])
+      )
+      return {
+        tone: status.tone,
+        message: t(status.messageKey, { ...status.values, ...translatedValues })
+      }
+    },
     [t]
   )
 

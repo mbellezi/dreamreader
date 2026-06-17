@@ -13,6 +13,32 @@ As fases 0, 1, 2 e 3 do roadmap estao implementadas:
 
 Os motores neurais Qwen/Chatterbox/F5 funcionam por instalacao local de Python, sidecars e pesos em `.dreamreader-local/`. O encoder M4B real e o empacotamento final ainda pertencem as proximas fases. Para preparar Qwen3-TTS/Chatterbox/F5-TTS-pt-br locais, rode `npm run setup:python-tts`; isso detecta macOS Apple Silicon, Windows ou Linux, instala um CPython 3.12 standalone, verifica o FFmpeg empacotado e cria pastas de modelos em `.dreamreader-local/`, que nao entra no git.
 
+## Setup de desenvolvimento
+
+Existe um agregador para a instalacao inicial de desenvolvimento, mas as etapas continuam disponiveis separadamente para controle fino de plataforma, sidecars e modelos. O agregador mostra no terminal a fase atual, uma descricao curta e o comando que sera executado antes de iniciar cada etapa.
+
+Fluxo recomendado para uma maquina de desenvolvimento:
+
+```bash
+npm run setup:dev
+npm run dev
+```
+
+Para conferir as fases sem executar downloads/instalacoes:
+
+```bash
+npm run setup:dev -- --dry-run
+```
+
+`npm run setup:dev` executa, em sequencia:
+
+- `npm install`: instala as dependencias Node/Electron/React do projeto.
+- `npm run download:readium-cli`: baixa o Readium CLI da plataforma atual para `vendor/readium/<platform-arch>/`.
+- `npm run setup:python-tts -- --install-sidecars`: instala o runtime Python local e as dependencias dos sidecars TTS.
+- `npm run download:tts-models`: baixa/prepara os modelos locais de TTS configurados pelo projeto.
+
+Para um setup minimo de leitura/importacao de EPUB em desenvolvimento, `npm install` + `npm run download:readium-cli` ja sao suficientes antes de `npm run dev`. Para preparar builds multiplataforma, rode tambem `npm run download:readium-cli -- --all`.
+
 ## Documentacao
 
 - `docs/00-product-spec.md`: produto, publico, funcionalidades e nao-objetivos.
@@ -52,11 +78,14 @@ Para ouvir prévias ou usar essas vozes na geração de áudio, instale antes o 
 ## Comandos principais
 
 ```bash
+npm install
+npm run setup:dev
 npm run dev
 npm test
 npm run test:tts-models
 npm run lint
 npm run build
+npm run download:readium-cli
 npm run setup:python-tts
 npm run download:tts-models
 npm run db:generate

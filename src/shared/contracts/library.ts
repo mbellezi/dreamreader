@@ -52,8 +52,20 @@ export type ImportFilesRequest = z.infer<typeof ImportFilesRequestSchema>;
 export const ImportBooksInputSchema = ImportFilesRequestSchema;
 export type ImportBooksInput = ImportFilesRequest;
 
+export const BookImporterIdSchema = z.enum(["readium-cli", "dreamreader-local"]);
+export type BookImporterId = z.infer<typeof BookImporterIdSchema>;
+
+export const ImportedBookSchema = BookSchema.extend({
+  importSource: z
+    .object({
+      importer: BookImporterIdSchema,
+    })
+    .optional(),
+});
+export type ImportedBook = z.infer<typeof ImportedBookSchema>;
+
 export const ImportFilesResultSchema = z.object({
-  imported: z.array(BookSchema),
+  imported: z.array(ImportedBookSchema),
   skipped: z.array(
     z.object({
       path: NonEmptyStringSchema,

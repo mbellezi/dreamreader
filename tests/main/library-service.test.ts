@@ -8,6 +8,7 @@ import JSZip from "jszip"
 import { afterEach, describe, expect, it } from "vitest"
 import * as schema from "../../src/main/db/schema"
 import { LibraryService } from "../../src/main/services/library-service"
+import type { ReadiumManifestProvider } from "../../src/main/services/readium-cli"
 
 const tempDirs: string[] = []
 
@@ -25,10 +26,15 @@ describe("LibraryService", () => {
 
     try {
       const result = await service.importFiles([epubPath])
-      const imported = result.imported[0] as { id: string; title: string }
+      const imported = result.imported[0] as {
+        id: string
+        title: string
+        importSource?: { importer: string }
+      }
 
       expect(result.skipped).toEqual([])
       expect(imported.title).toBe("Livro de Teste")
+      expect(imported.importSource?.importer).toBe("dreamreader-local")
 
       const opened = await service.openBook(imported.id)
       expect(opened.tableOfContents).toHaveLength(1)
@@ -80,6 +86,77 @@ describe("LibraryService", () => {
       expect(introduction.content).not.toContain("Texto do capitulo 1")
       expect(chapterOne.content).toContain("Texto do capitulo 1")
       expect(chapterOne.content).not.toContain("Texto do capitulo 2")
+    } finally {
+      await client.close()
+    }
+  })
+
+  it("uses a Readium manifest provider before the local EPUB parser", async () => {
+    let readiumCalls = 0
+    const readiumProvider: ReadiumManifestProvider = {
+      async manifest() {
+        readiumCalls += 1
+        return {
+          metadata: {
+            title: "Titulo vindo do Readium",
+            author: { name: "Autora Readium" },
+            language: "pt-BR"
+          },
+          readingOrder: [
+            { href: "index_split_000.html", type: "application/xhtml+xml" }
+          ],
+          resources: [
+            { href: "cover.png", rel: "cover", type: "image/png" }
+          ],
+          toc: [
+            { href: "index_split_000.html#intro", title: "Intro pelo Readium" },
+            { href: "index_split_000.html#c1", title: "Capitulo pelo Readium" },
+            { href: "index_split_000.html#c2", title: "Final pelo Readium" }
+          ]
+        }
+      }
+    }
+    const { client, service, tempDir } = await createTestLibrary(readiumProvider)
+    const epubPath = path.join(tempDir, "readium-provider.epub")
+    await writeFile(epubPath, await createAnchoredEpub())
+
+    try {
+      const result = await service.importFiles([epubPath])
+      const imported = result.imported[0] as {
+        id: string
+        title: string
+        authors: Array<{ name: string }>
+        coverAssetId?: string
+        importSource?: { importer: string }
+      }
+
+      expect(result.skipped).toEqual([])
+      expect(readiumCalls).toBe(1)
+      expect(imported.title).toBe("Titulo vindo do Readium")
+      expect(imported.authors).toEqual([{ name: "Autora Readium" }])
+      expect(imported.coverAssetId).toBeTruthy()
+      expect(imported.importSource?.importer).toBe("readium-cli")
+
+      const opened = await service.openBook(imported.id)
+      expect(opened.tableOfContents.map((item) => item.title)).toEqual([
+        "Intro pelo Readium",
+        "Capitulo pelo Readium",
+        "Final pelo Readium"
+      ])
+
+      const intro = await service.getResource({
+        bookId: imported.id,
+        href: opened.tableOfContents[0].href
+      })
+      const chapter = await service.getResource({
+        bookId: imported.id,
+        href: opened.tableOfContents[1].href
+      })
+
+      expect(intro.content).toContain("Texto da introducao")
+      expect(intro.content).not.toContain("Texto do capitulo 1")
+      expect(chapter.content).toContain("Texto do capitulo 1")
+      expect(chapter.content).not.toContain("Texto do capitulo 2")
     } finally {
       await client.close()
     }
@@ -395,7 +472,7 @@ describe("LibraryService", () => {
   })
 })
 
-async function createTestLibrary() {
+async function createTestLibrary(readiumManifestProvider: ReadiumManifestProvider | null = null) {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "dreamreader-library-"))
   tempDirs.push(tempDir)
 
@@ -429,7 +506,7 @@ async function createTestLibrary() {
   return {
     client,
     db,
-    service: new LibraryService(db, paths),
+    service: new LibraryService(db, paths, { readiumManifestProvider }),
     tempDir
   }
 }

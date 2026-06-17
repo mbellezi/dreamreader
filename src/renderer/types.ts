@@ -180,9 +180,12 @@ export type ImportSkippedItem = {
   existingBookId?: string
 }
 
+export type BookImporterId = "readium-cli" | "dreamreader-local"
+
 export type ImportBooksResult = {
   books: BookSummary[]
   importedCount: number
+  importersUsed: BookImporterId[]
   skipped: ImportSkippedItem[]
 }
 

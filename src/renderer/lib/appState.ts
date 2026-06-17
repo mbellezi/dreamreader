@@ -12,22 +12,26 @@ export function initialChapterIndex(book: BookDetails | null): number {
 }
 
 export function libraryImportStatusForResult(result: ImportBooksResult): LibraryStatusDescriptor {
+  const importerValueKey = importersUsedValueKey(result.importersUsed ?? [])
+
   if (result.importedCount > 0 && result.skipped.length === 0) {
     return {
       tone: "success",
-      messageKey: "library.importSuccess",
-      values: { count: result.importedCount }
+      messageKey: importerValueKey ? "library.importSuccessWithImporter" : "library.importSuccess",
+      values: { count: result.importedCount },
+      ...importerStatusValues(importerValueKey)
     }
   }
 
   if (result.importedCount > 0 && result.skipped.length > 0) {
     return {
       tone: "warning",
-      messageKey: "library.importPartial",
+      messageKey: importerValueKey ? "library.importPartialWithImporter" : "library.importPartial",
       values: {
         imported: result.importedCount,
         skipped: result.skipped.length
-      }
+      },
+      ...importerStatusValues(importerValueKey)
     }
   }
 
@@ -40,6 +44,20 @@ export function libraryImportStatusForResult(result: ImportBooksResult): Library
   }
 
   return { tone: "info", messageKey: "library.importNoSelection" }
+}
+
+function importersUsedValueKey(importersUsed: ImportBooksResult["importersUsed"]): string | undefined {
+  if (importersUsed.length === 1) {
+    return `library.importer.${importersUsed[0]}`
+  }
+  if (importersUsed.length > 1) {
+    return "library.importer.mixed"
+  }
+  return undefined
+}
+
+function importerStatusValues(importerValueKey: string | undefined): Pick<LibraryStatusDescriptor, "valueKeys"> {
+  return importerValueKey ? { valueKeys: { importer: importerValueKey } } : {}
 }
 
 export function libraryImportStatusForError(error: unknown): LibraryStatusDescriptor {

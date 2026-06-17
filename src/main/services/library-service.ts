@@ -22,6 +22,8 @@ import { hashBuffer, hashFile } from "@main/lib/hash"
 import { createId } from "@main/lib/ids"
 import { AppError } from "@main/lib/errors"
 import { SettingsSchema } from "@shared/contracts/settings"
+import { adaptReadiumManifestToReaderManifest } from "./readium-manifest-adapter"
+import { ReadiumCliManifestProvider, type ReadiumManifestProvider } from "./readium-cli"
 
 export type ReaderChapter = {
   id: string
@@ -38,6 +40,9 @@ export type ReaderManifest = {
   title: string
   authors: string[]
   language: string
+  importer?: {
+    id: BookImporterId
+  }
   chapters: ReaderChapter[]
   tableOfContents: Array<{ href: string; title: string }>
   cover?: {
@@ -50,6 +55,12 @@ export type ReaderManifest = {
 export type ImportResult = {
   imported: unknown[]
   skipped: Array<{ path: string; reason: "duplicate" | "unsupported_type" | "invalid_file" | "failed"; existingBookId?: string }>
+}
+
+export type BookImporterId = "readium-cli" | "dreamreader-local"
+
+export type LibraryServiceOptions = {
+  readiumManifestProvider?: ReadiumManifestProvider | null
 }
 
 type EpubManifestItem = {
@@ -97,10 +108,17 @@ const terminalAudioJobStatuses = new Set(["completed", "failed", "cancelled"])
 const terminalAudiobookBuildStatuses = new Set(["completed", "failed", "cancelled"])
 
 export class LibraryService {
+  private readonly readiumManifestProvider?: ReadiumManifestProvider
+
   constructor(
     private readonly db: AppDatabase,
-    private readonly paths: AppPaths
-  ) {}
+    private readonly paths: AppPaths,
+    options: LibraryServiceOptions = {}
+  ) {
+    this.readiumManifestProvider = options.readiumManifestProvider === undefined
+      ? new ReadiumCliManifestProvider(paths.resourcesDir)
+      : options.readiumManifestProvider ?? undefined
+  }
 
   async importFiles(filePaths: string[]): Promise<ImportResult> {
     await this.ensureDirectories()
@@ -122,7 +140,7 @@ export class LibraryService {
         })
         if (existing) {
           const manifest = await this.extractManifest(filePath, fileType, parsed.name)
-          importedBooks.push(toBookContract(await this.refreshExistingBook(existing, filePath, manifest)))
+          importedBooks.push(toImportedBookContract(await this.refreshExistingBook(existing, filePath, manifest), manifest))
           continue
         }
 
@@ -167,7 +185,7 @@ export class LibraryService {
           )[0]
           : inserted
 
-        importedBooks.push(toBookContract(bookRow))
+        importedBooks.push(toImportedBookContract(bookRow, manifest))
       } catch (error) {
         skippedItems.push({
           path: filePath,
@@ -522,6 +540,9 @@ export class LibraryService {
       title,
       authors: [],
       language: "pt-BR",
+      importer: {
+        id: "dreamreader-local"
+      },
       chapters: [
         {
           id: "chapter-1",
@@ -538,6 +559,21 @@ export class LibraryService {
   }
 
   private async extractEpub(filePath: string, fallbackTitle: string): Promise<ReaderManifest> {
+    if (this.readiumManifestProvider) {
+      try {
+        const readiumManifest = await this.readiumManifestProvider.manifest(filePath)
+        return withImporter(
+          await adaptReadiumManifestToReaderManifest(filePath, readiumManifest, fallbackTitle),
+          "readium-cli"
+        )
+      } catch {
+        // Keep imports working in development and for EPUBs Readium cannot adapt yet.
+      }
+    }
+    return this.extractEpubLocal(filePath, fallbackTitle)
+  }
+
+  private async extractEpubLocal(filePath: string, fallbackTitle: string): Promise<ReaderManifest> {
     const zip = await JSZip.loadAsync(await readFile(filePath))
     const containerFile = findZipFile(zip, "META-INF/container.xml")
     if (!containerFile) {
@@ -596,6 +632,9 @@ export class LibraryService {
       title,
       authors: creators,
       language,
+      importer: {
+        id: "dreamreader-local"
+      },
       chapters,
       tableOfContents: chapters.map((chapter) => ({ href: chapter.href, title: chapter.title })),
       cover: coverItem
@@ -759,6 +798,15 @@ function toHtml(raw: string, fileType: string): string {
     .map((paragraph) => `<p>${paragraph.replaceAll("\n", "<br />")}</p>`)
     .join("\n")
   return `<article>${escaped}</article>`
+}
+
+function withImporter(manifest: ReaderManifest, importerId: BookImporterId): ReaderManifest {
+  return {
+    ...manifest,
+    importer: {
+      id: importerId
+    }
+  }
 }
 
 function managedBookArtifactPaths(book: BookRow, assetRows: AssetRow[], paths: AppPaths): Set<string> {
@@ -1234,6 +1282,17 @@ function normalizeFileType(ext: string): "epub" | "txt" | "markdown" | "html" | 
     return clean
   }
   return undefined
+}
+
+function toImportedBookContract(book: typeof books.$inferSelect, manifest: ReaderManifest) {
+  return {
+    ...toBookContract(book),
+    importSource: manifest.importer
+      ? {
+        importer: manifest.importer.id
+      }
+      : undefined
+  }
 }
 
 function toBookContract(book: typeof books.$inferSelect, position?: typeof readingPositions.$inferSelect) {

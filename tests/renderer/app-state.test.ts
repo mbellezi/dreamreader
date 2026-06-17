@@ -31,6 +31,7 @@ function importResult(overrides: Partial<ImportBooksResult>): ImportBooksResult 
   return {
     books: [],
     importedCount: 0,
+    importersUsed: [],
     skipped: [],
     ...overrides
   }
@@ -71,6 +72,17 @@ describe("libraryImportStatusForResult", () => {
     })
   })
 
+  it("reports the effective importer for a full success", () => {
+    expect(
+      libraryImportStatusForResult(importResult({ importedCount: 1, importersUsed: ["readium-cli"] }))
+    ).toEqual({
+      tone: "success",
+      messageKey: "library.importSuccessWithImporter",
+      values: { count: 1 },
+      valueKeys: { importer: "library.importer.readium-cli" }
+    })
+  })
+
   it("reports a partial import", () => {
     expect(
       libraryImportStatusForResult(
@@ -83,6 +95,23 @@ describe("libraryImportStatusForResult", () => {
       tone: "warning",
       messageKey: "library.importPartial",
       values: { imported: 1, skipped: 1 }
+    })
+  })
+
+  it("reports mixed importers for a partial import", () => {
+    expect(
+      libraryImportStatusForResult(
+        importResult({
+          importedCount: 2,
+          importersUsed: ["readium-cli", "dreamreader-local"],
+          skipped: [{ path: "/tmp/bad.pdf", reason: "unsupported_type" }]
+        })
+      )
+    ).toEqual({
+      tone: "warning",
+      messageKey: "library.importPartialWithImporter",
+      values: { imported: 2, skipped: 1 },
+      valueKeys: { importer: "library.importer.mixed" }
     })
   })
 

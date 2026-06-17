@@ -16,6 +16,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:tts-models": "node scripts/smoke-test-local-tts-models.mjs",
+    "poc:readium": "node scripts/readium-poc.mjs",
+    "setup:dev": "node scripts/setup-dev.mjs",
+    "download:readium-cli": "node scripts/download-readium-cli.mjs",
     "setup:python-tts": "node scripts/setup-python-tts.mjs",
     "download:tts-models": "node scripts/download-local-tts-models.mjs",
     "db:generate": "drizzle-kit generate",
@@ -62,6 +65,14 @@
       "drizzle/**"
     ],
     "extraResources": [
+      {
+        "from": "vendor/readium",
+        "to": "readium",
+        "filter": [
+          "**/*",
+          "!**/.downloads/**"
+        ]
+      },
       {
         "from": "sidecars",
         "to": "sidecars",

@@ -12,3 +12,5 @@ release/
 coverage/
 *.epub
 .dreamreader-local/
+vendor/readium/*
+!vendor/readium/.gitkeep

@@ -5,6 +5,7 @@ import { htmlToReaderBlocks } from "@preload/reader-content"
 type IpcSuccess<T> = { ok: true; data: T }
 type IpcFailure = { ok: false; error: { code: string; message: string; details?: unknown } }
 type IpcResult<T> = IpcSuccess<T> | IpcFailure
+type BookImporterId = "readium-cli" | "dreamreader-local"
 
 async function invoke<T>(channel: string, payload?: unknown): Promise<T> {
   const result = (await ipcRenderer.invoke(channel, payload)) as IpcResult<T>
@@ -28,6 +29,7 @@ const api = {
       return {
         books: result.books.map(toRendererBookSummary),
         importedCount: imported.imported.length,
+        importersUsed: uniqueBookImporters(imported.imported),
         skipped: imported.skipped
       }
     },
@@ -249,6 +251,25 @@ function toRendererBookSummary(input: unknown) {
     coverColor: colorFromId(String(book.id ?? book.title ?? "book")),
     coverImageUrl: optionalString(book.coverImageUrl)
   }
+}
+
+function uniqueBookImporters(imported: unknown[]): BookImporterId[] {
+  const seen = new Set<BookImporterId>()
+  for (const item of imported) {
+    const importer = bookImporterId(item)
+    if (importer) {
+      seen.add(importer)
+    }
+  }
+  return [...seen]
+}
+
+function bookImporterId(input: unknown): BookImporterId | undefined {
+  const book = (input ?? {}) as Record<string, unknown>
+  const importSource = (book.importSource ?? {}) as Record<string, unknown>
+  const manifest = (book.manifest ?? {}) as Record<string, unknown>
+  const importer = optionalString(importSource.importer) ?? optionalString((manifest.importer as Record<string, unknown> | undefined)?.id)
+  return importer === "readium-cli" || importer === "dreamreader-local" ? importer : undefined
 }
 
 function toRendererAnnotation(input: unknown, fallbackKind = "highlight", fallbackChapterId = "chapter-1") {

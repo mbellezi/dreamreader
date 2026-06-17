@@ -65,7 +65,7 @@ export {
   ImportBooksInputSchema,
   LibraryBookSchema,
 } from "./library";
-export type { Book, DeleteBookRequest, DeleteBookResult, ImportBooksInput, LibraryBook } from "./library";
+export type { Book, BookImporterId, DeleteBookRequest, DeleteBookResult, ImportedBook, ImportBooksInput, LibraryBook } from "./library";
 
 export {
   AppSettingsSchema,
