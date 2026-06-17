@@ -59,6 +59,24 @@ type EpubManifestItem = {
   properties?: string
 }
 
+type EpubTocEntry = {
+  title: string
+  href: string
+  children: EpubTocEntry[]
+}
+
+type TocChapterEntry = {
+  title: string
+  href: string
+  contentHrefs: string[]
+  includeAdditionalHrefs: "always" | "when-primary-unreadable"
+}
+
+type TocExtractionResult = {
+  chapters: ReaderChapter[]
+  hadStructuralMiss: boolean
+}
+
 type AnnotationRow = typeof annotations.$inferSelect
 type AssetRow = typeof assets.$inferSelect
 type BookRow = typeof books.$inferSelect
@@ -554,10 +572,15 @@ export class LibraryService {
     let chapters: ReaderChapter[] = []
 
     if (tocEntries.length) {
-      chapters = await this.extractChaptersFromToc(zip, baseDir, tocEntries)
+      const tocExtraction = await this.extractChaptersFromToc(zip, tocEntries)
+      chapters = tocExtraction.chapters
+
+      if (tocExtraction.hadStructuralMiss) {
+        chapters = []
+      }
     }
 
-    if (!chapters.length || chapters.length !== tocEntries.length) {
+    if (!chapters.length) {
       chapters = await this.extractChaptersFromSpine(zip, baseDir, spine, itemById, manifestItems)
     }
 
@@ -625,7 +648,7 @@ export class LibraryService {
     baseDir: string,
     manifestItems: EpubManifestItem[],
     spineTocId: string
-  ): Promise<Array<{ title: string; href: string }>> {
+  ): Promise<EpubTocEntry[]> {
     const ncxItem =
       manifestItems.find((item) => item.id === spineTocId) ??
       manifestItems.find((item) => item.mediaType === "application/x-dtbncx+xml")
@@ -637,60 +660,60 @@ export class LibraryService {
       return []
     }
     const ncx = navigationParser.parse(await ncxFile.async("text"))
-    const navPoints = flattenNavPoints(ncx?.ncx?.navMap?.navPoint)
-    return navPoints
-      .map((point) => ({
-        title: navPointLabel(point),
-        href: navPointHref(point)
-      }))
-      .filter((item) => item.title && item.href)
-      .map((item) => ({
-        title: item.title,
-        href: normalizeEpubTocHref(baseDir, item.href)
-      }))
+    return arrayify(ncx?.ncx?.navMap?.navPoint as Record<string, unknown> | Array<Record<string, unknown>> | undefined)
+      .map((point) => navPointToTocEntry(point, baseDir))
+      .filter((entry): entry is EpubTocEntry => Boolean(entry))
   }
 
   private async extractChaptersFromToc(
     zip: JSZip,
-    baseDir: string,
-    tocEntries: Array<{ title: string; href: string }>
-  ): Promise<ReaderChapter[]> {
+    tocEntries: EpubTocEntry[]
+  ): Promise<TocExtractionResult> {
     const chapters: ReaderChapter[] = []
     const htmlByPath = new Map<string, string>()
+    const chapterEntries = tocEntriesToChapterEntries(tocEntries)
+    let hadStructuralMiss = false
 
-    for (const [index, entry] of tocEntries.entries()) {
-      const parsed = splitHref(entry.href)
-      const chapterFile = findZipFile(zip, parsed.filePath)
-      if (!chapterFile || !isHtmlPath(parsed.filePath)) {
+    for (const [index, entry] of chapterEntries.entries()) {
+      const nextEntry = chapterEntries.slice(index + 1).find((item) => splitHref(item.href).filePath === splitHref(entry.href).filePath)
+      const primary = await readTocHrefContent(zip, htmlByPath, entry.href, nextEntry?.href)
+      if (primary.hadStructuralMiss) {
+        hadStructuralMiss = true
         continue
       }
 
-      const html = htmlByPath.get(parsed.filePath) ?? await chapterFile.async("text")
-      htmlByPath.set(parsed.filePath, html)
-      const nextEntry = tocEntries.slice(index + 1).map((item) => splitHref(item.href)).find((item) => item.filePath === parsed.filePath)
-      const startIndex = parsed.fragment ? findAnchorIndex(html, parsed.fragment) : bodyStartIndex(html)
-      if (startIndex === undefined) {
-        continue
+      const pieces = primary.content ? [primary.content] : []
+      const primaryText = htmlToReadableText(primary.content ?? "")
+      if (entry.includeAdditionalHrefs === "always" || !primaryText) {
+        for (const contentHref of entry.contentHrefs.slice(1)) {
+          const additional = await readTocHrefContent(zip, htmlByPath, contentHref)
+          if (additional.hadStructuralMiss) {
+            hadStructuralMiss = true
+            continue
+          }
+          if (additional.content) {
+            pieces.push(additional.content)
+          }
+        }
       }
 
-      const endIndex = nextEntry?.fragment ? findAnchorIndex(html, nextEntry.fragment) ?? html.length : html.length
-      const content = html.slice(startIndex, Math.max(startIndex, endIndex))
-
+      const content = pieces.join("\n")
       if (!htmlToReadableText(content)) {
         continue
       }
 
+      const parsed = splitHref(entry.href)
       chapters.push({
         id: parsed.fragment ? `${parsed.filePath}#${parsed.fragment}` : parsed.filePath,
         href: parsed.fragment ? `${parsed.filePath}#${parsed.fragment}` : parsed.filePath,
         title: entry.title,
         content,
         mediaType: "application/xhtml+xml",
-        progressionStart: index / Math.max(tocEntries.length, 1),
-        progressionEnd: (index + 1) / Math.max(tocEntries.length, 1)
+        progressionStart: index / Math.max(chapterEntries.length, 1),
+        progressionEnd: (index + 1) / Math.max(chapterEntries.length, 1)
       })
     }
-    return chapters
+    return { chapters: normalizeChapterProgression(chapters), hadStructuralMiss }
   }
 
   private async storeEpubCover(
@@ -822,11 +845,97 @@ function isHtmlPath(filePath: string): boolean {
   return /\.(?:xhtml|html?|xml)$/i.test(filePath)
 }
 
-function flattenNavPoints(value: unknown): Array<Record<string, unknown>> {
-  return arrayify(value as Record<string, unknown> | Array<Record<string, unknown>> | undefined).flatMap((point) => [
-    point,
-    ...flattenNavPoints(point.navPoint)
-  ])
+function navPointToTocEntry(point: Record<string, unknown>, baseDir: string): EpubTocEntry | undefined {
+  const title = navPointLabel(point)
+  const href = navPointHref(point)
+  const children = arrayify(point.navPoint as Record<string, unknown> | Array<Record<string, unknown>> | undefined)
+    .map((child) => navPointToTocEntry(child, baseDir))
+    .filter((entry): entry is EpubTocEntry => Boolean(entry))
+
+  if (!title && !href && !children.length) {
+    return undefined
+  }
+
+  return {
+    title,
+    href: href ? normalizeEpubTocHref(baseDir, href) : "",
+    children
+  }
+}
+
+function tocEntriesToChapterEntries(entries: EpubTocEntry[]): TocChapterEntry[] {
+  return entries.flatMap((entry) => tocEntryToChapterEntries(entry))
+}
+
+function tocEntryToChapterEntries(entry: EpubTocEntry): TocChapterEntry[] {
+  if (isNoteTocEntry(entry)) {
+    return []
+  }
+
+  const chapterChildren = entry.children.filter((child) => isMajorTocEntry(child))
+  if (chapterChildren.length) {
+    return chapterChildren.flatMap((child) => tocChapterEntry(child, "always"))
+  }
+
+  if (!entry.href) {
+    return entry.children.flatMap((child) => tocEntryToChapterEntries(child))
+  }
+
+  return tocChapterEntry(entry, "when-primary-unreadable")
+}
+
+function tocChapterEntry(entry: EpubTocEntry, includeAdditionalHrefs: TocChapterEntry["includeAdditionalHrefs"]): TocChapterEntry[] {
+  if (isNoteTocEntry(entry)) {
+    return []
+  }
+  if (!entry.href) {
+    return entry.children.flatMap((child) => tocEntryToChapterEntries(child))
+  }
+
+  return [
+    {
+      title: entry.title,
+      href: entry.href,
+      contentHrefs: uniqueContentHrefs([entry.href, ...collectDescendantContentHrefs(entry)]),
+      includeAdditionalHrefs
+    }
+  ]
+}
+
+function collectDescendantContentHrefs(entry: EpubTocEntry): string[] {
+  return entry.children.flatMap((child) => {
+    if (isNoteTocEntry(child)) {
+      return []
+    }
+    return [hrefWithoutFragment(child.href), ...collectDescendantContentHrefs(child)].filter(isString)
+  })
+}
+
+function uniqueContentHrefs(hrefs: string[]): string[] {
+  const seen = new Set<string>()
+  return hrefs.filter((href) => {
+    const normalized = hrefWithoutFragment(href)
+    if (!normalized || seen.has(normalized)) {
+      return false
+    }
+    seen.add(normalized)
+    return true
+  })
+}
+
+function hrefWithoutFragment(href: string): string {
+  return splitHref(href).filePath
+}
+
+function isMajorTocEntry(entry: EpubTocEntry): boolean {
+  const title = entry.title.trim()
+  return /^\d+\s*[.)-]?\s+\S/.test(title) || /^(?:cap[ií]tulo|chapter)\b/i.test(title)
+}
+
+function isNoteTocEntry(entry: EpubTocEntry): boolean {
+  const title = entry.title.trim()
+  const filePath = splitHref(entry.href).filePath
+  return /^notas?$/i.test(title) || /(?:^|[_-])notas?\.(?:xhtml|html?)$/i.test(filePath)
 }
 
 function navPointLabel(point: Record<string, unknown>): string {
@@ -845,6 +954,36 @@ function findAnchorIndex(html: string, fragment: string): number | undefined {
   return match?.index
 }
 
+async function readTocHrefContent(
+  zip: JSZip,
+  htmlByPath: Map<string, string>,
+  href: string,
+  endBeforeHref?: string
+): Promise<{ content?: string; hadStructuralMiss: boolean }> {
+  const parsed = splitHref(href)
+  const chapterFile = findZipFile(zip, parsed.filePath)
+  if (!chapterFile || !isHtmlPath(parsed.filePath)) {
+    return { hadStructuralMiss: true }
+  }
+
+  const html = htmlByPath.get(parsed.filePath) ?? await chapterFile.async("text")
+  htmlByPath.set(parsed.filePath, html)
+  const startIndex = parsed.fragment ? findAnchorIndex(html, parsed.fragment) : bodyStartIndex(html)
+  if (startIndex === undefined) {
+    return { hadStructuralMiss: true }
+  }
+
+  const next = endBeforeHref ? splitHref(endBeforeHref) : undefined
+  const endIndex = next?.filePath === parsed.filePath && next.fragment
+    ? findAnchorIndex(html, next.fragment) ?? html.length
+    : html.length
+
+  return {
+    content: html.slice(startIndex, Math.max(startIndex, endIndex)),
+    hadStructuralMiss: false
+  }
+}
+
 function bodyStartIndex(html: string): number {
   const match = html.match(/<body[^>]*>/i)
   return match?.index === undefined ? 0 : match.index + match[0].length
@@ -858,6 +997,14 @@ function htmlToReadableText(html: string): string {
     .replace(/<[^>]+>/g, " ")
     .replace(/\s+/g, " ")
     .trim()
+}
+
+function normalizeChapterProgression(chapters: ReaderChapter[]): ReaderChapter[] {
+  return chapters.map((chapter, index) => ({
+    ...chapter,
+    progressionStart: index / Math.max(chapters.length, 1),
+    progressionEnd: (index + 1) / Math.max(chapters.length, 1)
+  }))
 }
 
 function extensionForMimeType(mimeType: string): string | undefined {

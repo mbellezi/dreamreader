@@ -115,6 +115,75 @@ describe("LibraryService", () => {
     }
   })
 
+  it("does not turn nested NCX subnavigation into extra chapters", async () => {
+    const { client, service, tempDir } = await createTestLibrary()
+    const epubPath = path.join(tempDir, "nested-subnavigation.epub")
+    await writeFile(epubPath, await createNestedSubnavigationEpub())
+
+    try {
+      const result = await service.importFiles([epubPath])
+      const imported = result.imported[0] as { id: string }
+
+      expect(result.skipped).toEqual([])
+
+      const opened = await service.openBook(imported.id)
+      expect(opened.tableOfContents.map((item) => item.title)).toEqual([
+        "Primary section",
+        "Second section"
+      ])
+      expect(opened.tableOfContents.map((item) => item.href)).toEqual([
+        "part-1.xhtml",
+        "part-2.xhtml"
+      ])
+
+      const primary = await service.getResource({
+        bookId: imported.id,
+        href: opened.tableOfContents[0].href
+      })
+
+      expect(primary.content).toContain("Main body text.")
+      expect(primary.content).not.toContain("Internal note text.")
+    } finally {
+      await client.close()
+    }
+  })
+
+  it("keeps numbered chapters nested under parts and merges their subsection files", async () => {
+    const { client, service, tempDir } = await createTestLibrary()
+    const epubPath = path.join(tempDir, "numbered-nested-chapters.epub")
+    await writeFile(epubPath, await createNumberedNestedChaptersEpub())
+
+    try {
+      const result = await service.importFiles([epubPath])
+      const imported = result.imported[0] as { id: string }
+
+      expect(result.skipped).toEqual([])
+
+      const opened = await service.openBook(imported.id)
+      expect(opened.tableOfContents.map((item) => item.title)).toEqual([
+        "Introduction",
+        "1. Numbered chapter",
+        "Appendix One"
+      ])
+
+      const numbered = await service.getResource({
+        bookId: imported.id,
+        href: opened.tableOfContents[1].href
+      })
+      const appendix = await service.getResource({
+        bookId: imported.id,
+        href: opened.tableOfContents[2].href
+      })
+
+      expect(numbered.content).toContain("Numbered chapter")
+      expect(numbered.content).toContain("Merged body text.")
+      expect(numbered.content).not.toContain("Numbered note text.")
+      expect(appendix.content).toContain("Appendix body text.")
+    } finally {
+      await client.close()
+    }
+  })
+
   it("deletes a book with its database rows and generated audio files", async () => {
     const { client, db, service, tempDir } = await createTestLibrary()
     const epubPath = path.join(tempDir, "livro-teste.epub")
@@ -535,6 +604,231 @@ async function createBrokenTocEpub(): Promise<Buffer> {
 <html xmlns="http://www.w3.org/1999/xhtml" lang="pt-BR">
   <head><title>Corpus hermeticum graecum</title></head>
   <body><h1>8 - TAREFA E TECNICA DE TRADUCAO DO CORPUS HERMETICUM</h1><p>Texto correto do capitulo 8.</p></body>
+</html>`
+  )
+  return zip.generateAsync({ type: "nodebuffer" })
+}
+
+async function createNestedSubnavigationEpub(): Promise<Buffer> {
+  const zip = new JSZip()
+  zip.file(
+    "META-INF/container.xml",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>`
+  )
+  zip.file(
+    "content.opf",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<package version="2.0" unique-identifier="bookid" xmlns="http://www.idpf.org/2007/opf">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Nested Subnavigation</dc:title>
+    <dc:creator>DreamReader</dc:creator>
+    <dc:language>pt-BR</dc:language>
+  </metadata>
+  <manifest>
+    <item id="cover" href="cover.xhtml" media-type="application/xhtml+xml"/>
+    <item id="part-1" href="part-1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="part-1-note" href="part-1-note.xhtml" media-type="application/xhtml+xml"/>
+    <item id="part-1-detail" href="part-1-detail.xhtml" media-type="application/xhtml+xml"/>
+    <item id="part-2" href="part-2.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+  </manifest>
+  <spine toc="ncx">
+    <itemref idref="cover"/>
+    <itemref idref="part-1"/>
+    <itemref idref="part-1-note"/>
+    <itemref idref="part-1-detail"/>
+    <itemref idref="part-2"/>
+  </spine>
+</package>`
+  )
+  zip.file(
+    "toc.ncx",
+    `<?xml version="1.0" encoding="utf-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1" xml:lang="por">
+  <head><meta name="dtb:uid" content="bookid"/></head>
+  <docTitle><text>Nested Subnavigation</text></docTitle>
+  <navMap>
+    <navPoint id="cover" playOrder="1"><navLabel><text>Cover</text></navLabel><content src="cover.xhtml"/></navPoint>
+    <navPoint id="part-1" playOrder="2">
+      <navLabel><text>Primary section</text></navLabel>
+      <content src="part-1.xhtml"/>
+      <navPoint id="part-1-note" playOrder="3"><navLabel><text>Internal note</text></navLabel><content src="part-1-note.xhtml"/></navPoint>
+      <navPoint id="part-1-detail" playOrder="4"><navLabel><text>Internal detail</text></navLabel><content src="part-1-detail.xhtml#detail"/></navPoint>
+    </navPoint>
+    <navPoint id="part-2" playOrder="5"><navLabel><text>Second section</text></navLabel><content src="part-2.xhtml"/></navPoint>
+  </navMap>
+</ncx>`
+  )
+  zip.file(
+    "cover.xhtml",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="pt-BR">
+  <head><title>Cover</title></head>
+  <body><img src="cover.png" alt=""/></body>
+</html>`
+  )
+  zip.file(
+    "part-1.xhtml",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="pt-BR">
+  <head><title>Primary section</title></head>
+  <body><h1>Primary section</h1><p>Main body text.</p></body>
+</html>`
+  )
+  zip.file(
+    "part-1-note.xhtml",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="pt-BR">
+  <head><title>Internal note</title></head>
+  <body><h1>Internal note</h1><p>Internal note text.</p></body>
+</html>`
+  )
+  zip.file(
+    "part-1-detail.xhtml",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="pt-BR">
+  <head><title>Internal detail</title></head>
+  <body><h1 id="detail">Internal detail</h1><p>Internal detail text.</p></body>
+</html>`
+  )
+  zip.file(
+    "part-2.xhtml",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="pt-BR">
+  <head><title>Second section</title></head>
+  <body><h1>Second section</h1><p>Second body text.</p></body>
+</html>`
+  )
+  return zip.generateAsync({ type: "nodebuffer" })
+}
+
+async function createNumberedNestedChaptersEpub(): Promise<Buffer> {
+  const zip = new JSZip()
+  zip.file(
+    "META-INF/container.xml",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>`
+  )
+  zip.file(
+    "content.opf",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<package version="2.0" unique-identifier="bookid" xmlns="http://www.idpf.org/2007/opf">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Numbered Nested Chapters</dc:title>
+    <dc:creator>DreamReader</dc:creator>
+    <dc:language>pt-BR</dc:language>
+  </metadata>
+  <manifest>
+    <item id="intro" href="intro.xhtml" media-type="application/xhtml+xml"/>
+    <item id="part" href="part.xhtml" media-type="application/xhtml+xml"/>
+    <item id="chapter-title" href="chapter-title.xhtml" media-type="application/xhtml+xml"/>
+    <item id="chapter-body" href="chapter-body.xhtml" media-type="application/xhtml+xml"/>
+    <item id="chapter-note" href="chapter_notas.xhtml" media-type="application/xhtml+xml"/>
+    <item id="appendix-title" href="appendix-title.xhtml" media-type="application/xhtml+xml"/>
+    <item id="appendix-body" href="appendix-body.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+  </manifest>
+  <spine toc="ncx">
+    <itemref idref="intro"/>
+    <itemref idref="part"/>
+    <itemref idref="chapter-title"/>
+    <itemref idref="chapter-body"/>
+    <itemref idref="chapter-note"/>
+    <itemref idref="appendix-title"/>
+    <itemref idref="appendix-body"/>
+  </spine>
+</package>`
+  )
+  zip.file(
+    "toc.ncx",
+    `<?xml version="1.0" encoding="utf-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1" xml:lang="por">
+  <head><meta name="dtb:uid" content="bookid"/></head>
+  <docTitle><text>Numbered Nested Chapters</text></docTitle>
+  <navMap>
+    <navPoint id="intro" playOrder="1"><navLabel><text>Introduction</text></navLabel><content src="intro.xhtml"/></navPoint>
+    <navPoint id="part" playOrder="2">
+      <navLabel><text>Part I</text></navLabel>
+      <content src="part.xhtml"/>
+      <navPoint id="chapter-title" playOrder="3">
+        <navLabel><text>1. Numbered chapter</text></navLabel>
+        <content src="chapter-title.xhtml"/>
+        <navPoint id="chapter-body-topic" playOrder="4"><navLabel><text>Body topic</text></navLabel><content src="chapter-body.xhtml#topic"/></navPoint>
+        <navPoint id="chapter-note" playOrder="5"><navLabel><text>Nota</text></navLabel><content src="chapter_notas.xhtml"/></navPoint>
+      </navPoint>
+    </navPoint>
+    <navPoint id="appendix-title" playOrder="6">
+      <navLabel><text>Appendix One</text></navLabel>
+      <content src="appendix-title.xhtml"/>
+      <navPoint id="appendix-topic-a" playOrder="7"><navLabel><text>First topic</text></navLabel><content src="appendix-body.xhtml#a"/></navPoint>
+      <navPoint id="appendix-topic-b" playOrder="8"><navLabel><text>Second topic</text></navLabel><content src="appendix-body.xhtml#b"/></navPoint>
+    </navPoint>
+  </navMap>
+</ncx>`
+  )
+  zip.file(
+    "intro.xhtml",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="pt-BR">
+  <head><title>Introduction</title></head>
+  <body><h1>Introduction</h1><p>Intro body text.</p></body>
+</html>`
+  )
+  zip.file(
+    "part.xhtml",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="pt-BR">
+  <head><title>Part I</title></head>
+  <body><img src="part.png" alt=""/></body>
+</html>`
+  )
+  zip.file(
+    "chapter-title.xhtml",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="pt-BR">
+  <head><title>Numbered chapter</title></head>
+  <body><h1>Numbered chapter</h1></body>
+</html>`
+  )
+  zip.file(
+    "chapter-body.xhtml",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="pt-BR">
+  <head><title>Body topic</title></head>
+  <body><h2 id="topic">Body topic</h2><p>Merged body text.</p></body>
+</html>`
+  )
+  zip.file(
+    "chapter_notas.xhtml",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="pt-BR">
+  <head><title>Nota</title></head>
+  <body><p>Numbered note text.</p></body>
+</html>`
+  )
+  zip.file(
+    "appendix-title.xhtml",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="pt-BR">
+  <head><title>Appendix One</title></head>
+  <body><img src="appendix.png" alt=""/></body>
+</html>`
+  )
+  zip.file(
+    "appendix-body.xhtml",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="pt-BR">
+  <head><title>Appendix body</title></head>
+  <body><h2 id="a">First topic</h2><p>Appendix body text.</p><h2 id="b">Second topic</h2><p>More appendix text.</p></body>
 </html>`
   )
   return zip.generateAsync({ type: "nodebuffer" })
