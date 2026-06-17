@@ -156,6 +156,9 @@ describe("shared contracts", () => {
       }).success,
     ).toBe(true);
 
+    expect(IpcContractSchemas["library.deleteBook"].request.parse({ bookId: "book-1" })).toEqual({
+      bookId: "book-1",
+    });
     expect(ExportAnnotationsInputSchema.parse({}).format).toBe("markdown");
     expect(ExportAnnotationsResultSchema.parse({ exported: true, filePath: "/tmp/notas.md" }).exported).toBe(true);
   });

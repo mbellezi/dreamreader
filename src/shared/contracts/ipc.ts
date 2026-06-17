@@ -16,6 +16,8 @@ import {
   JsonObjectSchema,
 } from "./common";
 import {
+  DeleteBookRequestSchema,
+  DeleteBookResultSchema,
   ImportFilesRequestSchema,
   ImportFilesResultSchema,
   ImportBooksInputSchema,
@@ -97,6 +99,8 @@ export {
   BookSchema,
   CreatePronunciationEntryRequestSchema,
   CreateAnnotationInputSchema,
+  DeleteBookRequestSchema,
+  DeleteBookResultSchema,
   DeletePronunciationEntryRequestSchema,
   ExportAnnotationsInputSchema,
   ExportAnnotationsResultSchema,
@@ -160,7 +164,7 @@ export type {
   VoiceProfile,
   VoiceSample,
 } from "./ai";
-export type { Book, ImportBooksInput, LibraryBook } from "./library";
+export type { Book, DeleteBookRequest, DeleteBookResult, ImportBooksInput, LibraryBook } from "./library";
 export type {
   ReaderChapter,
   ReaderManifest,
@@ -174,6 +178,7 @@ export const IpcChannelSchema = z.enum([
   "library.importFiles",
   "library.listBooks",
   "library.updateBookMetadata",
+  "library.deleteBook",
   "reader.openBook",
   "reader.getResource",
   "reader.saveLocator",
@@ -248,6 +253,10 @@ export const IpcContractSchemas = {
   "library.updateBookMetadata": {
     request: UpdateBookMetadataRequestSchema,
     response: createIpcResponseSchema(BookSchema),
+  },
+  "library.deleteBook": {
+    request: DeleteBookRequestSchema,
+    response: createIpcResponseSchema(DeleteBookResultSchema),
   },
   "reader.openBook": {
     request: OpenBookRequestSchema,

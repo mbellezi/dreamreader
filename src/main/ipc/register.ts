@@ -42,6 +42,7 @@ export function registerIpc(services: Services): void {
   handle("library.updateBookMetadata", contract["library.updateBookMetadata"].request, (input) =>
     services.library.updateBookMetadata(input)
   )
+  handle("library.deleteBook", contract["library.deleteBook"].request, (input) => services.library.deleteBook(input.bookId))
   handle("reader.openBook", contract["reader.openBook"].request, (input) => services.library.openBook(input.bookId))
   handle("reader.getResource", contract["reader.getResource"].request, (input) => services.library.getResource(input))
   handle("reader.saveLocator", contract["reader.saveLocator"].request, (input) =>

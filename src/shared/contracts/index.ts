@@ -60,10 +60,12 @@ export type {
 
 export {
   BookSchema,
+  DeleteBookRequestSchema,
+  DeleteBookResultSchema,
   ImportBooksInputSchema,
   LibraryBookSchema,
 } from "./library";
-export type { Book, ImportBooksInput, LibraryBook } from "./library";
+export type { Book, DeleteBookRequest, DeleteBookResult, ImportBooksInput, LibraryBook } from "./library";
 
 export {
   AppSettingsSchema,

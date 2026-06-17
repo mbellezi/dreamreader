@@ -21,6 +21,7 @@ const api = {
   library: {
     importFiles: (filePaths?: string[]) => invoke("library.importFiles", { filePaths }),
     updateBookMetadata: (input: Record<string, unknown>) => invoke("library.updateBookMetadata", input),
+    deleteBook: (bookId: string) => invoke("library.deleteBook", { bookId }),
     importBooks: async () => {
       const imported = await invoke<{ imported: unknown[]; skipped: unknown[] }>("library.importFiles", {})
       const result = await invoke<{ books: unknown[]; total: number }>("library.listBooks", {})

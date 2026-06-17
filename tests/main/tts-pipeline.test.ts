@@ -100,6 +100,29 @@ describe("TTS pipeline", () => {
     expect(text).toBe("Text with a note. Next sentence.\n\nScientific notation still uses x-10.")
   })
 
+  it("removes bracketed references and turns bracketed ellipses into final periods before audiobook narration", () => {
+    const text = htmlToReadableText(`
+      <article>
+        <p>Primeira frase [171] continua com referencia [nota].</p>
+        <p>Trecho interrompido [...] proxima frase [xxx].</p>
+      </article>
+    `)
+
+    expect(text).toBe("Primeira frase continua com referencia.\n\nTrecho interrompido. proxima frase.")
+
+    const plan = buildNarrationPlan({
+      bookId: "book-refs",
+      chapterHref: "chapter-refs",
+      contentHash: "hash-refs",
+      html: `<article><p>${text}</p></article>`,
+      language: "pt-BR"
+    })
+
+    expect(plan.normalization.version).toBe("1.1.3")
+    expect(plan.segments.map((segment) => segment.originalText).join(" ")).not.toMatch(/\[[^\]]+\]/)
+    expect(plan.segments.map((segment) => segment.normalizedText).join(" ")).toContain("Trecho interrompido. proxima frase.")
+  })
+
   it("keeps normalizedText within the TTS limit when normalization expands numbers", () => {
     const sentence = "O valor foi de R$ 999,99 em 25/12/1999 às 23h59 com 99% de desconto."
     const paragraph = Array.from({ length: 8 }, () => sentence).join(" ")

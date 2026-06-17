@@ -223,6 +223,21 @@ export const dreamreaderClient = {
     })
   },
 
+  async deleteBook(bookId: string): Promise<void> {
+    const bridgeDelete = window.dreamreader?.library?.deleteBook
+
+    if (bridgeDelete) {
+      await bridgeDelete(bookId)
+      return
+    }
+
+    const state = readFallbackState()
+    state.books = state.books.filter((book) => book.id !== bookId)
+    state.annotations = state.annotations.filter((annotation) => annotation.bookId !== bookId)
+    delete state.positions[bookId]
+    writeFallbackState(state)
+  },
+
   async saveProgress(locator: ReaderLocator): Promise<void> {
     const bridgeSave = window.dreamreader?.reader?.saveProgress
 

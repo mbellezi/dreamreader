@@ -2,7 +2,7 @@ import type { NarrationPlan, NarrationProsody, NarrationSegment, PronunciationEn
 import { hashBuffer } from "@main/lib/hash"
 
 export const NORMALIZER_ID = "pt-br-basic-normalizer"
-export const NORMALIZER_VERSION = "1.1.2"
+export const NORMALIZER_VERSION = "1.1.3"
 export const DICTIONARY_VERSION = "builtin-pt-br-v1"
 export const PROSODY_ANALYZER_ID = "neutral-rule-prosody"
 export const PROSODY_VERSION = "1.0.0"
@@ -335,10 +335,18 @@ function splitSentences(paragraph: string): string[] {
 }
 
 function sanitizeReadableText(text: string): string {
-  return text
+  return removeAudiobookReferenceMarkers(text)
     .normalize("NFC")
     .replace(/\u00ad/g, "")
     .replace(/[\u200b-\u200f\u202a-\u202e\u2060\ufeff]/g, "")
+}
+
+function removeAudiobookReferenceMarkers(text: string): string {
+  return text
+    .replace(/\s*\[\s*(?:\.{3}|…)\s*\]\s*/g, ". ")
+    .replace(/\s*\[[^\]\r\n]{1,120}\]\s*/g, " ")
+    .replace(/[^\S\n]+([,.;:!?])/g, "$1")
+    .replace(/([.!?])\s+([.!?])/g, "$1")
 }
 
 function hasSpeakableText(text: string): boolean {

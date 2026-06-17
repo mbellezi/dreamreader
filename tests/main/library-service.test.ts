@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises"
+import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { PGlite } from "@electric-sql/pglite"
@@ -80,6 +80,190 @@ describe("LibraryService", () => {
       expect(introduction.content).not.toContain("Texto do capitulo 1")
       expect(chapterOne.content).toContain("Texto do capitulo 1")
       expect(chapterOne.content).not.toContain("Texto do capitulo 2")
+    } finally {
+      await client.close()
+    }
+  })
+
+  it("falls back to spine order when NCX anchors point to the wrong chapter files", async () => {
+    const { client, service, tempDir } = await createTestLibrary()
+    const epubPath = path.join(tempDir, "broken-toc.epub")
+    await writeFile(epubPath, await createBrokenTocEpub())
+
+    try {
+      const result = await service.importFiles([epubPath])
+      const imported = result.imported[0] as { id: string }
+
+      expect(result.skipped).toEqual([])
+
+      const opened = await service.openBook(imported.id)
+      expect(opened.tableOfContents.map((item) => item.title)).toEqual([
+        "7 - OS ENFOQUES DOS PESQUISADORES",
+        "8 - TAREFA E TECNICA DE TRADUCAO DO CORPUS HERMETICUM"
+      ])
+      expect(opened.tableOfContents.map((item) => item.href)).toEqual(["cap-7.html", "cap-8.html"])
+
+      const chapterEight = await service.getResource({
+        bookId: imported.id,
+        href: opened.tableOfContents[1].href
+      })
+
+      expect(chapterEight.content).toContain("Texto correto do capitulo 8.")
+      expect(chapterEight.content).not.toContain("Texto do capitulo 7.")
+    } finally {
+      await client.close()
+    }
+  })
+
+  it("deletes a book with its database rows and generated audio files", async () => {
+    const { client, db, service, tempDir } = await createTestLibrary()
+    const epubPath = path.join(tempDir, "livro-teste.epub")
+    await writeFile(epubPath, await createMinimalEpub())
+
+    try {
+      const result = await service.importFiles([epubPath])
+      const imported = result.imported[0] as { id: string }
+      const opened = await service.openBook(imported.id)
+      const chapterHref = opened.tableOfContents[0].href
+      const bookRow = await db.query.books.findFirst({ where: (table, { eq }) => eq(table.id, imported.id) })
+      const audioPath = path.join(tempDir, "audio-cache", imported.id, "chapter.wav")
+      const m4bPath = path.join(tempDir, "audiobooks", `${imported.id}.m4b`)
+      await mkdir(path.dirname(audioPath), { recursive: true })
+      await mkdir(path.dirname(m4bPath), { recursive: true })
+      await writeFile(audioPath, Buffer.from("chapter audio"))
+      await writeFile(m4bPath, Buffer.from("m4b audio"))
+
+      await service.createAnnotation({
+        bookId: imported.id,
+        locator: { href: chapterHref },
+        quote: "Trecho marcado.",
+        color: "yellow"
+      })
+      await db.insert(schema.ttsEngines).values({
+        id: "dreamreader-local-tts",
+        displayName: "Local TTS",
+        version: "1",
+        adapterId: "dreamreader-local-wav",
+        runtime: "node",
+        modelFormat: "wav",
+        accelerator: "cpu"
+      })
+      await db.insert(schema.assets).values([
+        {
+          id: "asset-audio",
+          kind: "audio_chapter",
+          bookId: imported.id,
+          path: audioPath,
+          mimeType: "audio/wav",
+          contentHash: "audio-hash",
+          sizeBytes: 13
+        },
+        {
+          id: "asset-m4b",
+          kind: "audiobook_m4b",
+          bookId: imported.id,
+          path: m4bPath,
+          mimeType: "audio/mp4",
+          contentHash: "m4b-hash",
+          sizeBytes: 9
+        }
+      ])
+      await db.insert(schema.ttsJobs).values({
+        id: "tts-job-1",
+        bookId: imported.id,
+        chapterHref,
+        engineId: "dreamreader-local-tts",
+        status: "completed",
+        progress: 1,
+        settingsJson: { chapterAudioAssetId: "asset-audio" }
+      })
+      await db.insert(schema.ttsSegments).values({
+        id: "tts-segment-1",
+        jobId: "tts-job-1",
+        bookId: imported.id,
+        chapterHref,
+        segmentIndex: 0,
+        segmentHash: "segment-hash",
+        locatorJson: { href: chapterHref },
+        originalText: "Trecho marcado.",
+        normalizedText: "Trecho marcado.",
+        audioAssetId: "asset-audio",
+        durationMs: 1000,
+        status: "completed"
+      })
+      await db.insert(schema.audiobookExports).values({
+        id: "audiobook-export-1",
+        bookId: imported.id,
+        status: "complete",
+        assetId: "asset-m4b",
+        chaptersReady: 1,
+        chaptersTotal: 1,
+        durationMs: 1000
+      })
+      await db.insert(schema.audiobookChapters).values({
+        id: "audiobook-chapter-1",
+        audiobookExportId: "audiobook-export-1",
+        bookId: imported.id,
+        chapterHref,
+        chapterIndex: 0,
+        title: "Primeiro capitulo",
+        audioAssetId: "asset-audio",
+        engineId: "dreamreader-local-tts",
+        durationMs: 1000,
+        endMs: 1000,
+        contentHash: "chapter-hash",
+        audioHash: "audio-hash"
+      })
+
+      await expect(access(bookRow?.libraryPath ?? "")).resolves.toBeUndefined()
+      await expect(access(audioPath)).resolves.toBeUndefined()
+      await expect(access(m4bPath)).resolves.toBeUndefined()
+      await expect(service.deleteBook(imported.id)).resolves.toEqual({ deleted: true })
+
+      expect(await db.query.books.findFirst({ where: (table, { eq }) => eq(table.id, imported.id) })).toBeUndefined()
+      expect(await db.query.annotations.findMany({ where: (table, { eq }) => eq(table.bookId, imported.id) })).toEqual([])
+      expect(await db.query.assets.findMany({ where: (table, { eq }) => eq(table.bookId, imported.id) })).toEqual([])
+      expect(await db.query.ttsJobs.findMany({ where: (table, { eq }) => eq(table.bookId, imported.id) })).toEqual([])
+      expect(await db.query.ttsSegments.findMany({ where: (table, { eq }) => eq(table.bookId, imported.id) })).toEqual([])
+      expect(await db.query.audiobookExports.findMany({ where: (table, { eq }) => eq(table.bookId, imported.id) })).toEqual([])
+      expect(await db.query.audiobookChapters.findMany({ where: (table, { eq }) => eq(table.bookId, imported.id) })).toEqual([])
+      await expect(access(bookRow?.libraryPath ?? "")).rejects.toThrow()
+      await expect(access(audioPath)).rejects.toThrow()
+      await expect(access(m4bPath)).rejects.toThrow()
+    } finally {
+      await client.close()
+    }
+  })
+
+  it("does not delete a book while audio jobs are active", async () => {
+    const { client, db, service, tempDir } = await createTestLibrary()
+    const epubPath = path.join(tempDir, "livro-teste.epub")
+    await writeFile(epubPath, await createMinimalEpub())
+
+    try {
+      const result = await service.importFiles([epubPath])
+      const imported = result.imported[0] as { id: string }
+      const opened = await service.openBook(imported.id)
+      await db.insert(schema.ttsEngines).values({
+        id: "dreamreader-local-tts",
+        displayName: "Local TTS",
+        version: "1",
+        adapterId: "dreamreader-local-wav",
+        runtime: "node",
+        modelFormat: "wav",
+        accelerator: "cpu"
+      })
+      await db.insert(schema.ttsJobs).values({
+        id: "tts-job-active",
+        bookId: imported.id,
+        chapterHref: opened.tableOfContents[0].href,
+        engineId: "dreamreader-local-tts",
+        status: "synthesizing",
+        progress: 0.5
+      })
+
+      await expect(service.deleteBook(imported.id)).rejects.toMatchObject({ code: "book_has_active_audio_jobs" })
+      expect(await db.query.books.findFirst({ where: (table, { eq }) => eq(table.id, imported.id) })).toBeTruthy()
     } finally {
       await client.close()
     }
@@ -174,6 +358,7 @@ async function createTestLibrary() {
 
   return {
     client,
+    db,
     service: new LibraryService(db, paths),
     tempDir
   }
@@ -280,6 +465,76 @@ async function createAnchoredEpub(): Promise<Buffer> {
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lV0X9AAAAABJRU5ErkJggg==",
       "base64"
     )
+  )
+  return zip.generateAsync({ type: "nodebuffer" })
+}
+
+async function createBrokenTocEpub(): Promise<Buffer> {
+  const zip = new JSZip()
+  zip.file(
+    "META-INF/container.xml",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>`
+  )
+  zip.file(
+    "content.opf",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<package version="2.0" unique-identifier="bookid" xmlns="http://www.idpf.org/2007/opf">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Broken TOC</dc:title>
+    <dc:creator>DreamReader</dc:creator>
+    <dc:language>pt-BR</dc:language>
+  </metadata>
+  <manifest>
+    <item id="chapter-7" href="cap-7.html" media-type="application/xhtml+xml"/>
+    <item id="chapter-8" href="cap-8.html" media-type="application/xhtml+xml"/>
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+  </manifest>
+  <spine toc="ncx">
+    <itemref idref="chapter-7"/>
+    <itemref idref="chapter-8"/>
+  </spine>
+</package>`
+  )
+  zip.file(
+    "toc.ncx",
+    `<?xml version="1.0" encoding="utf-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1" xml:lang="por">
+  <head><meta name="dtb:uid" content="bookid"/></head>
+  <docTitle><text>Broken TOC</text></docTitle>
+  <navMap>
+    <navPoint id="chapter-7" playOrder="1"><navLabel><text>7. Os enfoques dos pesquisadores</text></navLabel><content src="cap-6.html#p88"/></navPoint>
+    <navPoint id="chapter-8" playOrder="2"><navLabel><text>8. Tarefa e tecnica de traducao do Corpus Hermeticum</text></navLabel><content src="cap-7.html#p95"/></navPoint>
+  </navMap>
+</ncx>`
+  )
+  zip.file(
+    "cap-6.html",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="pt-BR">
+  <head><title>Corpus hermeticum graecum</title></head>
+  <body><h1>6 - OS ASPECTOS LITERARIOS</h1><p>Texto do capitulo 6.</p></body>
+</html>`
+  )
+  zip.file(
+    "cap-7.html",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="pt-BR">
+  <head><title>Corpus hermeticum graecum</title></head>
+  <body><h1>7 - OS ENFOQUES DOS PESQUISADORES</h1><p>Texto do capitulo 7.</p></body>
+</html>`
+  )
+  zip.file(
+    "cap-8.html",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="pt-BR">
+  <head><title>Corpus hermeticum graecum</title></head>
+  <body><h1>8 - TAREFA E TECNICA DE TRADUCAO DO CORPUS HERMETICUM</h1><p>Texto correto do capitulo 8.</p></body>
+</html>`
   )
   return zip.generateAsync({ type: "nodebuffer" })
 }

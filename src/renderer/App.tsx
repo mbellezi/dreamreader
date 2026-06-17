@@ -12,6 +12,7 @@ import { translate } from "@renderer/i18n"
 import { dreamreaderClient } from "@renderer/lib/dreamreader"
 import { effectiveInstallBackend } from "@renderer/lib/installBackends"
 import {
+  errorCode,
   initialChapterIndex,
   libraryImportStatusForError,
   libraryImportStatusForResult
@@ -83,6 +84,7 @@ export function App(): ReactElement {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   const [importing, setImporting] = useState(false)
+  const [deletingBookId, setDeletingBookId] = useState<string | undefined>()
   const [libraryStatus, setLibraryStatus] = useState<LibraryStatus | null>(null)
   const [settingsSaved, setSettingsSaved] = useState(false)
   const [cleanReading, setCleanReading] = useState(false)
@@ -272,6 +274,44 @@ export function App(): ReactElement {
       setLibraryStatus(translateLibraryStatus(libraryImportStatusForError(caught)))
     } finally {
       setImporting(false)
+    }
+  }
+
+  const deleteBook = async (book: BookSummary) => {
+    const confirmed = window.confirm(t("library.deleteConfirm", { title: book.title }))
+    if (!confirmed) {
+      return
+    }
+
+    setDeletingBookId(book.id)
+    setLibraryStatus({ tone: "info", message: t("library.deleting", { title: book.title }) })
+    try {
+      await dreamreaderClient.deleteBook(book.id)
+      if (selectedBook?.id === book.id) {
+        setSelectedBook(null)
+        setAnnotations([])
+        setChapterIndex(0)
+        stableChapterIndexRef.current = null
+        setActiveAnnotationId(null)
+        setReturnChapterIndex(null)
+      }
+      if (audioBook?.id === book.id) {
+        setAudioBook(null)
+        setAudioJobs([])
+        setAudiobookExport(null)
+        setAudiobookBuildJob(null)
+      }
+      await refreshBooks()
+      setLibraryStatus({ tone: "success", message: t("library.deleteSuccess", { title: book.title }) })
+    } catch (caught) {
+      setLibraryStatus({
+        tone: "error",
+        message: t(errorCode(caught) === "book_has_active_audio_jobs" ? "library.deleteActiveAudio" : "library.deleteFailed", {
+          title: book.title
+        })
+      })
+    } finally {
+      setDeletingBookId(undefined)
     }
   }
 
@@ -930,6 +970,8 @@ export function App(): ReactElement {
               selectedBookId={selectedBook?.id}
               status={libraryStatus}
               t={t}
+              deletingBookId={deletingBookId}
+              onDeleteBook={deleteBook}
               onImport={importBooks}
               onModeChange={setLibraryMode}
               onSearchChange={updateSearch}

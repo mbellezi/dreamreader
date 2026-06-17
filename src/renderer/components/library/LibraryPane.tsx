@@ -1,4 +1,4 @@
-import { FileText, Grid2X2, List, Loader2, Plus, Search } from "lucide-react"
+import { FileText, Grid2X2, List, Loader2, Plus, Search, Trash2 } from "lucide-react"
 import { IconToggle } from "@renderer/components/common/Controls"
 import type { LibraryMode, LibraryStatus, TranslationFn } from "@renderer/app/types"
 import { cn, formatAuthors } from "@renderer/lib/utils"
@@ -14,7 +14,9 @@ export function LibraryPane({
   selectedBookId,
   status,
   t,
+  deletingBookId,
   onImport,
+  onDeleteBook,
   onModeChange,
   onSearchChange,
   onSelectBook
@@ -28,7 +30,9 @@ export function LibraryPane({
   selectedBookId?: string
   status: LibraryStatus | null
   t: TranslationFn
+  deletingBookId?: string
   onImport: () => void
+  onDeleteBook: (book: BookSummary) => void
   onModeChange: (mode: LibraryMode) => void
   onSearchChange: (value: string) => void
   onSelectBook: (bookId: string) => void
@@ -98,7 +102,16 @@ export function LibraryPane({
       >
         {books.length ? (
           books.map((book) => (
-            <BookCard key={book.id} book={book} mode={mode} selected={book.id === selectedBookId} t={t} onSelect={() => onSelectBook(book.id)} />
+            <BookCard
+              key={book.id}
+              book={book}
+              deleting={deletingBookId === book.id}
+              mode={mode}
+              selected={book.id === selectedBookId}
+              t={t}
+              onDelete={() => onDeleteBook(book)}
+              onSelect={() => onSelectBook(book.id)}
+            />
           ))
         ) : (
           <div className="rounded-md border bg-card p-4">
@@ -113,90 +126,117 @@ export function LibraryPane({
 
 function BookCard({
   book,
+  deleting,
   mode,
   selected,
   t,
+  onDelete,
   onSelect
 }: {
   book: BookSummary
+  deleting: boolean
   mode: LibraryMode
   selected: boolean
   t: TranslationFn
+  onDelete: () => void
   onSelect: () => void
 }) {
+  const deleteLabel = t("library.deleteBookNamed", { title: book.title })
+
   if (mode === "grid") {
     return (
-      <button className="group w-full text-left" title={t("library.openBook")} onClick={onSelect}>
-        <div
-          className={cn(
-            "relative aspect-[2/3] w-full overflow-hidden rounded-[3px] bg-card shadow-[0_14px_30px_rgba(15,23,42,0.22)] ring-1 ring-black/10 transition group-hover:-translate-y-0.5 group-hover:ring-primary/45",
-            selected && "ring-2 ring-primary"
-          )}
-          style={{ backgroundColor: book.coverColor }}
-        >
-          {book.coverImageUrl ? (
-            <img className="h-full w-full object-cover" src={book.coverImageUrl} alt="" />
-          ) : (
-            <div className="flex h-full flex-col justify-between p-3 text-primary-foreground">
-              <FileText className="h-5 w-5" aria-hidden="true" />
-              <div>
-                <p className="line-clamp-4 text-sm font-semibold leading-tight">{book.title}</p>
-                <p className="mt-2 line-clamp-2 text-[11px] leading-tight opacity-80">{formatAuthors(book.authors)}</p>
+      <div className="group relative w-full text-left">
+        <button className="w-full text-left" title={t("library.openBook")} onClick={onSelect}>
+          <div
+            className={cn(
+              "relative aspect-[2/3] w-full overflow-hidden rounded-[3px] bg-card shadow-[0_14px_30px_rgba(15,23,42,0.22)] ring-1 ring-black/10 transition group-hover:-translate-y-0.5 group-hover:ring-primary/45",
+              selected && "ring-2 ring-primary"
+            )}
+            style={{ backgroundColor: book.coverColor }}
+          >
+            {book.coverImageUrl ? (
+              <img className="h-full w-full object-cover" src={book.coverImageUrl} alt="" />
+            ) : (
+              <div className="flex h-full flex-col justify-between p-3 text-primary-foreground">
+                <FileText className="h-5 w-5" aria-hidden="true" />
+                <div>
+                  <p className="line-clamp-4 text-sm font-semibold leading-tight">{book.title}</p>
+                  <p className="mt-2 line-clamp-2 text-[11px] leading-tight opacity-80">{formatAuthors(book.authors)}</p>
+                </div>
               </div>
-            </div>
-          )}
-          {book.progress > 0 ? (
-            <div className="absolute inset-x-0 bottom-0 h-1 bg-black/20">
-              <div className="h-full bg-primary" style={{ width: `${book.progress}%` }} />
-            </div>
-          ) : null}
-        </div>
-        <div className="mt-2 min-w-0">
-          <h3 className="truncate text-sm font-semibold leading-tight">{book.title}</h3>
-          <p className="truncate text-xs text-muted-foreground">{formatAuthors(book.authors)}</p>
-        </div>
-      </button>
+            )}
+            {book.progress > 0 ? (
+              <div className="absolute inset-x-0 bottom-0 h-1 bg-black/20">
+                <div className="h-full bg-primary" style={{ width: `${book.progress}%` }} />
+              </div>
+            ) : null}
+          </div>
+          <div className="mt-2 min-w-0">
+            <h3 className="truncate text-sm font-semibold leading-tight">{book.title}</h3>
+            <p className="truncate text-xs text-muted-foreground">{formatAuthors(book.authors)}</p>
+          </div>
+        </button>
+        <button
+          className="absolute right-1 top-1 inline-flex h-8 w-8 items-center justify-center rounded-md border border-white/45 bg-background/90 text-muted-foreground opacity-0 shadow-sm transition hover:border-destructive/50 hover:text-destructive focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-destructive/30 group-hover:opacity-100"
+          aria-label={deleteLabel}
+          disabled={deleting}
+          title={deleteLabel}
+          onClick={onDelete}
+        >
+          {deleting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Trash2 className="h-4 w-4" aria-hidden="true" />}
+        </button>
+      </div>
     )
   }
 
   return (
-    <button
+    <div
       className={cn(
         "flex w-full items-center gap-3 rounded-md border bg-card p-3 text-left shadow-sm transition hover:border-primary/50",
         selected && "border-primary ring-2 ring-primary/15"
       )}
-      onClick={onSelect}
     >
-      <div
-        className={cn(
-          "flex shrink-0 items-end overflow-hidden rounded-sm text-primary-foreground shadow-inner",
-          "h-24 w-16",
-          !book.coverImageUrl && "p-2"
-        )}
-        style={{ backgroundColor: book.coverColor }}
-      >
-        {book.coverImageUrl ? (
-          <img className="h-full w-full object-contain" src={book.coverImageUrl} alt="" />
-        ) : (
-          <FileText className="h-5 w-5" aria-hidden="true" />
-        )}
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <h3 className="truncate text-sm font-semibold">{book.title}</h3>
-            <p className="truncate text-xs text-muted-foreground">{formatAuthors(book.authors)}</p>
+      <button className="flex min-w-0 flex-1 items-center gap-3 text-left" title={t("library.openBook")} onClick={onSelect}>
+        <div
+          className={cn(
+            "flex shrink-0 items-end overflow-hidden rounded-sm text-primary-foreground shadow-inner",
+            "h-24 w-16",
+            !book.coverImageUrl && "p-2"
+          )}
+          style={{ backgroundColor: book.coverColor }}
+        >
+          {book.coverImageUrl ? (
+            <img className="h-full w-full object-contain" src={book.coverImageUrl} alt="" />
+          ) : (
+            <FileText className="h-5 w-5" aria-hidden="true" />
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <h3 className="truncate text-sm font-semibold">{book.title}</h3>
+              <p className="truncate text-xs text-muted-foreground">{formatAuthors(book.authors)}</p>
+            </div>
+            <span className="rounded-sm border px-1.5 py-0.5 text-[11px] text-muted-foreground">{t(`library.format.${book.format}`)}</span>
           </div>
-          <span className="rounded-sm border px-1.5 py-0.5 text-[11px] text-muted-foreground">{t(`library.format.${book.format}`)}</span>
+          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
+            <div className="h-full rounded-full bg-primary" style={{ width: `${book.progress}%` }} />
+          </div>
+          <div className="mt-2 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+            <span>{t("library.progress", { progress: book.progress })}</span>
+            <span>{t(`library.status.${book.status}`)}</span>
+          </div>
         </div>
-        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
-          <div className="h-full rounded-full bg-primary" style={{ width: `${book.progress}%` }} />
-        </div>
-        <div className="mt-2 flex items-center justify-between gap-2 text-xs text-muted-foreground">
-          <span>{t("library.progress", { progress: book.progress })}</span>
-          <span>{t(`library.status.${book.status}`)}</span>
-        </div>
-      </div>
-    </button>
+      </button>
+      <button
+        className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border text-muted-foreground transition hover:border-destructive/50 hover:text-destructive focus:outline-none focus:ring-2 focus:ring-destructive/30"
+        aria-label={deleteLabel}
+        disabled={deleting}
+        title={deleteLabel}
+        onClick={onDelete}
+      >
+        {deleting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Trash2 className="h-4 w-4" aria-hidden="true" />}
+      </button>
+    </div>
   )
 }

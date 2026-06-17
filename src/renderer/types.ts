@@ -444,6 +444,7 @@ export type DreamReaderBridge = {
     getBook?: (bookId: string) => Promise<BookDetails | null>
     importBooks?: () => Promise<ImportBooksResult>
     updateBookMetadata?: (input: Record<string, unknown>) => Promise<unknown>
+    deleteBook?: (bookId: string) => Promise<unknown>
   }
   reader?: {
     saveProgress?: (locator: ReaderLocator) => Promise<void>

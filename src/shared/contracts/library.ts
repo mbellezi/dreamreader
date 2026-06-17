@@ -104,3 +104,13 @@ export const UpdateBookMetadataRequestSchema = z.object({
 export type UpdateBookMetadataRequest = z.infer<
   typeof UpdateBookMetadataRequestSchema
 >;
+
+export const DeleteBookRequestSchema = z.object({
+  bookId: IdSchema,
+});
+export type DeleteBookRequest = z.infer<typeof DeleteBookRequestSchema>;
+
+export const DeleteBookResultSchema = z.object({
+  deleted: z.literal(true),
+});
+export type DeleteBookResult = z.infer<typeof DeleteBookResultSchema>;

@@ -1,11 +1,22 @@
-import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises"
+import { copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { eq } from "drizzle-orm"
 import { XMLParser } from "fast-xml-parser"
 import JSZip from "jszip"
 import { marked } from "marked"
 import { AppDatabase } from "@main/db/client"
-import { annotations, assets, bookmarks, books, readingPositions, settings } from "@main/db/schema"
+import {
+  annotations,
+  assets,
+  audiobookBuildJobs,
+  audiobookChapters,
+  books,
+  bookmarks,
+  readingPositions,
+  ttsJobs,
+  ttsSegments,
+  settings
+} from "@main/db/schema"
 import { AppPaths } from "@main/lib/paths"
 import { hashBuffer, hashFile } from "@main/lib/hash"
 import { createId } from "@main/lib/ids"
@@ -49,6 +60,7 @@ type EpubManifestItem = {
 }
 
 type AnnotationRow = typeof annotations.$inferSelect
+type AssetRow = typeof assets.$inferSelect
 type BookRow = typeof books.$inferSelect
 
 const parser = new XMLParser({
@@ -62,6 +74,9 @@ const navigationParser = new XMLParser({
   attributeNamePrefix: "",
   textNodeName: "#text"
 })
+
+const terminalAudioJobStatuses = new Set(["completed", "failed", "cancelled"])
+const terminalAudiobookBuildStatuses = new Set(["completed", "failed", "cancelled"])
 
 export class LibraryService {
   constructor(
@@ -227,6 +242,27 @@ export class LibraryService {
       throw new AppError("book_not_found", "Book not found")
     }
     return toBookContract(updated)
+  }
+
+  async deleteBook(bookId: string): Promise<{ deleted: true }> {
+    const book = await this.getBook(bookId)
+    const [bookAssets, bookTtsJobs, bookBuildJobs] = await Promise.all([
+      this.db.query.assets.findMany({ where: eq(assets.bookId, bookId) }),
+      this.db.query.ttsJobs.findMany({ where: eq(ttsJobs.bookId, bookId) }),
+      this.db.query.audiobookBuildJobs.findMany({ where: eq(audiobookBuildJobs.bookId, bookId) })
+    ])
+    const hasActiveTtsJob = bookTtsJobs.some((job) => !terminalAudioJobStatuses.has(job.status))
+    const hasActiveBuildJob = bookBuildJobs.some((job) => !terminalAudiobookBuildStatuses.has(job.status))
+    if (hasActiveTtsJob || hasActiveBuildJob) {
+      throw new AppError("book_has_active_audio_jobs", "Cancel active audio jobs before deleting this book")
+    }
+
+    const managedPaths = managedBookArtifactPaths(book, bookAssets, this.paths)
+    await this.db.delete(audiobookChapters).where(eq(audiobookChapters.bookId, bookId))
+    await this.db.delete(ttsSegments).where(eq(ttsSegments.bookId, bookId))
+    await this.db.delete(books).where(eq(books.id, bookId))
+    await Promise.all([...managedPaths].map((artifactPath) => rm(artifactPath, { force: true, recursive: true }).catch(() => undefined)))
+    return { deleted: true }
   }
 
   async openBook(bookId: string) {
@@ -516,7 +552,7 @@ export class LibraryService {
       chapters = await this.extractChaptersFromToc(zip, baseDir, tocEntries)
     }
 
-    if (!chapters.length) {
+    if (!chapters.length || chapters.length !== tocEntries.length) {
       chapters = await this.extractChaptersFromSpine(zip, baseDir, spine, itemById, manifestItems)
     }
 
@@ -627,7 +663,11 @@ export class LibraryService {
       const html = htmlByPath.get(parsed.filePath) ?? await chapterFile.async("text")
       htmlByPath.set(parsed.filePath, html)
       const nextEntry = tocEntries.slice(index + 1).map((item) => splitHref(item.href)).find((item) => item.filePath === parsed.filePath)
-      const startIndex = parsed.fragment ? findAnchorIndex(html, parsed.fragment) ?? 0 : bodyStartIndex(html)
+      const startIndex = parsed.fragment ? findAnchorIndex(html, parsed.fragment) : bodyStartIndex(html)
+      if (startIndex === undefined) {
+        continue
+      }
+
       const endIndex = nextEntry?.fragment ? findAnchorIndex(html, nextEntry.fragment) ?? html.length : html.length
       const content = html.slice(startIndex, Math.max(startIndex, endIndex))
 
@@ -691,6 +731,26 @@ function toHtml(raw: string, fileType: string): string {
     .map((paragraph) => `<p>${paragraph.replaceAll("\n", "<br />")}</p>`)
     .join("\n")
   return `<article>${escaped}</article>`
+}
+
+function managedBookArtifactPaths(book: BookRow, assetRows: AssetRow[], paths: AppPaths): Set<string> {
+  const roots = [paths.booksDir, paths.coversDir, paths.audioCacheDir, paths.audiobooksDir, paths.extractedDir]
+  const candidates = [
+    book.libraryPath,
+    ...assetRows.map((asset) => asset.path),
+    path.join(paths.audioCacheDir, book.id),
+    path.join(paths.extractedDir, book.id)
+  ]
+  return new Set(candidates.filter((candidate) => isManagedArtifactPath(candidate, roots)))
+}
+
+function isManagedArtifactPath(filePath: string, roots: string[]): boolean {
+  const resolvedPath = path.resolve(filePath)
+  return roots.some((root) => {
+    const resolvedRoot = path.resolve(root)
+    const relative = path.relative(resolvedRoot, resolvedPath)
+    return Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative)
+  })
 }
 
 function findEpubCoverItem(metadata: Record<string, unknown>, manifestItems: EpubManifestItem[]): EpubManifestItem | undefined {
@@ -838,7 +898,10 @@ function isString(value: unknown): value is string {
 }
 
 function extractTitle(html: string): string | undefined {
-  const title = html.match(/<title[^>]*>(.*?)<\/title>/is)?.[1] ?? html.match(/<h1[^>]*>(.*?)<\/h1>/is)?.[1]
+  const title =
+    html.match(/<h1[^>]*>(.*?)<\/h1>/is)?.[1] ??
+    html.match(/<h2[^>]*>(.*?)<\/h2>/is)?.[1] ??
+    html.match(/<title[^>]*>(.*?)<\/title>/is)?.[1]
   return title?.replace(/<[^>]+>/g, "").trim()
 }
 
