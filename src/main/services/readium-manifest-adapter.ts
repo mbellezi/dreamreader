@@ -31,6 +31,7 @@ type TocChapterEntry = {
   title: string
   href: string
   contentHrefs: string[]
+  continuationHrefs: string[]
   includeAdditionalHrefs: "always" | "when-primary-unreadable"
 }
 
@@ -48,7 +49,8 @@ export async function adaptReadiumManifestToReaderManifest(
   const tocEntries = arrayify(readiumManifest.toc)
     .map(readiumLinkToTocEntry)
     .filter((entry): entry is ReadiumTocEntry => Boolean(entry))
-  const tocExtraction = tocEntries.length ? await extractChaptersFromToc(zip, tocEntries) : undefined
+  const readingOrderHrefs = readiumReadingOrderHrefs(arrayify(readiumManifest.readingOrder))
+  const tocExtraction = tocEntries.length ? await extractChaptersFromToc(zip, tocEntries, readingOrderHrefs) : undefined
   let chapters = tocExtraction && !tocExtraction.hadStructuralMiss ? tocExtraction.chapters : []
 
   if (!chapters.length) {
@@ -79,11 +81,12 @@ export async function adaptReadiumManifestToReaderManifest(
 
 async function extractChaptersFromToc(
   zip: JSZip,
-  tocEntries: ReadiumTocEntry[]
+  tocEntries: ReadiumTocEntry[],
+  readingOrderHrefs: string[]
 ): Promise<TocExtractionResult> {
   const chapters: ReaderChapter[] = []
   const htmlByPath = new Map<string, string>()
-  const chapterEntries = tocEntriesToChapterEntries(tocEntries)
+  const chapterEntries = addReadingOrderContinuations(tocEntriesToChapterEntries(tocEntries), readingOrderHrefs, tocEntries)
   let hadStructuralMiss = false
 
   for (const [index, entry] of chapterEntries.entries()) {
@@ -96,16 +99,17 @@ async function extractChaptersFromToc(
 
     const pieces = primary.content ? [primary.content] : []
     const primaryText = htmlToReadableText(primary.content ?? "")
-    if (entry.includeAdditionalHrefs === "always" || !primaryText) {
-      for (const contentHref of entry.contentHrefs.slice(1)) {
-        const additional = await readTocHrefContent(zip, htmlByPath, contentHref)
-        if (additional.hadStructuralMiss) {
-          hadStructuralMiss = true
-          continue
-        }
-        if (additional.content) {
-          pieces.push(additional.content)
-        }
+    const additionalHrefs = entry.includeAdditionalHrefs === "always" || !primaryText
+      ? entry.contentHrefs.slice(1)
+      : []
+    for (const contentHref of uniqueContentHrefs([...additionalHrefs, ...entry.continuationHrefs])) {
+      const additional = await readTocHrefContent(zip, htmlByPath, contentHref)
+      if (additional.hadStructuralMiss) {
+        hadStructuralMiss = true
+        continue
+      }
+      if (additional.content) {
+        pieces.push(additional.content)
       }
     }
 
@@ -220,9 +224,57 @@ function tocChapterEntry(entry: ReadiumTocEntry, includeAdditionalHrefs: TocChap
       title: entry.title,
       href: entry.href,
       contentHrefs: uniqueContentHrefs([entry.href, ...collectDescendantContentHrefs(entry)]),
+      continuationHrefs: [],
       includeAdditionalHrefs
     }
   ]
+}
+
+function addReadingOrderContinuations(
+  chapterEntries: TocChapterEntry[],
+  readingOrderHrefs: string[],
+  tocEntries: ReadiumTocEntry[]
+): TocChapterEntry[] {
+  const readingOrderIndex = new Map(readingOrderHrefs.map((href, index) => [hrefWithoutFragment(href), index]))
+  const tocFileHrefs = collectTocFileHrefs(tocEntries)
+  return chapterEntries.map((entry, index) => {
+    const currentIndex = readingOrderIndex.get(hrefWithoutFragment(entry.href))
+    if (currentIndex === undefined) {
+      return entry
+    }
+
+    const nextEntry = chapterEntries[index + 1]
+    const endIndex = nextEntry
+      ? readingOrderIndex.get(hrefWithoutFragment(nextEntry.href))
+      : readingOrderHrefs.length
+    if (endIndex === undefined || endIndex <= currentIndex + 1) {
+      return entry
+    }
+
+    const existingFiles = new Set(entry.contentHrefs.map(hrefWithoutFragment))
+    const continuationHrefs = readingOrderHrefs
+      .slice(currentIndex + 1, endIndex)
+      .filter((href) => {
+        const filePath = hrefWithoutFragment(href)
+        return !tocFileHrefs.has(filePath) && !existingFiles.has(filePath) && !isNoteHref(filePath)
+      })
+    return {
+      ...entry,
+      continuationHrefs: uniqueContentHrefs(continuationHrefs)
+    }
+  })
+}
+
+function collectTocFileHrefs(entries: ReadiumTocEntry[]): Set<string> {
+  const hrefs = new Set<string>()
+  for (const entry of entries) {
+    const filePath = hrefWithoutFragment(entry.href)
+    if (filePath) {
+      hrefs.add(filePath)
+    }
+    collectTocFileHrefs(entry.children).forEach((href) => hrefs.add(href))
+  }
+  return hrefs
 }
 
 function collectDescendantContentHrefs(entry: ReadiumTocEntry): string[] {
@@ -244,6 +296,16 @@ function uniqueContentHrefs(hrefs: string[]): string[] {
     seen.add(normalized)
     return true
   })
+}
+
+function readiumReadingOrderHrefs(readingOrder: ReadiumWebPublicationLink[]): string[] {
+  return uniqueContentHrefs(
+    readingOrder.flatMap((item) =>
+      item.href && (isHtmlMediaType(item.type) || isHtmlPath(item.href))
+        ? [normalizeReadiumHref(item.href)]
+        : []
+    )
+  )
 }
 
 async function readTocHrefContent(

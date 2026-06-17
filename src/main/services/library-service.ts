@@ -80,6 +80,7 @@ type TocChapterEntry = {
   title: string
   href: string
   contentHrefs: string[]
+  continuationHrefs: string[]
   includeAdditionalHrefs: "always" | "when-primary-unreadable"
 }
 
@@ -604,11 +605,12 @@ export class LibraryService {
     const spine = arrayify<Record<string, string>>(opf?.package?.spine?.itemref)
     const baseDir = path.posix.dirname(rootfilePath)
     const coverItem = findEpubCoverItem(metadata, manifestItems)
+    const readingOrderHrefs = epubReadingOrderHrefs(baseDir, spine, itemById, manifestItems)
     const tocEntries = await this.extractEpubToc(zip, baseDir, manifestItems, String(opf?.package?.spine?.toc ?? ""))
     let chapters: ReaderChapter[] = []
 
     if (tocEntries.length) {
-      const tocExtraction = await this.extractChaptersFromToc(zip, tocEntries)
+      const tocExtraction = await this.extractChaptersFromToc(zip, tocEntries, readingOrderHrefs)
       chapters = tocExtraction.chapters
 
       if (tocExtraction.hadStructuralMiss) {
@@ -706,11 +708,12 @@ export class LibraryService {
 
   private async extractChaptersFromToc(
     zip: JSZip,
-    tocEntries: EpubTocEntry[]
+    tocEntries: EpubTocEntry[],
+    readingOrderHrefs: string[]
   ): Promise<TocExtractionResult> {
     const chapters: ReaderChapter[] = []
     const htmlByPath = new Map<string, string>()
-    const chapterEntries = tocEntriesToChapterEntries(tocEntries)
+    const chapterEntries = addReadingOrderContinuations(tocEntriesToChapterEntries(tocEntries), readingOrderHrefs, tocEntries)
     let hadStructuralMiss = false
 
     for (const [index, entry] of chapterEntries.entries()) {
@@ -723,16 +726,17 @@ export class LibraryService {
 
       const pieces = primary.content ? [primary.content] : []
       const primaryText = htmlToReadableText(primary.content ?? "")
-      if (entry.includeAdditionalHrefs === "always" || !primaryText) {
-        for (const contentHref of entry.contentHrefs.slice(1)) {
-          const additional = await readTocHrefContent(zip, htmlByPath, contentHref)
-          if (additional.hadStructuralMiss) {
-            hadStructuralMiss = true
-            continue
-          }
-          if (additional.content) {
-            pieces.push(additional.content)
-          }
+      const additionalHrefs = entry.includeAdditionalHrefs === "always" || !primaryText
+        ? entry.contentHrefs.slice(1)
+        : []
+      for (const contentHref of uniqueContentHrefs([...additionalHrefs, ...entry.continuationHrefs])) {
+        const additional = await readTocHrefContent(zip, htmlByPath, contentHref)
+        if (additional.hadStructuralMiss) {
+          hadStructuralMiss = true
+          continue
+        }
+        if (additional.content) {
+          pieces.push(additional.content)
         }
       }
 
@@ -837,6 +841,21 @@ function findEpubCoverItem(metadata: Record<string, unknown>, manifestItems: Epu
     manifestItems.find((item) => item.properties?.split(/\s+/).includes("cover-image")) ??
     manifestItems.find((item) => item.id.toLocaleLowerCase("en-US").includes("cover") && item.mediaType?.startsWith("image/"))
   )
+}
+
+function epubReadingOrderHrefs(
+  baseDir: string,
+  spine: Array<Record<string, string>>,
+  itemById: Map<string, EpubManifestItem>,
+  manifestItems: EpubManifestItem[]
+): string[] {
+  const spineItems = spine
+    .map((itemref) => itemById.get(itemref.idref))
+    .filter((item): item is EpubManifestItem => Boolean(item && isHtmlMediaType(item.mediaType)))
+  const readableItems = spineItems.length
+    ? spineItems
+    : manifestItems.filter((item) => isHtmlMediaType(item.mediaType))
+  return uniqueContentHrefs(readableItems.map((item) => resolveEpubPath(baseDir, item.href)))
 }
 
 function findZipFile(zip: JSZip, filePath: string) {
@@ -945,9 +964,57 @@ function tocChapterEntry(entry: EpubTocEntry, includeAdditionalHrefs: TocChapter
       title: entry.title,
       href: entry.href,
       contentHrefs: uniqueContentHrefs([entry.href, ...collectDescendantContentHrefs(entry)]),
+      continuationHrefs: [],
       includeAdditionalHrefs
     }
   ]
+}
+
+function addReadingOrderContinuations(
+  chapterEntries: TocChapterEntry[],
+  readingOrderHrefs: string[],
+  tocEntries: EpubTocEntry[]
+): TocChapterEntry[] {
+  const readingOrderIndex = new Map(readingOrderHrefs.map((href, index) => [hrefWithoutFragment(href), index]))
+  const tocFileHrefs = collectTocFileHrefs(tocEntries)
+  return chapterEntries.map((entry, index) => {
+    const currentIndex = readingOrderIndex.get(hrefWithoutFragment(entry.href))
+    if (currentIndex === undefined) {
+      return entry
+    }
+
+    const nextEntry = chapterEntries[index + 1]
+    const endIndex = nextEntry
+      ? readingOrderIndex.get(hrefWithoutFragment(nextEntry.href))
+      : readingOrderHrefs.length
+    if (endIndex === undefined || endIndex <= currentIndex + 1) {
+      return entry
+    }
+
+    const existingFiles = new Set(entry.contentHrefs.map(hrefWithoutFragment))
+    const continuationHrefs = readingOrderHrefs
+      .slice(currentIndex + 1, endIndex)
+      .filter((href) => {
+        const filePath = hrefWithoutFragment(href)
+        return !tocFileHrefs.has(filePath) && !existingFiles.has(filePath) && !isNoteFileHref(filePath)
+      })
+    return {
+      ...entry,
+      continuationHrefs: uniqueContentHrefs(continuationHrefs)
+    }
+  })
+}
+
+function collectTocFileHrefs(entries: EpubTocEntry[]): Set<string> {
+  const hrefs = new Set<string>()
+  for (const entry of entries) {
+    const filePath = hrefWithoutFragment(entry.href)
+    if (filePath) {
+      hrefs.add(filePath)
+    }
+    collectTocFileHrefs(entry.children).forEach((href) => hrefs.add(href))
+  }
+  return hrefs
 }
 
 function collectDescendantContentHrefs(entry: EpubTocEntry): string[] {
@@ -983,7 +1050,11 @@ function isMajorTocEntry(entry: EpubTocEntry): boolean {
 function isNoteTocEntry(entry: EpubTocEntry): boolean {
   const title = entry.title.trim()
   const filePath = splitHref(entry.href).filePath
-  return /^notas?$/i.test(title) || /(?:^|[_-])notas?\.(?:xhtml|html?)$/i.test(filePath)
+  return /^notas?$/i.test(title) || isNoteFileHref(filePath)
+}
+
+function isNoteFileHref(filePath: string): boolean {
+  return /(?:^|[_-])notas?\.(?:xhtml|html?)$/i.test(filePath)
 }
 
 function navPointLabel(point: Record<string, unknown>): string {

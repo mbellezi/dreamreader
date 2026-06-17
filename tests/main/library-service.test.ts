@@ -261,6 +261,87 @@ describe("LibraryService", () => {
     }
   })
 
+  it("merges unlisted spine files that continue flat TOC chapters", async () => {
+    const { client, service, tempDir } = await createTestLibrary()
+    const epubPath = path.join(tempDir, "split-continuation.epub")
+    await writeFile(epubPath, await createSplitContinuationEpub())
+
+    try {
+      const result = await service.importFiles([epubPath])
+      const imported = result.imported[0] as { id: string }
+
+      expect(result.skipped).toEqual([])
+
+      const opened = await service.openBook(imported.id)
+      expect(opened.tableOfContents.map((item) => item.title)).toEqual([
+        "1 First Chapter",
+        "2 Second Chapter",
+        "3 Third Chapter"
+      ])
+
+      const second = await service.getResource({
+        bookId: imported.id,
+        href: opened.tableOfContents[1].href
+      })
+
+      expect(second.content).toContain("Second chapter title page.")
+      expect(second.content).toContain("Second chapter body text.")
+      expect(second.content).not.toContain("Third chapter body text.")
+    } finally {
+      await client.close()
+    }
+  })
+
+  it("merges unlisted Readium reading-order files that continue flat TOC chapters", async () => {
+    const readiumProvider: ReadiumManifestProvider = {
+      async manifest() {
+        return {
+          metadata: {
+            title: "Split Continuation",
+            author: { name: "DreamReader" },
+            language: "pt-BR"
+          },
+          readingOrder: [
+            { href: "chapter-1-title.xhtml", type: "application/xhtml+xml" },
+            { href: "chapter-1-body.xhtml", type: "application/xhtml+xml" },
+            { href: "chapter-2-title.xhtml", type: "application/xhtml+xml" },
+            { href: "chapter-2-body.xhtml", type: "application/xhtml+xml" },
+            { href: "chapter-3-title.xhtml", type: "application/xhtml+xml" },
+            { href: "chapter-3-body.xhtml", type: "application/xhtml+xml" }
+          ],
+          toc: [
+            { href: "chapter-1-title.xhtml", title: "1 First Chapter" },
+            { href: "chapter-2-title.xhtml", title: "2 Second Chapter" },
+            { href: "chapter-3-title.xhtml", title: "3 Third Chapter" }
+          ]
+        }
+      }
+    }
+    const { client, service, tempDir } = await createTestLibrary(readiumProvider)
+    const epubPath = path.join(tempDir, "split-continuation-readium.epub")
+    await writeFile(epubPath, await createSplitContinuationEpub())
+
+    try {
+      const result = await service.importFiles([epubPath])
+      const imported = result.imported[0] as { id: string; importSource?: { importer: string } }
+
+      expect(result.skipped).toEqual([])
+      expect(imported.importSource?.importer).toBe("readium-cli")
+
+      const opened = await service.openBook(imported.id)
+      const second = await service.getResource({
+        bookId: imported.id,
+        href: opened.tableOfContents[1].href
+      })
+
+      expect(second.content).toContain("Second chapter title page.")
+      expect(second.content).toContain("Second chapter body text.")
+      expect(second.content).not.toContain("Third chapter body text.")
+    } finally {
+      await client.close()
+    }
+  })
+
   it("deletes a book with its database rows and generated audio files", async () => {
     const { client, db, service, tempDir } = await createTestLibrary()
     const epubPath = path.join(tempDir, "livro-teste.epub")
@@ -681,6 +762,109 @@ async function createBrokenTocEpub(): Promise<Buffer> {
 <html xmlns="http://www.w3.org/1999/xhtml" lang="pt-BR">
   <head><title>Corpus hermeticum graecum</title></head>
   <body><h1>8 - TAREFA E TECNICA DE TRADUCAO DO CORPUS HERMETICUM</h1><p>Texto correto do capitulo 8.</p></body>
+</html>`
+  )
+  return zip.generateAsync({ type: "nodebuffer" })
+}
+
+async function createSplitContinuationEpub(): Promise<Buffer> {
+  const zip = new JSZip()
+  zip.file(
+    "META-INF/container.xml",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>`
+  )
+  zip.file(
+    "content.opf",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<package version="2.0" unique-identifier="bookid" xmlns="http://www.idpf.org/2007/opf">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Split Continuation</dc:title>
+    <dc:creator>DreamReader</dc:creator>
+    <dc:language>pt-BR</dc:language>
+  </metadata>
+  <manifest>
+    <item id="chapter-1-title" href="chapter-1-title.xhtml" media-type="application/xhtml+xml"/>
+    <item id="chapter-1-body" href="chapter-1-body.xhtml" media-type="application/xhtml+xml"/>
+    <item id="chapter-2-title" href="chapter-2-title.xhtml" media-type="application/xhtml+xml"/>
+    <item id="chapter-2-body" href="chapter-2-body.xhtml" media-type="application/xhtml+xml"/>
+    <item id="chapter-3-title" href="chapter-3-title.xhtml" media-type="application/xhtml+xml"/>
+    <item id="chapter-3-body" href="chapter-3-body.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+  </manifest>
+  <spine toc="ncx">
+    <itemref idref="chapter-1-title"/>
+    <itemref idref="chapter-1-body"/>
+    <itemref idref="chapter-2-title"/>
+    <itemref idref="chapter-2-body"/>
+    <itemref idref="chapter-3-title"/>
+    <itemref idref="chapter-3-body"/>
+  </spine>
+</package>`
+  )
+  zip.file(
+    "toc.ncx",
+    `<?xml version="1.0" encoding="utf-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1" xml:lang="por">
+  <head><meta name="dtb:uid" content="bookid"/></head>
+  <docTitle><text>Split Continuation</text></docTitle>
+  <navMap>
+    <navPoint id="chapter-1" playOrder="1"><navLabel><text>1 First Chapter</text></navLabel><content src="chapter-1-title.xhtml"/></navPoint>
+    <navPoint id="chapter-2" playOrder="2"><navLabel><text>2 Second Chapter</text></navLabel><content src="chapter-2-title.xhtml"/></navPoint>
+    <navPoint id="chapter-3" playOrder="3"><navLabel><text>3 Third Chapter</text></navLabel><content src="chapter-3-title.xhtml"/></navPoint>
+  </navMap>
+</ncx>`
+  )
+  zip.file(
+    "chapter-1-title.xhtml",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="pt-BR">
+  <head><title>1 First Chapter</title></head>
+  <body><h1>1 First Chapter</h1><p>First chapter title page.</p></body>
+</html>`
+  )
+  zip.file(
+    "chapter-1-body.xhtml",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="pt-BR">
+  <head><title>First body</title></head>
+  <body><p>First chapter body text.</p></body>
+</html>`
+  )
+  zip.file(
+    "chapter-2-title.xhtml",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="pt-BR">
+  <head><title>2 Second Chapter</title></head>
+  <body><h1>2 Second Chapter</h1><p>Second chapter title page.</p></body>
+</html>`
+  )
+  zip.file(
+    "chapter-2-body.xhtml",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="pt-BR">
+  <head><title>Second body</title></head>
+  <body><p>Second chapter body text.</p></body>
+</html>`
+  )
+  zip.file(
+    "chapter-3-title.xhtml",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="pt-BR">
+  <head><title>3 Third Chapter</title></head>
+  <body><h1>3 Third Chapter</h1><p>Third chapter title page.</p></body>
+</html>`
+  )
+  zip.file(
+    "chapter-3-body.xhtml",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="pt-BR">
+  <head><title>Third body</title></head>
+  <body><p>Third chapter body text.</p></body>
 </html>`
   )
   return zip.generateAsync({ type: "nodebuffer" })
