@@ -227,6 +227,7 @@ describe("LibraryService", () => {
       expect(await db.query.ttsSegments.findMany({ where: (table, { eq }) => eq(table.bookId, imported.id) })).toEqual([])
       expect(await db.query.audiobookExports.findMany({ where: (table, { eq }) => eq(table.bookId, imported.id) })).toEqual([])
       expect(await db.query.audiobookChapters.findMany({ where: (table, { eq }) => eq(table.bookId, imported.id) })).toEqual([])
+      await expect(service.listBooks()).resolves.toEqual({ books: [], total: 0 })
       await expect(access(bookRow?.libraryPath ?? "")).rejects.toThrow()
       await expect(access(audioPath)).rejects.toThrow()
       await expect(access(m4bPath)).rejects.toThrow()

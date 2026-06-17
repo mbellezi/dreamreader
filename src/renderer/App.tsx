@@ -113,6 +113,7 @@ export function App(): ReactElement {
     async (query = search) => {
       const nextBooks = await dreamreaderClient.listBooks({ search: query })
       setBooks(nextBooks)
+      return nextBooks
     },
     [search]
   )
@@ -287,6 +288,7 @@ export function App(): ReactElement {
     setLibraryStatus({ tone: "info", message: t("library.deleting", { title: book.title }) })
     try {
       await dreamreaderClient.deleteBook(book.id)
+      setBooks((current) => current.filter((item) => item.id !== book.id))
       if (selectedBook?.id === book.id) {
         setSelectedBook(null)
         setAnnotations([])
@@ -301,7 +303,10 @@ export function App(): ReactElement {
         setAudiobookExport(null)
         setAudiobookBuildJob(null)
       }
-      await refreshBooks()
+      const refreshedBooks = await refreshBooks()
+      if (refreshedBooks.some((item) => item.id === book.id)) {
+        throw Object.assign(new Error("Book is still present after deletion"), { code: "book_delete_still_present" })
+      }
       setLibraryStatus({ tone: "success", message: t("library.deleteSuccess", { title: book.title }) })
     } catch (caught) {
       setLibraryStatus({

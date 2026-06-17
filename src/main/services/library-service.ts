@@ -260,7 +260,12 @@ export class LibraryService {
     const managedPaths = managedBookArtifactPaths(book, bookAssets, this.paths)
     await this.db.delete(audiobookChapters).where(eq(audiobookChapters.bookId, bookId))
     await this.db.delete(ttsSegments).where(eq(ttsSegments.bookId, bookId))
-    await this.db.delete(books).where(eq(books.id, bookId))
+    const deleted = await this.db.delete(books).where(eq(books.id, bookId)).returning({ id: books.id })
+    const remainingBook = await this.db.query.books.findFirst({ where: eq(books.id, bookId) })
+    if (!deleted.length || remainingBook) {
+      throw new AppError("book_delete_failed", "Book could not be removed")
+    }
+    await this.db.delete(assets).where(eq(assets.bookId, bookId))
     await Promise.all([...managedPaths].map((artifactPath) => rm(artifactPath, { force: true, recursive: true }).catch(() => undefined)))
     return { deleted: true }
   }
