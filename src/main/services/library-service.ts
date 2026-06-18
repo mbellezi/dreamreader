@@ -40,6 +40,7 @@ export type ReaderManifest = {
   title: string
   authors: string[]
   language: string
+  readiumManifest?: Record<string, unknown>
   importer?: {
     id: BookImporterId
   }
@@ -563,9 +564,12 @@ export class LibraryService {
     if (this.readiumManifestProvider) {
       try {
         const readiumManifest = await this.readiumManifestProvider.manifest(filePath)
-        return withImporter(
-          await adaptReadiumManifestToReaderManifest(filePath, readiumManifest, fallbackTitle),
-          "readium-cli"
+        return withReadiumManifest(
+          withImporter(
+            await adaptReadiumManifestToReaderManifest(filePath, readiumManifest, fallbackTitle),
+            "readium-cli"
+          ),
+          readiumManifest
         )
       } catch {
         // Keep imports working in development and for EPUBs Readium cannot adapt yet.
@@ -810,6 +814,13 @@ function withImporter(manifest: ReaderManifest, importerId: BookImporterId): Rea
     importer: {
       id: importerId
     }
+  }
+}
+
+function withReadiumManifest(manifest: ReaderManifest, readiumManifest: Record<string, unknown>): ReaderManifest {
+  return {
+    ...manifest,
+    readiumManifest
   }
 }
 

@@ -40,7 +40,7 @@ const api = {
     },
     getBook: async (bookId: string) => {
       const opened = await invoke<Record<string, unknown>>("reader.openBook", { bookId })
-      const book = toRendererBookSummary(opened.book)
+      const bookShell = toRendererBookShell(opened)
       const toc = toArray(opened.tableOfContents)
       const chapters = await Promise.all(
         toc.map(async (item, index) => {
@@ -60,17 +60,12 @@ const api = {
           }
         })
       )
-      const position = (opened.position ?? {}) as Record<string, unknown>
-      const locator = (position.locator ?? {}) as Record<string, unknown>
       return {
-        ...book,
-        publisher: optionalString((opened.book as Record<string, unknown> | undefined)?.publisher),
-        description: optionalString((opened.book as Record<string, unknown> | undefined)?.description),
-        lastChapterId: optionalString(position.chapterHref) ?? optionalString(locator.href),
-        lastPosition: toRendererLocator(bookId, position),
+        ...bookShell,
         chapters
       }
-    }
+    },
+    getBookShell: async (bookId: string) => toRendererBookShell(await invoke<Record<string, unknown>>("reader.openBook", { bookId }))
   },
   reader: {
     saveProgress: async (locator: RendererLocator) => invoke("reader.saveLocator", buildSaveLocatorRequest(locator)),
@@ -220,9 +215,10 @@ const api = {
   }
 }
 
-Object.assign(api.reader, api.readerAnnotations)
-
-contextBridge.exposeInMainWorld("dreamreader", api)
+if (process.isMainFrame) {
+  Object.assign(api.reader, api.readerAnnotations)
+  contextBridge.exposeInMainWorld("dreamreader", api)
+}
 
 export type DreamreaderApi = typeof api
 
@@ -250,6 +246,21 @@ function toRendererBookSummary(input: unknown) {
     updatedAt: String(book.updatedAt ?? new Date().toISOString()),
     coverColor: colorFromId(String(book.id ?? book.title ?? "book")),
     coverImageUrl: optionalString(book.coverImageUrl)
+  }
+}
+
+function toRendererBookShell(opened: Record<string, unknown>) {
+  const book = toRendererBookSummary(opened.book)
+  const position = (opened.position ?? {}) as Record<string, unknown>
+  const locator = (position.locator ?? {}) as Record<string, unknown>
+  const sourceBook = (opened.book as Record<string, unknown> | undefined) ?? {}
+  return {
+    ...book,
+    publisher: optionalString(sourceBook.publisher),
+    description: optionalString(sourceBook.description),
+    lastChapterId: optionalString(position.chapterHref) ?? optionalString(locator.href),
+    lastPosition: toRendererLocator(book.id, position),
+    chapters: []
   }
 }
 
@@ -380,7 +391,8 @@ function toRendererLocator(bookId: string, position: Record<string, unknown>) {
     readingFlow: optionalString(locations.readingFlow) ?? "continuous",
     scrollProgress: optionalNumber(locations.scrollProgress),
     scrollTop: optionalNumber(locations.scrollTop),
-    updatedAt: String(position.updatedAt ?? new Date().toISOString())
+    updatedAt: String(position.updatedAt ?? new Date().toISOString()),
+    readiumLocator: locator
   }
 }
 

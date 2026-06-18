@@ -70,6 +70,7 @@ export type GenerationConfig = {
   closeModelSettings: () => void
   saveModelSettings: () => void
   canGenerate: boolean
+  canGenerateReason?: "missing_engine" | "missing_voice"
   buildChapterParams: (chapterHref: string, paragraphLimit?: number) => ChapterGenerationParams
   buildBatchParams: (chapterHrefs?: string[]) => BatchGenerationParams
 }
@@ -107,10 +108,7 @@ export function useGenerationConfig({
     if (!selectedEngineId) {
       return [{ label: t("audio.voiceUnavailable"), value: "" }]
     }
-    const compatible = voices.filter((voice) => {
-      const engineIds = voice.settings?.compatibleEngineIds
-      return !Array.isArray(engineIds) || engineIds.includes(selectedEngineId)
-    })
+    const compatible = compatibleVoicesForEngine(voices, selectedEngineId)
     return (compatible.length ? compatible : [{ id: "", name: t("audio.voiceUnavailable"), language: "pt-BR", kind: "built_in" }]).map(
       (voice) => ({
         label: voice.name,
@@ -119,6 +117,7 @@ export function useGenerationConfig({
     )
   }, [selectedEngineId, t, voices])
   const hasCompatibleVoice = voiceOptions.some((option) => option.value)
+  const canGenerateReason = !selectedEngineId ? "missing_engine" : hasCompatibleVoice ? undefined : "missing_voice"
   const selectedModelSettings = useMemo(
     () => mergeModelSettingsForEngine(selectedEngineId, audioSettings.modelSettingsByEngineId[selectedEngineId]),
     [audioSettings.modelSettingsByEngineId, selectedEngineId]
@@ -176,12 +175,14 @@ export function useGenerationConfig({
     if (engineOptions.some((option) => option.value === selectedEngineId)) {
       return
     }
-    const preferred =
-      audioSettings.defaultEngineId && engineOptions.some((option) => option.value === audioSettings.defaultEngineId)
-        ? audioSettings.defaultEngineId
-        : engineOptions[0]?.value ?? ""
-    setSelectedEngineId(preferred)
-  }, [audioSettings.defaultEngineId, engineOptions, selectedEngineId])
+    setSelectedEngineId(
+      selectPreferredGenerationEngineId({
+        defaultEngineId: audioSettings.defaultEngineId,
+        engineOptions,
+        voices
+      })
+    )
+  }, [audioSettings.defaultEngineId, engineOptions, selectedEngineId, voices])
 
   useEffect(() => {
     if (selectedVoiceId && voiceOptions.some((option) => option.value === selectedVoiceId)) {
@@ -265,7 +266,41 @@ export function useGenerationConfig({
     closeModelSettings,
     saveModelSettings,
     canGenerate: Boolean(selectedEngineId) && hasCompatibleVoice,
+    canGenerateReason,
     buildChapterParams,
     buildBatchParams
   }
+}
+
+export function selectPreferredGenerationEngineId({
+  defaultEngineId,
+  engineOptions,
+  voices
+}: {
+  defaultEngineId?: string
+  engineOptions: SelectOption[]
+  voices: VoiceProfile[]
+}): string {
+  const availableEngineIds = engineOptions.map((option) => option.value).filter(Boolean)
+  const defaultIsAvailable = Boolean(defaultEngineId && availableEngineIds.includes(defaultEngineId))
+  if (defaultEngineId && defaultIsAvailable && compatibleVoicesForEngine(voices, defaultEngineId).length > 0) {
+    return defaultEngineId
+  }
+
+  const compatibleEngineId = availableEngineIds.find((engineId) => compatibleVoicesForEngine(voices, engineId).length > 0)
+  if (compatibleEngineId) {
+    return compatibleEngineId
+  }
+
+  return defaultIsAvailable ? defaultEngineId ?? "" : availableEngineIds[0] ?? ""
+}
+
+function compatibleVoicesForEngine(voices: VoiceProfile[], engineId: string): VoiceProfile[] {
+  if (!engineId) {
+    return []
+  }
+  return voices.filter((voice) => {
+    const engineIds = voice.settings?.compatibleEngineIds
+    return !Array.isArray(engineIds) || engineIds.includes(engineId)
+  })
 }

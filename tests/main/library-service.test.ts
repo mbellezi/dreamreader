@@ -116,7 +116,7 @@ describe("LibraryService", () => {
         }
       }
     }
-    const { client, service, tempDir } = await createTestLibrary(readiumProvider)
+    const { client, db, service, tempDir } = await createTestLibrary(readiumProvider)
     const epubPath = path.join(tempDir, "readium-provider.epub")
     await writeFile(epubPath, await createAnchoredEpub())
 
@@ -136,6 +136,12 @@ describe("LibraryService", () => {
       expect(imported.authors).toEqual([{ name: "Autora Readium" }])
       expect(imported.coverAssetId).toBeTruthy()
       expect(imported.importSource?.importer).toBe("readium-cli")
+      const bookRow = await db.query.books.findFirst({ where: (table, { eq }) => eq(table.id, imported.id) })
+      expect((bookRow?.manifestJson as { readiumManifest?: unknown }).readiumManifest).toMatchObject({
+        metadata: {
+          title: "Titulo vindo do Readium"
+        }
+      })
 
       const opened = await service.openBook(imported.id)
       expect(opened.tableOfContents.map((item) => item.title)).toEqual([

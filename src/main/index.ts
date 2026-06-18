@@ -18,16 +18,29 @@ protocol.registerSchemesAsPrivileged([
       standard: true,
       secure: true,
       stream: true,
-      supportFetchAPI: true
+      supportFetchAPI: true,
+      corsEnabled: true
     }
   }
 ])
 
 let mainWindow: BrowserWindow | undefined
 
+function handleStartupError(error: unknown): void {
+  console.error("[main] Failed to start DreamReader", error)
+  app.quit()
+}
+
+function databaseDirFor(paths: ReturnType<typeof getAppPaths>): string {
+  if (app.isPackaged) {
+    return paths.dbDir
+  }
+  return path.join(app.getAppPath(), ".dreamreader-dev", "db", "pglite")
+}
+
 async function createWindow() {
   const paths = getAppPaths()
-  const db = await getDatabase({ rootDir: app.getAppPath(), dbDir: paths.dbDir })
+  const db = await getDatabase({ rootDir: app.getAppPath(), dbDir: databaseDirFor(paths) })
   registerAssetProtocol(db)
   const audiobook = new AudiobookService(db, paths)
   const tts = new TtsService(db, paths, audiobook)
@@ -69,14 +82,17 @@ async function createWindow() {
   }
 }
 
-app.whenReady().then(async () => {
-  await createWindow()
-  app.on("activate", async () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      await createWindow()
-    }
+app
+  .whenReady()
+  .then(async () => {
+    await createWindow()
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        void createWindow().catch(handleStartupError)
+      }
+    })
   })
-})
+  .catch(handleStartupError)
 
 app.on("window-all-closed", () => {
   app.quit()

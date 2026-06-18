@@ -30,6 +30,11 @@ export function GenerationControls({ config, t }: { config: GenerationConfig; t:
         value={config.selectedVoiceId}
         onChange={config.setSelectedVoiceId}
       />
+      {!config.canGenerate && config.canGenerateReason ? (
+        <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+          {t(`audio.generateUnavailable.${config.canGenerateReason}`)}
+        </p>
+      ) : null}
       <div className="space-y-3 rounded-md border bg-card p-3">
         {config.generationLanguageOptions.length ? (
           <SelectField

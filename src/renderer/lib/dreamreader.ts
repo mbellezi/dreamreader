@@ -123,6 +123,14 @@ function normalizeSettings(settings?: Partial<AppSettings>): AppSettings {
   }
 }
 
+function normalizedProgression(value: unknown): number {
+  const numberValue = Number(value)
+  if (!Number.isFinite(numberValue)) {
+    return 0
+  }
+  return clamp(numberValue, 0, 1)
+}
+
 function exportAnnotations(book: BookDetails | undefined, annotations: Annotation[], format: "markdown" | "json"): string {
   if (format === "json") {
     return JSON.stringify(annotations, null, 2)
@@ -211,6 +219,16 @@ export const dreamreaderClient = {
       : null
   },
 
+  async getReaderBook(bookId: string): Promise<BookDetails | null> {
+    const bridgeGetShell = window.dreamreader?.library?.getBookShell
+
+    if (bridgeGetShell) {
+      return bridgeGetShell(bookId)
+    }
+
+    return dreamreaderClient.getBook(bookId)
+  },
+
   async importBooks(): Promise<ImportBooksResult> {
     const bridgeImport = window.dreamreader?.library?.importBooks
 
@@ -257,6 +275,45 @@ export const dreamreaderClient = {
         updatedAt: locator.updatedAt
       }
       state.positions[locator.bookId] = locator
+      writeFallbackState(state)
+    }
+  },
+
+  async saveReadiumLocator(bookId: string, locator: Record<string, unknown>): Promise<void> {
+    const href = typeof locator.href === "string" ? locator.href : undefined
+    const locations = locator.locations && typeof locator.locations === "object" && !Array.isArray(locator.locations)
+      ? locator.locations as Record<string, unknown>
+      : {}
+    const progression = normalizedProgression(locations.totalProgression ?? locations.progression)
+    const bridgeSave = window.dreamreader?.reader?.saveLocator
+
+    if (bridgeSave && href) {
+      await bridgeSave({
+        bookId,
+        locator,
+        chapterHref: href,
+        progression
+      })
+      return
+    }
+
+    const state = readFallbackState()
+    const bookIndex = state.books.findIndex((book) => book.id === bookId)
+
+    if (bookIndex >= 0 && href) {
+      state.books[bookIndex] = {
+        ...state.books[bookIndex],
+        progress: Math.round(progression * 100),
+        status: progression >= 1 ? "finished" : "reading",
+        updatedAt: new Date().toISOString()
+      }
+      state.positions[bookId] = {
+        bookId,
+        chapterId: href,
+        progress: Math.round(progression * 100),
+        readiumLocator: locator,
+        updatedAt: new Date().toISOString()
+      }
       writeFallbackState(state)
     }
   },

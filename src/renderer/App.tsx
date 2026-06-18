@@ -1,47 +1,31 @@
-import { BookOpen, Headphones, Library, Loader2, PanelRightOpen, Settings } from "lucide-react"
-import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactElement } from "react"
+import { BookOpen, Headphones, Library, Loader2, Settings } from "lucide-react"
+import { useCallback, useEffect, useRef, useState, type ReactElement } from "react"
 import { NavButton } from "@renderer/components/common/Controls"
 import { StudioPane } from "@renderer/components/audio/StudioPane"
 import { BookStudioPane } from "@renderer/components/audio/BookStudioPane"
-import { LibraryPane } from "@renderer/components/library/LibraryPane"
 import { EnginesPane } from "@renderer/components/models/EnginesPane"
-import { InspectorPane } from "@renderer/components/reader/InspectorPane"
-import { ReaderPane } from "@renderer/components/reader/ReaderPane"
 import { SettingsDialog } from "@renderer/components/settings/SettingsDialog"
+import { ThoriumLibraryPane } from "@renderer/components/thorium/ThoriumLibraryPane"
+import { ThoriumReaderPane } from "@renderer/components/thorium/ThoriumReaderPane"
 import { translate } from "@renderer/i18n"
 import { dreamreaderClient } from "@renderer/lib/dreamreader"
 import { effectiveInstallBackend } from "@renderer/lib/installBackends"
 import {
   errorCode,
-  initialChapterIndex,
   libraryImportStatusForError,
   libraryImportStatusForResult
 } from "@renderer/lib/appState"
-import {
-  clampSidebarWidth,
-  loadReaderSidebarState,
-  READER_SIDEBAR_DEFAULT_WIDTH,
-  saveReaderSidebarState,
-  type ReaderSidebarState
-} from "@renderer/lib/readerSidebar"
-import { clamp, cn } from "@renderer/lib/utils"
+import { cn } from "@renderer/lib/utils"
 import type {
   AppView,
-  InspectorTab,
-  LibraryMode,
   LibraryStatus,
   LibraryStatusDescriptor
 } from "@renderer/app/types"
 import type {
-  Annotation,
-  AnnotationKind,
   AppSettings,
   AudioSettings,
   BookDetails,
   BookSummary,
-  HighlightColor,
-  ReaderLocator,
-  ReaderPreferences,
   RuntimeDiagnostic,
   RuntimeInstallBackend,
   RuntimeModel,
@@ -60,7 +44,6 @@ export function App(): ReactElement {
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [books, setBooks] = useState<BookSummary[]>([])
   const [selectedBook, setSelectedBook] = useState<BookDetails | null>(null)
-  const [annotations, setAnnotations] = useState<Annotation[]>([])
   const [audioJobs, setAudioJobs] = useState<TtsJob[]>([])
   const [audiobookExport, setAudiobookExport] = useState<AudiobookExport | null>(null)
   const [audiobookBuildJob, setAudiobookBuildJob] = useState<AudiobookBuildJob | null>(null)
@@ -77,9 +60,6 @@ export function App(): ReactElement {
   const [huggingFaceTokenStatus, setHuggingFaceTokenStatus] = useState<HuggingFaceTokenStatus>({ configured: false })
   const [voices, setVoices] = useState<VoiceProfile[]>([])
   const [activeView, setActiveView] = useState<AppView>("library")
-  const [libraryMode, setLibraryMode] = useState<LibraryMode>("grid")
-  const [inspectorTab, setInspectorTab] = useState<InspectorTab>("summary")
-  const [chapterIndex, setChapterIndex] = useState(0)
   const [search, setSearch] = useState("")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
@@ -87,13 +67,6 @@ export function App(): ReactElement {
   const [deletingBookId, setDeletingBookId] = useState<string | undefined>()
   const [libraryStatus, setLibraryStatus] = useState<LibraryStatus | null>(null)
   const [settingsSaved, setSettingsSaved] = useState(false)
-  const [cleanReading, setCleanReading] = useState(false)
-  const [sidebar, setSidebar] = useState<ReaderSidebarState>(() => loadReaderSidebarState())
-  const [activeAnnotationId, setActiveAnnotationId] = useState<string | null>(null)
-  const [annotationFocusTick, setAnnotationFocusTick] = useState(0)
-  const [returnChapterIndex, setReturnChapterIndex] = useState<number | null>(null)
-  const stableChapterIndexRef = useRef<number | null>(null)
-  const readerLayoutRef = useRef<HTMLDivElement | null>(null)
   const pendingSettingsSignatureRef = useRef("")
   const settingsSaveTimerRef = useRef<number | null>(null)
   const modelManagementRefreshIdRef = useRef(0)
@@ -199,12 +172,8 @@ export function App(): ReactElement {
       setBooks(nextBooks)
 
       if (nextBooks[0]) {
-        const firstBook = await dreamreaderClient.getBook(nextBooks[0].id)
+        const firstBook = await dreamreaderClient.getReaderBook(nextBooks[0].id)
         setSelectedBook(firstBook)
-        const nextChapterIndex = initialChapterIndex(firstBook)
-        setChapterIndex(nextChapterIndex)
-        stableChapterIndexRef.current = nextChapterIndex
-        setAnnotations(firstBook ? await dreamreaderClient.listAnnotations(firstBook.id) : [])
       }
     } catch {
       setError(true)
@@ -217,21 +186,8 @@ export function App(): ReactElement {
     void loadInitialData()
   }, [loadInitialData])
 
-  useEffect(() => {
-    if (!selectedBook || !selectedBook.chapters.length || activeView !== "reader") {
-      return
-    }
-
-    const safeChapterIndex = clamp(chapterIndex, 0, selectedBook.chapters.length - 1)
-    if (safeChapterIndex !== chapterIndex) {
-      setChapterIndex(safeChapterIndex)
-    }
-  }, [activeView, chapterIndex, selectedBook])
-
   const filteredCount = books.length
-  const currentChapter = selectedBook?.chapters[chapterIndex] ?? null
   const bridgeLabel = dreamreaderClient.hasBridge() ? t("app.connection.bridge") : t("app.connection.fallback")
-  const readerIsClean = activeView === "reader" && cleanReading && Boolean(selectedBook)
 
   const updateSearch = async (value: string) => {
     setSearch(value)
@@ -239,16 +195,9 @@ export function App(): ReactElement {
   }
 
   const selectBook = async (bookId: string) => {
-    const book = await dreamreaderClient.getBook(bookId)
-    const nextChapterIndex = initialChapterIndex(book)
+    const book = await dreamreaderClient.getReaderBook(bookId)
     setSelectedBook(book)
-    setChapterIndex(nextChapterIndex)
-    stableChapterIndexRef.current = nextChapterIndex
-    setReturnChapterIndex(null)
-    setActiveAnnotationId(null)
     setActiveView("reader")
-    setInspectorTab("summary")
-    setAnnotations(book ? await dreamreaderClient.listAnnotations(book.id) : [])
   }
 
   useEffect(() => {
@@ -296,11 +245,6 @@ export function App(): ReactElement {
       setBooks((current) => current.filter((item) => item.id !== book.id))
       if (selectedBook?.id === book.id) {
         setSelectedBook(null)
-        setAnnotations([])
-        setChapterIndex(0)
-        stableChapterIndexRef.current = null
-        setActiveAnnotationId(null)
-        setReturnChapterIndex(null)
       }
       if (audioBook?.id === book.id) {
         setAudioBook(null)
@@ -323,121 +267,6 @@ export function App(): ReactElement {
     } finally {
       setDeletingBookId(undefined)
     }
-  }
-
-  const navigateToChapter = (index: number, annotationId?: string) => {
-    if (!selectedBook || !selectedBook.chapters.length) {
-      return
-    }
-
-    const nextIndex = clamp(index, 0, selectedBook.chapters.length - 1)
-    if (nextIndex !== chapterIndex) {
-      setReturnChapterIndex(chapterIndex)
-    }
-    setChapterIndex(nextIndex)
-    setActiveAnnotationId(annotationId ?? null)
-    setActiveView("reader")
-  }
-
-  const changeChapter = (direction: -1 | 1) => {
-    navigateToChapter(chapterIndex + direction)
-  }
-
-  const jumpToChapter = (index: number) => {
-    navigateToChapter(index)
-  }
-
-  const jumpToAnnotation = (annotation: Annotation) => {
-    if (!selectedBook?.chapters.length) {
-      return
-    }
-
-    const nextIndex = selectedBook.chapters.findIndex((chapter) => chapter.id === annotation.chapterId)
-    navigateToChapter(nextIndex >= 0 ? nextIndex : chapterIndex, annotation.id)
-    setAnnotationFocusTick((current) => current + 1)
-    setInspectorTab("annotations")
-  }
-
-  const returnToPreviousPosition = () => {
-    if (returnChapterIndex === null) {
-      return
-    }
-
-    const currentIndex = chapterIndex
-    navigateToChapter(returnChapterIndex)
-    setReturnChapterIndex(currentIndex)
-  }
-
-  const saveReadingPosition = useCallback(
-    async (locator: ReaderLocator) => {
-      if (!selectedBook || locator.bookId !== selectedBook.id) {
-        return
-      }
-
-      await dreamreaderClient.saveProgress(locator)
-      const nextStableIndex = selectedBook.chapters.findIndex((chapter) => chapter.id === locator.chapterId)
-      const previousStableIndex = stableChapterIndexRef.current
-
-      if (nextStableIndex >= 0) {
-        stableChapterIndexRef.current = nextStableIndex
-        if (previousStableIndex !== null && previousStableIndex !== nextStableIndex) {
-          setReturnChapterIndex(previousStableIndex)
-        }
-      }
-
-      void refreshBooks()
-    },
-    [refreshBooks, selectedBook]
-  )
-
-  const createAnnotation = async (draft: {
-    anchorParagraphIndex?: number
-    anchorTextOffset?: number
-    chapterId: string
-    color: HighlightColor
-    excerpt: string
-    kind: AnnotationKind
-    note: string
-  }) => {
-    if (!selectedBook || !draft.excerpt.trim()) {
-      return
-    }
-
-    const annotation = await dreamreaderClient.createAnnotation({
-      anchorParagraphIndex: draft.anchorParagraphIndex,
-      anchorTextOffset: draft.anchorTextOffset,
-      bookId: selectedBook.id,
-      chapterId: draft.chapterId,
-      kind: draft.kind,
-      color: draft.color,
-      excerpt: draft.excerpt.trim(),
-      note: draft.note.trim()
-    })
-    setAnnotations((current) => [annotation, ...current])
-    setActiveAnnotationId(annotation.id)
-    setInspectorTab("annotations")
-  }
-
-  const updateAnnotationColor = async (annotationId: string, color: HighlightColor) => {
-    const annotation = await dreamreaderClient.updateAnnotation({ id: annotationId, color })
-    setAnnotations((current) => current.map((item) => (item.id === annotationId ? annotation : item)))
-    setActiveAnnotationId(annotationId)
-  }
-
-  const deleteAnnotation = async (annotationId: string) => {
-    await dreamreaderClient.deleteAnnotation(annotationId)
-    setAnnotations((current) => current.filter((annotation) => annotation.id !== annotationId))
-    if (activeAnnotationId === annotationId) {
-      setActiveAnnotationId(null)
-    }
-  }
-
-  const exportNotes = async () => {
-    if (!selectedBook) {
-      return
-    }
-
-    await dreamreaderClient.exportNotes(selectedBook.id, "markdown")
   }
 
   const openAudioDashboard = () => {
@@ -851,48 +680,9 @@ export function App(): ReactElement {
     }, delay)
   }
 
-  useEffect(() => {
-    saveReaderSidebarState(sidebar)
-  }, [sidebar])
-
-  // Drag the divider to resize the inspector. Width is measured from the layout's
-  // right edge so the handle tracks the cursor regardless of the reader's width.
-  const startSidebarResize = useCallback((event: ReactMouseEvent) => {
-    event.preventDefault()
-    const onMove = (moveEvent: MouseEvent) => {
-      const rect = readerLayoutRef.current?.getBoundingClientRect()
-      if (!rect) {
-        return
-      }
-      setSidebar((current) => ({ ...current, width: clampSidebarWidth(rect.right - moveEvent.clientX) }))
-    }
-    const onUp = () => {
-      window.removeEventListener("mousemove", onMove)
-      window.removeEventListener("mouseup", onUp)
-      document.body.style.userSelect = ""
-      document.body.style.cursor = ""
-    }
-    window.addEventListener("mousemove", onMove)
-    window.addEventListener("mouseup", onUp)
-    document.body.style.userSelect = "none"
-    document.body.style.cursor = "col-resize"
-  }, [])
-
-  const updateReaderPreference = <Key extends keyof ReaderPreferences>(key: Key, value: ReaderPreferences[Key]) => {
-    if (!settings) {
-      return
-    }
-
-    const nextSettings = {
-      ...settings,
-      reader: {
-        ...settings.reader,
-        [key]: value
-      }
-    }
-
+  const updateSettingsAndScheduleSave = (nextSettings: AppSettings) => {
     updateSettings(nextSettings)
-    scheduleSettingsSave(nextSettings, key === "readingFlow" || key === "theme" ? 0 : 450)
+    scheduleSettingsSave(nextSettings)
   }
 
   const updateAudioSettings = (audio: AudioSettings, delay = 450) => {
@@ -966,34 +756,30 @@ export function App(): ReactElement {
   return (
     <main className={shellClass}>
       <div className="flex h-full min-h-0 flex-col overflow-hidden">
-        {!readerIsClean ? (
-          <header className="flex h-14 shrink-0 items-center justify-between border-b bg-background/95 px-4">
-            <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary text-primary-foreground">
-                <BookOpen className="h-5 w-5" aria-hidden="true" />
-              </div>
-              <div>
-                <h1 className="text-base font-semibold leading-tight">{t("app.name")}</h1>
-                <p className="text-xs text-muted-foreground">{bridgeLabel}</p>
-              </div>
+        <header className="flex h-14 shrink-0 items-center justify-between border-b bg-background/95 px-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary text-primary-foreground">
+              <BookOpen className="h-5 w-5" aria-hidden="true" />
             </div>
-            <nav className="flex items-center gap-1 rounded-md border bg-card p-1" aria-label={t("common.actions")}>
-              <NavButton icon={Library} label={t("nav.library")} active={activeView === "library"} onClick={() => setActiveView("library")} />
-              <NavButton icon={BookOpen} label={t("nav.reader")} active={activeView === "reader"} onClick={() => setActiveView("reader")} />
-              <NavButton icon={Headphones} label={t("nav.audio")} active={activeView === "audio"} onClick={openAudioDashboard} />
-              <NavButton icon={Settings} label={t("nav.settings")} active={activeView === "settings"} onClick={() => setActiveView("settings")} />
-            </nav>
-          </header>
-        ) : null}
+            <div>
+              <h1 className="text-base font-semibold leading-tight">{t("app.name")}</h1>
+              <p className="text-xs text-muted-foreground">{bridgeLabel}</p>
+            </div>
+          </div>
+          <nav className="flex items-center gap-1 rounded-md border bg-card p-1" aria-label={t("common.actions")}>
+            <NavButton icon={Library} label={t("nav.library")} active={activeView === "library"} onClick={() => setActiveView("library")} />
+            <NavButton icon={BookOpen} label={t("nav.reader")} active={activeView === "reader"} onClick={() => setActiveView("reader")} />
+            <NavButton icon={Headphones} label={t("nav.audio")} active={activeView === "audio"} onClick={openAudioDashboard} />
+            <NavButton icon={Settings} label={t("nav.settings")} active={activeView === "settings"} onClick={() => setActiveView("settings")} />
+          </nav>
+        </header>
 
         {activeView === "library" ? (
           <div className="min-h-0 flex-1 overflow-hidden">
-            <LibraryPane
-              expanded
+            <ThoriumLibraryPane
               books={books}
               count={filteredCount}
               importing={importing}
-              mode={libraryMode}
               search={search}
               selectedBookId={selectedBook?.id}
               status={libraryStatus}
@@ -1001,7 +787,6 @@ export function App(): ReactElement {
               deletingBookId={deletingBookId}
               onDeleteBook={deleteBook}
               onImport={importBooks}
-              onModeChange={setLibraryMode}
               onSearchChange={updateSearch}
               onSelectBook={selectBook}
             />
@@ -1093,77 +878,8 @@ export function App(): ReactElement {
             )}
           </div>
         ) : (
-          <div ref={readerLayoutRef} className="flex min-h-0 flex-1 overflow-hidden">
-            <div className="min-w-0 flex-1">
-              <ReaderPane
-                activeAnnotationId={activeAnnotationId}
-                annotationFocusTick={annotationFocusTick}
-                annotations={annotations}
-                book={selectedBook}
-                chapter={currentChapter}
-                chapterIndex={chapterIndex}
-                cleanReading={cleanReading}
-                canReturn={returnChapterIndex !== null}
-                preferences={settings.reader}
-                t={t}
-                onCreateAnnotation={createAnnotation}
-                onDeleteAnnotation={deleteAnnotation}
-                onFocusAnnotation={(annotation) => setActiveAnnotationId(annotation.id)}
-                onJumpToAnnotation={jumpToAnnotation}
-                onNext={() => changeChapter(1)}
-                onPrevious={() => changeChapter(-1)}
-                onReturn={returnToPreviousPosition}
-                onSavePosition={saveReadingPosition}
-                onToggleClean={() => setCleanReading((current) => !current)}
-                onUpdateAnnotationColor={updateAnnotationColor}
-              />
-            </div>
-
-            {!cleanReading ? (
-              sidebar.collapsed ? (
-                <div className="flex shrink-0 flex-col items-center border-l bg-sidebar py-2">
-                  <button
-                    className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-card hover:text-foreground"
-                    title={t("reader.expandSidebar")}
-                    aria-label={t("reader.expandSidebar")}
-                    onClick={() => setSidebar((current) => ({ ...current, collapsed: false }))}
-                  >
-                    <PanelRightOpen className="h-4 w-4" aria-hidden="true" />
-                  </button>
-                </div>
-              ) : (
-                <>
-                  <div
-                    role="separator"
-                    aria-orientation="vertical"
-                    className="group relative z-10 w-1 shrink-0 cursor-col-resize bg-transparent transition-colors hover:bg-primary/40"
-                    title={t("reader.resizeSidebar")}
-                    onMouseDown={startSidebarResize}
-                    onDoubleClick={() => setSidebar((current) => ({ ...current, width: READER_SIDEBAR_DEFAULT_WIDTH }))}
-                  >
-                    <span className="absolute inset-y-0 -left-1.5 -right-1.5" aria-hidden="true" />
-                  </div>
-                  <div className="shrink-0" style={{ width: sidebar.width }}>
-                    <InspectorPane
-                      activeTab={inspectorTab}
-                      activeAnnotationId={activeAnnotationId}
-                      annotations={annotations}
-                      book={selectedBook}
-                      chapterIndex={chapterIndex}
-                      preferences={settings.reader}
-                      t={t}
-                      onChangePreference={updateReaderPreference}
-                      onChangeTab={setInspectorTab}
-                      onCollapse={() => setSidebar((current) => ({ ...current, collapsed: true }))}
-                      onDeleteAnnotation={deleteAnnotation}
-                      onExportNotes={exportNotes}
-                      onJumpToAnnotation={jumpToAnnotation}
-                      onJumpToChapter={jumpToChapter}
-                    />
-                  </div>
-                </>
-              )
-            ) : null}
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <ThoriumReaderPane book={selectedBook} locale={locale} t={t} />
           </div>
         )}
 
@@ -1174,7 +890,7 @@ export function App(): ReactElement {
             t={t}
             onClose={() => setActiveView("reader")}
             onSave={saveSettings}
-            onUpdate={updateSettings}
+            onUpdate={updateSettingsAndScheduleSave}
           />
         ) : null}
       </div>

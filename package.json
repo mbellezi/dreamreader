@@ -26,6 +26,7 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
+    "@edrlab/thorium-web": "^1.5.4",
     "@electric-sql/pglite": "^0.3.8",
     "@tailwindcss/vite": "^4.1.17",
     "clsx": "^2.1.1",

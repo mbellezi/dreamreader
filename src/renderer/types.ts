@@ -85,6 +85,7 @@ export type ReaderLocator = {
   scrollProgress?: number
   scrollTop?: number
   updatedAt: string
+  readiumLocator?: Record<string, unknown>
 }
 
 export type Annotation = {
@@ -445,12 +446,20 @@ export type DreamReaderBridge = {
   library?: {
     listBooks?: (query?: LibraryQuery) => Promise<BookSummary[]>
     getBook?: (bookId: string) => Promise<BookDetails | null>
+    getBookShell?: (bookId: string) => Promise<BookDetails | null>
     importBooks?: () => Promise<ImportBooksResult>
     updateBookMetadata?: (input: Record<string, unknown>) => Promise<unknown>
     deleteBook?: (bookId: string) => Promise<unknown>
   }
   reader?: {
     saveProgress?: (locator: ReaderLocator) => Promise<void>
+    saveLocator?: (input: {
+      bookId: string
+      locator: Record<string, unknown>
+      chapterHref?: string
+      progression?: number
+      audioPositionMs?: number
+    }) => Promise<unknown>
     listAnnotations?: (bookId: string) => Promise<Annotation[]>
     createAnnotation?: (draft: AnnotationDraft) => Promise<Annotation>
     updateAnnotation?: (draft: AnnotationUpdateDraft) => Promise<Annotation>
