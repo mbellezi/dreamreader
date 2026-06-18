@@ -37,6 +37,7 @@ Se houver conflito entre este arquivo e uma etapa de algum comando dado ao agent
 - Renderer fala com o backend local apenas via preload seguro e IPC validado por Zod.
 - Main process concentra acesso a banco, filesystem, segredos, runtime local, workers, sidecars de IA, gerenciador de vozes e montagem de audiobooks.
 - Conteudo EPUB/HTML deve ser tratado como nao confiavel. Nao exponha `file://` direto, nao exponha APIs do preload para iframes de conteudo, e bloqueie scripts/navegacao externa por padrao.
+- Excecao do leitor: o navegador Thorium/Readium exige iframes same-origin (via `blob:`) com `allow-scripts` e nao e compativel com React StrictMode. Antes de mexer no leitor de EPUB, leia `docs/10-thorium-reader-troubleshooting.md`. Nao re-sandbox os iframes do Readium para tirar `allow-scripts` nem reintroduza `<StrictMode>` em `src/renderer/main.tsx` sem ler o doc.
 - O renderer deve consumir apenas clientes/contratos de IPC. Nao importe services do main process no renderer.
 - Use `NarrationPlan` como contrato canonico entre normalizacao/prosodia e TTS. Nao espalhe tags proprietarias de Qwen, F5 ou outro motor pela UI ou por services genericos.
 - Vozes clonadas devem ser tratadas como `VoiceProfile` + bindings por engine/adapter. Uma voz so aparece como disponivel quando houver binding compativel e consentimento confirmado.

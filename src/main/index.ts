@@ -76,10 +76,17 @@ async function createWindow() {
   })
 
   if (process.env.ELECTRON_RENDERER_URL) {
-    await mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
+    await mainWindow.webContents.session.clearCache()
+    await mainWindow.loadURL(devRendererUrl(process.env.ELECTRON_RENDERER_URL))
   } else {
     await mainWindow.loadFile(path.join(__dirname, "../renderer/index.html"))
   }
+}
+
+function devRendererUrl(rendererUrl: string): string {
+  const url = new URL(rendererUrl)
+  url.searchParams.set("dreamreaderCacheBust", String(Date.now()))
+  return url.toString()
 }
 
 app

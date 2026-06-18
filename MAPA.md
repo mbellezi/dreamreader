@@ -14,6 +14,8 @@ Este mapa orienta agentes e subagentes sobre onde procurar contexto antes de alt
 - `docs/06-apple-silicon-performance.md`: estrategia para LLM/TTS local em Apple Silicon.
 - `docs/07-tts-prosody-abstractions.md`: contratos de prosodia, TTS e modelos locais.
 - `docs/08-audiobook-m4b.md`: montagem incremental de M4B.
+- `docs/09-readium-poc.md`: POC do Readium Web (CLI, manifesto, ts-toolkit).
+- `docs/10-thorium-reader-troubleshooting.md`: armadilhas do leitor Thorium/Readium (iframe same-origin + allow-scripts, StrictMode, fragilidade do PGlite de dev).
 
 ## Codigo
 

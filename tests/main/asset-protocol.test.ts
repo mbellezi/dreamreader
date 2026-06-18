@@ -11,7 +11,9 @@ import {
   corsHeadersForRequest,
   createPublicationManifest,
   createPublicationPositions,
+  createPublicationPositionsFromReadiumManifest,
   mimeTypeForPublicationResourcePath,
+  normalizeEpubPublicationHtml,
   normalizeVirtualPublicationHtml,
   normalizePublicationResourcePath
 } from "../../src/main/protocol/asset-protocol"
@@ -134,7 +136,7 @@ describe("asset publication protocol helpers", () => {
     })
     expect(manifest.readingOrder).toEqual([
       {
-        href: "dreamreader://publication/book_raw/resource/OPS/Text/Chapter%201.xhtml#start",
+        href: "dreamreader://publication/book_raw/resource/OPS/Text/Chapter%201.xhtml",
         type: "application/xhtml+xml",
         title: "Start"
       }
@@ -154,6 +156,80 @@ describe("asset publication protocol helpers", () => {
         }
       ])
     )
+    expect(manifest.toc).toEqual([
+      { href: "dreamreader://publication/book_raw/resource/OPS/Text/Chapter%201.xhtml#start", title: "Start" }
+    ])
+  })
+
+  it("strips fragments from generated reading order and positions", () => {
+    const readerManifest = virtualReaderManifest()
+    readerManifest.chapters[0] = {
+      ...readerManifest.chapters[0],
+      id: "chapter-1#anchor",
+      href: "chapter-1#anchor"
+    }
+    readerManifest.tableOfContents[0] = {
+      ...readerManifest.tableOfContents[0],
+      href: "chapter-1#anchor"
+    }
+
+    const manifest = createPublicationManifest({
+      id: "book_fragments",
+      fileType: "markdown",
+      title: "Virtual Book",
+      authors: ["DreamReader"],
+      language: "pt-BR",
+      libraryPath: "/tmp/book.md",
+      manifestJson: readerManifest
+    }) as Record<string, unknown>
+    const positions = createPublicationPositions("book_fragments", readerManifest)
+
+    expect(manifest.readingOrder).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ href: "dreamreader://publication/book_fragments/resource/chapter-1" })
+      ])
+    )
+    expect(manifest.toc).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ href: "dreamreader://publication/book_fragments/resource/chapter-1#anchor" })
+      ])
+    )
+    expect(positions.positions[0]?.href).toBe("dreamreader://publication/book_fragments/resource/chapter-1")
+  })
+
+  it("generates EPUB positions from the persisted Readium reading order", () => {
+    const positions = createPublicationPositionsFromReadiumManifest("book_raw", {
+      readingOrder: [
+        { href: "titlepage.xhtml", type: "application/xhtml+xml", title: "Title Page" },
+        { href: "The_Field_split_000.html#filepos212", type: "application/xhtml+xml", title: "Chapter" }
+      ]
+    })
+
+    expect(positions).toEqual({
+      total: 2,
+      positions: [
+        {
+          href: "dreamreader://publication/book_raw/resource/titlepage.xhtml",
+          type: "application/xhtml+xml",
+          title: "Title Page",
+          locations: {
+            position: 1,
+            progression: 0,
+            totalProgression: 0
+          }
+        },
+        {
+          href: "dreamreader://publication/book_raw/resource/The_Field_split_000.html",
+          type: "application/xhtml+xml",
+          title: "Chapter",
+          locations: {
+            position: 2,
+            progression: 0,
+            totalProgression: 0.5
+          }
+        }
+      ]
+    })
   })
 
   it("generates simple Readium positions from chapter progression", () => {
@@ -202,6 +278,24 @@ describe("asset publication protocol helpers", () => {
 
     expect(html).toContain("<head><meta charset=\"utf-8\">")
     expect(html).toContain("<title>Livro</title>")
+  })
+
+  it("fits EPUB cover-like pages to the iframe viewport", () => {
+    const html = normalizeEpubPublicationHtml(
+      '<html><head><title>Book</title></head><body epub:type="frontmatter"><div class="cover"><img src="image/title.jpg"/></div></body></html>'
+    )
+
+    expect(html).toContain('data-dreamreader-cover-fit="true"')
+    expect(html).toContain("max-height:100vh")
+    expect(html).toContain("object-fit:contain")
+  })
+
+  it("does not alter regular EPUB chapters", () => {
+    const html = normalizeEpubPublicationHtml(
+      '<html><head><title>Chapter</title></head><body><h1>Chapter</h1><p>Text with an <img src="image/inline.jpg"/> inline image.</p></body></html>'
+    )
+
+    expect(html).toBeUndefined()
   })
 })
 

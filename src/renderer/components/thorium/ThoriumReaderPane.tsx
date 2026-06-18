@@ -9,13 +9,13 @@ import {
 } from "@edrlab/thorium-web/reader"
 import type { TranslationFn } from "@renderer/app/types"
 import { dreamreaderClient } from "@renderer/lib/dreamreader"
+import { installReadiumEpubNavigationPatch, serializeReadiumLocator } from "@renderer/lib/readium-compat"
 import type { BookDetails, Locale } from "@renderer/types"
 
 const thoriumI18nLoadPath = "./locales/{{lng}}/{{ns}}.json"
 const thoriumReaderStorageKey = "dreamreader.thorium.reader"
-const readiumIframeSandbox = "allow-same-origin"
 
-installReadiumIframeSandboxPatch()
+installReadiumEpubNavigationPatch()
 
 type ThoriumReaderPaneProps = {
   book: BookDetails | null
@@ -55,7 +55,10 @@ function ThoriumPublicationReader({ book, locale, t }: { book: BookDetails; loca
         }
         return Locator.deserialize(book.lastPosition.readiumLocator)
       },
-      set: (locator) => dreamreaderClient.saveReadiumLocator(book.id, locator.serialize())
+      set: (locator) => {
+        const serialized = serializeReadiumLocator(locator)
+        return dreamreaderClient.saveReadiumLocator(book.id, serialized)
+      }
     }),
     [book.id, book.lastPosition?.readiumLocator]
   )
@@ -95,36 +98,4 @@ function ThoriumPublicationReader({ book, locale, t }: { book: BookDetails; loca
 
 function publicationManifestUrl(bookId: string): string {
   return `dreamreader://publication/${encodeURIComponent(bookId)}/manifest.json`
-}
-
-function installReadiumIframeSandboxPatch(): void {
-  if (typeof Node === "undefined" || typeof HTMLIFrameElement === "undefined") {
-    return
-  }
-
-  const prototype = Node.prototype as typeof Node.prototype & { __dreamreaderReadiumSandboxPatch?: true }
-  if (prototype.__dreamreaderReadiumSandboxPatch) {
-    return
-  }
-
-  const originalAppendChild = Node.prototype.appendChild
-  const originalInsertBefore = Node.prototype.insertBefore
-
-  Node.prototype.appendChild = function (this: Node, node: Node) {
-    secureReadiumIframe(node)
-    return originalAppendChild.call(this, node)
-  } as typeof Node.prototype.appendChild
-
-  Node.prototype.insertBefore = function (this: Node, node: Node, child: Node | null) {
-    secureReadiumIframe(node)
-    return originalInsertBefore.call(this, node, child)
-  } as typeof Node.prototype.insertBefore
-
-  prototype.__dreamreaderReadiumSandboxPatch = true
-}
-
-function secureReadiumIframe(node: Node): void {
-  if (node instanceof HTMLIFrameElement && node.classList.contains("readium-navigator-iframe")) {
-    node.sandbox.value = readiumIframeSandbox
-  }
 }

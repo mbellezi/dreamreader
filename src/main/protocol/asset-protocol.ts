@@ -171,7 +171,16 @@ async function servePublicationResource(
       return new Response("Not found", { status: 404 })
     }
 
-    return serveBuffer(request, await file.async("nodebuffer"), mimeType, securityHeadersForMimeType(mimeType))
+    const buffer = await file.async("nodebuffer")
+    const normalizedContent = isPublicationHtmlMimeType(mimeType)
+      ? normalizeEpubPublicationHtml(buffer.toString("utf8"))
+      : undefined
+    return serveBuffer(
+      request,
+      normalizedContent ? Buffer.from(normalizedContent, "utf8") : buffer,
+      mimeType,
+      securityHeadersForEpubMimeType(mimeType)
+    )
   }
 
   const manifest = book.manifestJson as ReaderManifest
@@ -324,7 +333,7 @@ export function createPublicationManifest(book: PublicationProtocolBook): Readiu
 export function createPublicationPositions(bookId: string, manifest: ReaderManifest): PublicationPositionList {
   const chapters = Array.isArray(manifest.chapters) ? manifest.chapters : []
   const positions = chapters.flatMap((chapter, index) => {
-    const href = publicationResourceUrl(bookId, chapter.href || chapter.id)
+    const href = publicationResourceUrl(bookId, chapter.href || chapter.id, { includeFragment: false })
     const type = mimeTypeForPublicationResourcePath(chapter.href || chapter.id, chapter.mediaType)
     if (!href || !type) {
       return []
@@ -378,12 +387,76 @@ export function normalizeVirtualPublicationHtml(content: string, title = ""): st
   return html
 }
 
+export function normalizeEpubPublicationHtml(content: string): string | undefined {
+  if (content.includes("data-dreamreader-cover-fit") || !isCoverLikeEpubHtml(content)) {
+    return undefined
+  }
+
+  const style = [
+    '<style data-dreamreader-cover-fit="true">',
+    "html,body{height:100%;}",
+    "body{box-sizing:border-box;margin:0!important;padding:0!important;}",
+    "body>.cover:first-child{box-sizing:border-box;display:flex!important;align-items:center;justify-content:center;min-height:100vh;width:100%;margin:0!important;padding:0!important;break-inside:avoid;page-break-inside:avoid;}",
+    "body>.cover:first-child img{display:block;width:auto!important;height:auto!important;max-width:100vw!important;max-height:100vh!important;object-fit:contain;}",
+    "</style>"
+  ].join("")
+
+  if (/<head(?:\s|>)/i.test(content)) {
+    return content.replace(/<head([^>]*)>/i, `<head$1>${style}`)
+  }
+
+  if (/<html(?:\s|>)/i.test(content)) {
+    return content.replace(/<html([^>]*)>/i, `<html$1><head>${style}</head>`)
+  }
+
+  return `${style}${content}`
+}
+
+function isPublicationHtmlMimeType(mimeType: string): boolean {
+  const clean = cleanMimeType(mimeType)
+  return clean === "text/html" || clean === "application/xhtml+xml"
+}
+
+function isCoverLikeEpubHtml(content: string): boolean {
+  if (!/<img(?:\s|>)/i.test(content)) {
+    return false
+  }
+
+  const bodyOpen = content.match(/<body\b[^>]*>/i)?.[0] ?? ""
+  const bodyContent = content.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i)?.[1] ?? content
+  const hasCoverMarker =
+    /\bepub:type\s*=\s*["'][^"']*(?:cover|frontmatter)[^"']*["']/i.test(bodyOpen) ||
+    /\bclass\s*=\s*["'][^"']*\bcover\b[^"']*["']/i.test(bodyContent) ||
+    /\bsrc\s*=\s*["'][^"']*(?:cover|title|capa)[^"']*\.(?:jpe?g|png|webp|gif|svg)[^"']*["']/i.test(bodyContent)
+  if (!hasCoverMarker) {
+    return false
+  }
+
+  const visibleText = bodyContent
+    .replace(/<script\b[\s\S]*?<\/script>/gi, "")
+    .replace(/<style\b[\s\S]*?<\/style>/gi, "")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&(?:nbsp|#160);/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+  return visibleText.length <= 120
+}
+
 async function createPublicationPositionsForBook(book: PublicationProtocolBook): Promise<PublicationPositionList> {
   const manifest = book.manifestJson as ReaderManifest
-  const readiumPositions = book.fileType === "epub"
-    ? await readStoredReadiumPositions(book, manifest)
+  const readiumManifest = book.fileType === "epub" ? storedReadiumManifest(manifest) : undefined
+  const manifestPositions = readiumManifest
+    ? createPublicationPositionsFromReadiumManifest(book.id, readiumManifest)
     : undefined
-  return readiumPositions ?? createPublicationPositions(book.id, manifest)
+  if (manifestPositions) {
+    return manifestPositions
+  }
+
+  const readiumPositions = readiumManifest ? await readStoredReadiumPositions(book, manifest) : undefined
+  return (
+    readiumPositions ??
+    createPublicationPositions(book.id, manifest)
+  )
 }
 
 async function readStoredReadiumPositions(
@@ -557,7 +630,7 @@ function publicationMetadata(book: PublicationProtocolBook, manifest: ReaderMani
 }
 
 function chapterToPublicationLink(bookId: string, chapter: ReaderChapter): JsonRecord | undefined {
-  const href = publicationResourceUrl(bookId, chapter.href || chapter.id)
+  const href = publicationResourceUrl(bookId, chapter.href || chapter.id, { includeFragment: false })
   const type = mimeTypeForPublicationResourcePath(chapter.href || chapter.id, chapter.mediaType)
   if (!href || !type) {
     return undefined
@@ -588,7 +661,7 @@ function rewriteReadiumManifest(manifest: ReadiumWebPublicationManifest, bookId:
   const next = cloneJsonRecord(manifest as JsonRecord)
   for (const key of ["links", "readingOrder", "resources", "toc"]) {
     if (key in next) {
-      next[key] = rewritePublicationLinkCollection(next[key], bookId)
+      next[key] = rewritePublicationLinkCollection(next[key], bookId, { includeFragment: key !== "readingOrder" })
     }
   }
   return next
@@ -632,17 +705,25 @@ function publicationTopLinks(bookId: string, existingLinks: unknown): JsonRecord
   ]
 }
 
-function rewritePublicationLinkCollection(value: unknown, bookId: string): JsonRecord[] {
+function rewritePublicationLinkCollection(
+  value: unknown,
+  bookId: string,
+  options: { includeFragment: boolean } = { includeFragment: true }
+): JsonRecord[] {
   return arrayifyRecords(value).flatMap((link) => {
-    const rewritten = rewritePublicationLink(link, bookId)
+    const rewritten = rewritePublicationLink(link, bookId, options)
     return rewritten ? [rewritten] : []
   })
 }
 
-function rewritePublicationLink(link: JsonRecord, bookId: string): JsonRecord | undefined {
+function rewritePublicationLink(
+  link: JsonRecord,
+  bookId: string,
+  options: { includeFragment: boolean }
+): JsonRecord | undefined {
   const next: JsonRecord = { ...link }
   if (typeof link.href === "string") {
-    const href = rewritePublicationHref(link.href, link, bookId)
+    const href = rewritePublicationHref(link.href, link, bookId, options)
     if (!href) {
       return undefined
     }
@@ -650,13 +731,18 @@ function rewritePublicationLink(link: JsonRecord, bookId: string): JsonRecord | 
   }
   for (const key of ["children", "alternate"]) {
     if (Array.isArray(link[key])) {
-      next[key] = rewritePublicationLinkCollection(link[key], bookId)
+      next[key] = rewritePublicationLinkCollection(link[key], bookId, options)
     }
   }
   return next
 }
 
-function rewritePublicationHref(href: string, link: JsonRecord, bookId: string): string | undefined {
+function rewritePublicationHref(
+  href: string,
+  link: JsonRecord,
+  bookId: string,
+  options: { includeFragment: boolean }
+): string | undefined {
   if (linkHasRel(link, "self") || cleanMimeType(link.type) === webPublicationManifestMimeType) {
     return publicationManifestUrl(bookId)
   }
@@ -669,7 +755,7 @@ function rewritePublicationHref(href: string, link: JsonRecord, bookId: string):
   if (hasExternalScheme(href)) {
     return undefined
   }
-  return publicationResourceUrl(bookId, href)
+  return publicationResourceUrl(bookId, href, options)
 }
 
 function normalizeReadiumPositionList(bookId: string, value: unknown): PublicationPositionList | undefined {
@@ -681,7 +767,7 @@ function normalizeReadiumPositionList(bookId: string, value: unknown): Publicati
     if (!isJsonRecord(item) || typeof item.href !== "string") {
       return []
     }
-    const href = publicationResourceUrl(bookId, item.href)
+    const href = publicationResourceUrl(bookId, item.href, { includeFragment: false })
     const type = typeof item.type === "string"
       ? cleanMimeType(item.type)
       : mimeTypeForPublicationResourcePath(item.href)
@@ -723,6 +809,38 @@ function findReadiumPositionListHref(manifest: ReadiumWebPublicationManifest): s
     ?.href as string | undefined
 }
 
+export function createPublicationPositionsFromReadiumManifest(
+  bookId: string,
+  manifest: ReadiumWebPublicationManifest
+): PublicationPositionList | undefined {
+  const readingOrder = arrayifyRecords((manifest as JsonRecord).readingOrder)
+  const positions = readingOrder.flatMap((item, index) => {
+    if (typeof item.href !== "string") {
+      return []
+    }
+    const href = publicationResourceUrl(bookId, item.href, { includeFragment: false })
+    const type = cleanMimeType(item.type) ?? mimeTypeForPublicationResourcePath(item.href)
+    if (!href || !type) {
+      return []
+    }
+
+    return [
+      {
+        href,
+        type,
+        title: typeof item.title === "string" ? item.title : undefined,
+        locations: {
+          position: index + 1,
+          progression: 0,
+          totalProgression: clampProgression(index / Math.max(readingOrder.length, 1), 0)
+        }
+      }
+    ]
+  })
+
+  return positions.length ? { total: positions.length, positions } : undefined
+}
+
 function findManifestChapter(manifest: ReaderManifest, resourcePath: string): ReaderChapter | undefined {
   const normalizedPath = normalizePublicationResourcePath(resourcePath)
   if (!normalizedPath || !Array.isArray(manifest.chapters)) {
@@ -745,16 +863,20 @@ function publicationPositionsUrl(bookId: string): string {
   return `dreamreader://publication/${encodeURIComponent(bookId)}/positions.json`
 }
 
-function publicationResourceUrl(bookId: string, href: string): string | undefined {
+function publicationResourceUrl(
+  bookId: string,
+  href: string,
+  options: { includeFragment?: boolean } = {}
+): string | undefined {
   if (href.startsWith("dreamreader://publication/")) {
-    return href
+    return options.includeFragment === false ? href.split("#")[0] : href
   }
   const localResource = localPublicationResourcePathFromHref(href)
   if (!localResource) {
     return undefined
   }
   const resourceUrl = `dreamreader://publication/${encodeURIComponent(bookId)}/resource/${encodeResourcePath(localResource.resourcePath)}`
-  return localResource.fragment
+  return options.includeFragment !== false && localResource.fragment
     ? `${resourceUrl}#${encodeURIComponent(decodePathSafely(localResource.fragment))}`
     : resourceUrl
 }
@@ -847,6 +969,13 @@ function securityHeadersForMimeType(mimeType: string): Record<string, string> {
       "font-src 'self' dreamreader: data: blob:"
     ].join("; ")
   }
+}
+
+function securityHeadersForEpubMimeType(mimeType: string): Record<string, string> {
+  if (isPublicationHtmlMimeType(mimeType)) {
+    return {}
+  }
+  return securityHeadersForMimeType(mimeType)
 }
 
 function virtualPublicationContentSecurityPolicy(): string {
