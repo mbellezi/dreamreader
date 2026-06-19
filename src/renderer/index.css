@@ -281,8 +281,30 @@ button:disabled {
   transition: opacity 200ms ease-in-out;
 }
 
-.dreamreader-thorium-shell:has(.thorium_web_layeredUI.thorium_web_isImmersive:not(.thorium_web_isHovering)) .dreamreader-annotations-trigger:not([aria-pressed="true"]),
-.dreamreader-thorium-shell:has(.thorium_web_stackedUI.thorium_web_isImmersive:not(.thorium_web_isHovering)) .dreamreader-annotations-trigger:not([aria-pressed="true"]) {
+.dreamreader-thorium-shell .dreamreader-annotations-trigger:is(:hover, :focus-visible) .dreamreader-annotations-trigger-background {
+  background-color: var(--dreamreader-reader-hover) !important;
+}
+
+.dreamreader-thorium-shell[data-dreamreader-annotations-hovered="true"] .thorium_web_layeredUI.thorium_web_isImmersive:not(.thorium_web_isHovering) .thorium_web_reader_app_topBar {
+  box-shadow: var(--th-theme-elevate) !important;
+  overflow: hidden !important;
+  transform: translateY(0) !important;
+}
+
+.dreamreader-thorium-shell[data-dreamreader-annotations-hovered="true"] .thorium_web_stackedUI.thorium_web_isImmersive:not(.thorium_web_isHovering) .thorium_web_reader_app_topBar {
+  opacity: 1 !important;
+}
+
+.dreamreader-thorium-shell[data-dreamreader-annotations-hovered="true"] .thorium_web_reader_app_topBar .thorium_web_button_partiallyVisible {
+  opacity: 1 !important;
+}
+
+.dreamreader-thorium-shell[data-dreamreader-annotations-hovered="true"] .thorium_web_reader_app_topBar .thorium_web_overflow_hint {
+  transform: translateY(0) !important;
+}
+
+.dreamreader-thorium-shell:not([data-dreamreader-annotations-hovered="true"]):has(.thorium_web_layeredUI.thorium_web_isImmersive:not(.thorium_web_isHovering)) .dreamreader-annotations-trigger:not([aria-pressed="true"]),
+.dreamreader-thorium-shell:not([data-dreamreader-annotations-hovered="true"]):has(.thorium_web_stackedUI.thorium_web_isImmersive:not(.thorium_web_isHovering)) .dreamreader-annotations-trigger:not([aria-pressed="true"]) {
   opacity: 0;
   pointer-events: none;
 }

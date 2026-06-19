@@ -50,9 +50,37 @@ export function ThoriumAnnotationsBridge({ bookId, t }: { bookId: string; t: Tra
   const [navigator, setNavigator] = useState<ReadiumEpubNavigator | null>(null)
   const [saving, setSaving] = useState(false)
   const [toolbar, setToolbar] = useState<ToolbarState | null>(null)
+  const annotationHoverResetRef = useRef<number | null>(null)
   const annotationButtonActive = drawerOpen || annotationButtonHovered
 
   useEffect(() => subscribeReadiumEpubNavigator(setNavigator), [])
+
+  const setAnnotationButtonHover = useCallback((hovered: boolean) => {
+    if (annotationHoverResetRef.current !== null) {
+      window.clearTimeout(annotationHoverResetRef.current)
+      annotationHoverResetRef.current = null
+    }
+
+    const shell = rootRef.current?.closest<HTMLElement>(".dreamreader-thorium-shell")
+    if (hovered) {
+      shell?.setAttribute("data-dreamreader-annotations-hovered", "true")
+      setAnnotationButtonHovered(true)
+      return
+    }
+
+    setAnnotationButtonHovered(false)
+    annotationHoverResetRef.current = window.setTimeout(() => {
+      shell?.removeAttribute("data-dreamreader-annotations-hovered")
+      annotationHoverResetRef.current = null
+    }, 120)
+  }, [])
+
+  useEffect(() => () => {
+    if (annotationHoverResetRef.current !== null) {
+      window.clearTimeout(annotationHoverResetRef.current)
+    }
+    rootRef.current?.closest<HTMLElement>(".dreamreader-thorium-shell")?.removeAttribute("data-dreamreader-annotations-hovered")
+  }, [])
 
   const loadAnnotations = useCallback(async () => {
     setLoading(true)
@@ -229,7 +257,7 @@ export function ThoriumAnnotationsBridge({ bookId, t }: { bookId: string; t: Tra
   return (
     <div
       ref={rootRef}
-      className="pointer-events-none absolute inset-0 z-[100]"
+      className="pointer-events-none absolute inset-0 z-[1200]"
     >
       {toolbar ? (
         <button
@@ -246,12 +274,14 @@ export function ThoriumAnnotationsBridge({ bookId, t }: { bookId: string; t: Tra
         title={t("reader.annotations")}
         aria-label={t("reader.annotations")}
         aria-pressed={drawerOpen}
-        onPointerEnter={() => setAnnotationButtonHovered(true)}
-        onPointerLeave={() => setAnnotationButtonHovered(false)}
+        onBlur={() => setAnnotationButtonHover(false)}
+        onFocus={() => setAnnotationButtonHover(true)}
+        onPointerEnter={() => setAnnotationButtonHover(true)}
+        onPointerLeave={() => setAnnotationButtonHover(false)}
         onClick={() => setDrawerOpen((current) => !current)}
       >
         <span
-          className="absolute inset-0 rounded-md transition-colors"
+          className="dreamreader-annotations-trigger-background absolute inset-0 rounded-md transition-colors"
           style={{ backgroundColor: annotationButtonActive ? "var(--dreamreader-reader-hover)" : "transparent" }}
           aria-hidden="true"
         />
