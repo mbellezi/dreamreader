@@ -1,16 +1,53 @@
 import { EpubNavigator } from "@readium/navigator"
+import type { BasicTextSelection } from "@readium/navigator-html-injectables"
 import { Link, Locator, LocatorLocations, LocatorText } from "@readium/shared"
 
 const epubNavigationPatchKey = "__dreamreaderEpubNavigationPatch"
+const epubSelectionBridgeKey = "__dreamreaderTextSelectionBridge"
+
+export type ReadiumTextSelectionHandler = (
+  selection: BasicTextSelection,
+  navigator: ReadiumEpubNavigator
+) => void
+
+const textSelectionHandlers = new Set<ReadiumTextSelectionHandler>()
+const navigatorHandlers = new Set<(navigator: EpubNavigatorInternals | null) => void>()
+let activeNavigator: EpubNavigatorInternals | null = null
 
 type EpubNavigatorPrototype = {
   [epubNavigationPatchKey]?: boolean
   go(this: EpubNavigatorInternals, locator: Locator, animated: boolean, cb: (ok: boolean) => void): void
   load(this: EpubNavigatorInternals): Promise<unknown>
+  destroy(this: EpubNavigatorInternals): Promise<unknown>
+}
+
+export type ReadiumEpubNavigator = EpubNavigatorInternals
+export type ReadiumDecoration = {
+  id: string
+  locator: Locator
+  style: {
+    type?: "highlight" | "underline" | "outline" | "textColor" | "mask"
+    tint?: string
+    isActive?: boolean
+    enforceContrast?: boolean
+  }
+  extras?: Record<string, unknown>
+}
+export type ReadiumDecorationObserver = {
+  onDecorationActivated(event: {
+    decoration: ReadiumDecoration
+    group: string
+    point?: { x: number; y: number }
+    rect?: { top: number; left: number; width: number; height: number }
+  }): boolean
 }
 
 type EpubNavigatorInternals = {
+  [epubSelectionBridgeKey]?: boolean
   currentLocation?: Locator
+  listeners?: {
+    textSelected?: (selection: BasicTextSelection) => void
+  }
   positions?: Locator[]
   pub?: {
     manifest?: {
@@ -21,6 +58,12 @@ type EpubNavigatorInternals = {
       findWithHref(href: string): Link | undefined
     }
   }
+  _cframes?: Array<{
+    iframe?: HTMLIFrameElement
+  } | undefined>
+  applyDecorations?(decorations: ReadiumDecoration[], group: string): void
+  registerDecorationObserver?(group: string, observer: ReadiumDecorationObserver): void
+  unregisterDecorationObserver?(observer: ReadiumDecorationObserver): void
 }
 
 export function installReadiumEpubNavigationPatch(): void {
@@ -31,15 +74,27 @@ export function installReadiumEpubNavigationPatch(): void {
 
   const originalLoad = prototype.load
   const originalGo = prototype.go
+  const originalDestroy = prototype.destroy
 
   prototype.load = async function patchedLoad(this: EpubNavigatorInternals) {
+    installTextSelectionBridge(this)
     normalizeNavigatorPositions(this)
     const result = await originalLoad.call(this)
     normalizeNavigatorPositions(this)
     if (this.currentLocation) {
       this.currentLocation = normalizeReadiumLocator(this.currentLocation)
     }
+    activeNavigator = this
+    notifyNavigatorHandlers(this)
     return result
+  }
+
+  prototype.destroy = async function patchedDestroy(this: EpubNavigatorInternals) {
+    if (activeNavigator === this) {
+      activeNavigator = null
+      notifyNavigatorHandlers(null)
+    }
+    return originalDestroy.call(this)
   }
 
   prototype.go = function patchedGo(
@@ -68,8 +123,49 @@ export function installReadiumEpubNavigationPatch(): void {
   })
 }
 
+export function subscribeReadiumTextSelection(handler: ReadiumTextSelectionHandler): () => void {
+  textSelectionHandlers.add(handler)
+  return () => {
+    textSelectionHandlers.delete(handler)
+  }
+}
+
+export function subscribeReadiumEpubNavigator(handler: (navigator: EpubNavigatorInternals | null) => void): () => void {
+  navigatorHandlers.add(handler)
+  handler(activeNavigator)
+  return () => {
+    navigatorHandlers.delete(handler)
+  }
+}
+
 export function serializeReadiumLocator(locator: Locator): Record<string, unknown> {
   return normalizeReadiumLocator(locator).serialize() as Record<string, unknown>
+}
+
+export function serializeReadiumTextSelection(
+  selection: BasicTextSelection,
+  navigator: EpubNavigatorInternals
+): Record<string, unknown> | null {
+  const baseLocator = selection.locator ?? navigator.currentLocation
+  if (!baseLocator) {
+    return null
+  }
+
+  const normalizedLocator = normalizeReadiumLocator(baseLocator)
+  const range = findSelectionRange(selection, navigator)
+  const context = range ? textContextFromRange(range, selection.text) : undefined
+
+  return normalizeReadiumLocator(new Locator({
+    href: normalizedLocator.href,
+    type: normalizedLocator.type,
+    title: normalizedLocator.title,
+    locations: normalizedLocator.locations,
+    text: new LocatorText({
+      highlight: selection.text,
+      before: context?.before,
+      after: context?.after
+    })
+  })).serialize() as Record<string, unknown>
 }
 
 export function normalizeReadiumLocator(locator: Locator): Locator {
@@ -93,9 +189,73 @@ export function ensureReadiumPositionForLink(
     : [...normalizedPositions, normalizeReadiumLocator(fallback)]
 }
 
+function installTextSelectionBridge(navigator: EpubNavigatorInternals): void {
+  if (navigator[epubSelectionBridgeKey]) {
+    return
+  }
+  const listeners = navigator.listeners
+  const originalTextSelected = listeners?.textSelected
+  if (!listeners || !originalTextSelected) {
+    return
+  }
+
+  listeners.textSelected = (selection) => {
+    originalTextSelected(selection)
+    for (const handler of textSelectionHandlers) {
+      handler(selection, navigator)
+    }
+  }
+  navigator[epubSelectionBridgeKey] = true
+}
+
+function notifyNavigatorHandlers(navigator: EpubNavigatorInternals | null): void {
+  for (const handler of navigatorHandlers) {
+    handler(navigator)
+  }
+}
+
 function normalizeNavigatorPositions(navigator: EpubNavigatorInternals): void {
   if (Array.isArray(navigator.positions)) {
     navigator.positions = navigator.positions.map(normalizeReadiumLocator)
+  }
+}
+
+function findSelectionRange(selection: BasicTextSelection, navigator: EpubNavigatorInternals): Range | undefined {
+  const frame = (navigator._cframes ?? [])
+    .map((candidate) => candidate?.iframe)
+    .find((iframe) => iframe?.contentWindow?.location.href === selection.targetFrameSrc)
+  const selected = frame?.contentWindow?.getSelection()
+
+  if (!selected?.rangeCount) {
+    return undefined
+  }
+
+  const range = selected.getRangeAt(0)
+  return range.toString() === selection.text ? range.cloneRange() : undefined
+}
+
+function textContextFromRange(range: Range, selectedText: string): { before?: string; after?: string } {
+  const root = range.commonAncestorContainer.ownerDocument?.body
+  if (!root) {
+    return {}
+  }
+
+  const beforeRange = root.ownerDocument.createRange()
+  beforeRange.selectNodeContents(root)
+  beforeRange.setEnd(range.startContainer, range.startOffset)
+
+  const afterRange = root.ownerDocument.createRange()
+  afterRange.selectNodeContents(root)
+  afterRange.setStart(range.endContainer, range.endOffset)
+
+  const before = beforeRange.toString().slice(-64)
+  const after = afterRange.toString().slice(0, Math.max(64, selectedText.length))
+  beforeRange.detach()
+  afterRange.detach()
+
+  return {
+    before: before || undefined,
+    after: after || undefined
   }
 }
 

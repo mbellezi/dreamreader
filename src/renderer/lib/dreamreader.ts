@@ -8,6 +8,7 @@ import type {
   BookDetails,
   BookSummary,
   ExportNotesResult,
+  HighlightColor,
   ImportBooksResult,
   LibraryAudioStatus,
   LibraryQuery,
@@ -27,6 +28,12 @@ import type {
 } from "@renderer/types"
 import { defaultSettings, sampleAnnotations, sampleBooks } from "@renderer/lib/sampleData"
 import { clamp, normalizeSearch } from "@renderer/lib/utils"
+import {
+  AnnotationSchema as StoredAnnotationSchema,
+  type Annotation as StoredAnnotation,
+  type CreateAnnotationInput as StoredAnnotationDraft,
+  type UpdateAnnotationInput as StoredAnnotationUpdateDraft
+} from "@shared/contracts/annotations"
 
 type SegmentProsody = NonNullable<TtsSegment["prosody"]>
 
@@ -184,6 +191,69 @@ function downloadTextFile(fileName: string, content: string, mimeType: string): 
   anchor.download = fileName
   anchor.click()
   window.URL.revokeObjectURL(url)
+}
+
+function toStoredAnnotation(input: unknown): StoredAnnotation {
+  return StoredAnnotationSchema.parse(input)
+}
+
+function legacyAnnotationToStored(annotation: Annotation): StoredAnnotation {
+  const locator = {
+    href: annotation.chapterId,
+    type: "application/xhtml+xml",
+    text: compactRecord({
+      anchorParagraphIndex: annotation.anchorParagraphIndex,
+      anchorTextOffset: annotation.anchorTextOffset,
+      highlight: annotation.excerpt
+    })
+  }
+  const tags = annotation.kind === "highlight" ? [] : [annotation.kind]
+  const color = annotation.color === "rose" ? "pink" : annotation.color
+
+  return StoredAnnotationSchema.parse({
+    id: annotation.id,
+    bookId: annotation.bookId,
+    locator,
+    quote: annotation.excerpt,
+    color,
+    note: annotation.note,
+    tags,
+    createdAt: annotation.createdAt,
+    updatedAt: annotation.createdAt
+  })
+}
+
+function storedAnnotationDraftToLegacy(draft: StoredAnnotationDraft): AnnotationDraft {
+  const href = typeof draft.locator.href === "string" ? draft.locator.href : "chapter-1"
+  const text = draft.locator.text && typeof draft.locator.text === "object" && !Array.isArray(draft.locator.text)
+    ? draft.locator.text as Record<string, unknown>
+    : {}
+  const kind = draft.tags.includes("favorite") ? "favorite" : draft.tags.includes("note") ? "note" : "highlight"
+
+  return {
+    bookId: draft.bookId,
+    chapterId: href,
+    kind,
+    color: storedColorToLegacy(draft.color) ?? "yellow",
+    excerpt: draft.quote,
+    note: draft.note ?? "",
+    anchorParagraphIndex: optionalNumber(text.anchorParagraphIndex),
+    anchorTextOffset: optionalNumber(text.anchorTextOffset)
+  }
+}
+
+function compactRecord(input: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined))
+}
+
+function storedColorToLegacy(color: StoredAnnotation["color"] | undefined): HighlightColor | undefined {
+  if (color === undefined) {
+    return undefined
+  }
+  if (color === "pink") {
+    return "rose"
+  }
+  return color === "none" ? "yellow" : color
 }
 
 export const dreamreaderClient = {
@@ -383,6 +453,55 @@ export const dreamreaderClient = {
     const state = readFallbackState()
     state.annotations = state.annotations.filter((annotation) => annotation.id !== annotationId)
     writeFallbackState(state)
+  },
+
+  async listStoredAnnotations(bookId: string): Promise<StoredAnnotation[]> {
+    const bridgeList = window.dreamreader?.annotations?.list
+
+    if (bridgeList) {
+      return (await bridgeList(bookId)).map(toStoredAnnotation)
+    }
+
+    return readFallbackState().annotations
+      .filter((annotation) => annotation.bookId === bookId)
+      .map(legacyAnnotationToStored)
+  },
+
+  async createStoredAnnotation(draft: StoredAnnotationDraft): Promise<StoredAnnotation> {
+    const bridgeCreate = window.dreamreader?.annotations?.create
+
+    if (bridgeCreate) {
+      return toStoredAnnotation(await bridgeCreate(draft))
+    }
+
+    const created = await dreamreaderClient.createAnnotation(storedAnnotationDraftToLegacy(draft))
+    return legacyAnnotationToStored(created)
+  },
+
+  async updateStoredAnnotation(draft: StoredAnnotationUpdateDraft): Promise<StoredAnnotation> {
+    const bridgeUpdate = window.dreamreader?.annotations?.update
+
+    if (bridgeUpdate) {
+      return toStoredAnnotation(await bridgeUpdate(draft))
+    }
+
+    const updated = await dreamreaderClient.updateAnnotation({
+      id: draft.id,
+      color: storedColorToLegacy(draft.color),
+      note: draft.note ?? undefined
+    })
+    return legacyAnnotationToStored(updated)
+  },
+
+  async deleteStoredAnnotation(annotationId: string): Promise<void> {
+    const bridgeDelete = window.dreamreader?.annotations?.delete
+
+    if (bridgeDelete) {
+      await bridgeDelete(annotationId)
+      return
+    }
+
+    await dreamreaderClient.deleteAnnotation(annotationId)
   },
 
   async exportNotes(bookId: string, format: "markdown" | "json"): Promise<ExportNotesResult> {

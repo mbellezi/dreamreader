@@ -11,6 +11,7 @@ import type { TranslationFn } from "@renderer/app/types"
 import { dreamreaderClient } from "@renderer/lib/dreamreader"
 import { installReadiumEpubNavigationPatch, serializeReadiumLocator } from "@renderer/lib/readium-compat"
 import type { BookDetails, Locale } from "@renderer/types"
+import { ThoriumAnnotationsBridge } from "./ThoriumAnnotationsBridge"
 
 const thoriumI18nLoadPath = "./locales/{{lng}}/{{ns}}.json"
 const thoriumReaderStorageKey = "dreamreader.thorium.reader"
@@ -83,7 +84,7 @@ function ThoriumPublicationReader({ book, locale, t }: { book: BookDetails; loca
   }
 
   return (
-    <section className="h-full min-h-0 overflow-hidden bg-background">
+    <section className="relative h-full min-h-0 overflow-hidden bg-background">
       <StatefulReaderWrapper
         profile={profile}
         publication={publication}
@@ -92,6 +93,7 @@ function ThoriumPublicationReader({ book, locale, t }: { book: BookDetails; loca
         positionStorage={positionStorage}
         i18n={{ lng: locale, fallbackLng: "en", backend: { loadPath: thoriumI18nLoadPath } }}
       />
+      <ThoriumAnnotationsBridge bookId={book.id} t={t} />
     </section>
   )
 }

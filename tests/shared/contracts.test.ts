@@ -257,6 +257,12 @@ describe("shared contracts", () => {
 
   it("validates annotations and settings defaults", () => {
     expect(
+      IpcContractSchemas["annotations.list"].request.safeParse({
+        bookId: "book-1",
+      }).success,
+    ).toBe(true);
+
+    expect(
       AnnotationSchema.safeParse({
         id: "annotation-1",
         bookId: "book-1",

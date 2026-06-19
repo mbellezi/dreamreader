@@ -53,6 +53,13 @@ export type CreateAnnotationRequest = z.infer<
 export const CreateAnnotationInputSchema = CreateAnnotationRequestSchema;
 export type CreateAnnotationInput = CreateAnnotationRequest;
 
+export const ListAnnotationsRequestSchema = z.object({
+  bookId: IdSchema,
+});
+export type ListAnnotationsRequest = z.infer<
+  typeof ListAnnotationsRequestSchema
+>;
+
 export const UpdateAnnotationRequestSchema = z.object({
   id: IdSchema,
   color: AnnotationColorSchema.optional(),

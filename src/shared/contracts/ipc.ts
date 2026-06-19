@@ -7,6 +7,7 @@ import {
   DeleteAnnotationRequestSchema,
   ExportAnnotationsInputSchema,
   ExportAnnotationsResultSchema,
+  ListAnnotationsRequestSchema,
   UpdateAnnotationInputSchema,
   UpdateAnnotationRequestSchema,
 } from "./annotations";
@@ -110,6 +111,7 @@ export {
   BookImporterIdSchema,
   ImportedBookSchema,
   LibraryBookSchema,
+  ListAnnotationsRequestSchema,
   ListPronunciationEntriesRequestSchema,
   ModelAssetSchema,
   ModelDownloadJobSchema,
@@ -144,6 +146,7 @@ export type {
   CreateAnnotationInput,
   ExportAnnotationsInput,
   ExportAnnotationsResult,
+  ListAnnotationsRequest,
   UpdateAnnotationInput,
 } from "./annotations";
 export type {
@@ -186,6 +189,7 @@ export const IpcChannelSchema = z.enum([
   "reader.openBook",
   "reader.getResource",
   "reader.saveLocator",
+  "annotations.list",
   "annotations.create",
   "annotations.update",
   "annotations.delete",
@@ -274,6 +278,10 @@ export const IpcContractSchemas = {
   "reader.saveLocator": {
     request: SaveLocatorRequestSchema,
     response: createIpcResponseSchema(ReadingPositionSchema),
+  },
+  "annotations.list": {
+    request: ListAnnotationsRequestSchema,
+    response: createIpcResponseSchema(z.array(AnnotationSchema)),
   },
   "annotations.create": {
     request: CreateAnnotationRequestSchema,

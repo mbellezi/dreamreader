@@ -53,6 +53,7 @@ export function registerIpc(services: Services): void {
       progression: input.progression ?? 0
     })
   )
+  handle("annotations.list", contract["annotations.list"].request, (input) => services.library.listAnnotations(input.bookId))
   handle("annotations.create", contract["annotations.create"].request, (input) => services.library.createAnnotation(input))
   handle("annotations.update", contract["annotations.update"].request, (input) => services.library.updateAnnotation(input))
   handle("annotations.delete", contract["annotations.delete"].request, (input) => services.library.deleteAnnotation(input.id))

@@ -386,6 +386,15 @@ export class LibraryService {
     return toReadingPositionContract(created)
   }
 
+  async listAnnotations(bookId: string) {
+    await this.getBook(bookId)
+    const rows = await this.db.query.annotations.findMany({
+      where: eq(annotations.bookId, bookId),
+      orderBy: (table, { desc }) => [desc(table.createdAt)]
+    })
+    return rows.filter((item) => !item.deletedAt).map(toAnnotationContract)
+  }
+
   async createAnnotation(input: {
     bookId: string
     locator: Record<string, unknown>

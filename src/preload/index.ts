@@ -79,6 +79,7 @@ const api = {
     }) => invoke("reader.saveLocator", input)
   },
   annotations: {
+    list: (bookId: string) => invoke("annotations.list", { bookId }),
     create: (input: {
       bookId: string
       locator: Record<string, unknown>
@@ -93,8 +94,8 @@ const api = {
   },
   readerAnnotations: {
     listAnnotations: async (bookId: string) => {
-      const opened = await invoke<{ annotations?: unknown[] }>("reader.openBook", { bookId })
-      return (opened.annotations ?? []).map((annotation) => toRendererAnnotation(annotation))
+      const annotations = await invoke<unknown[]>("annotations.list", { bookId })
+      return annotations.map((annotation) => toRendererAnnotation(annotation))
     },
     createAnnotation: async (draft: {
       bookId: string

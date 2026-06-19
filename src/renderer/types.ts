@@ -466,6 +466,19 @@ export type DreamReaderBridge = {
     deleteAnnotation?: (annotationId: string) => Promise<void>
     exportNotes?: (bookId: string, format: "markdown" | "json") => Promise<ExportNotesResult>
   }
+  annotations?: {
+    list?: (bookId: string) => Promise<unknown[]>
+    create?: (input: {
+      bookId: string
+      locator: Record<string, unknown>
+      quote: string
+      color: string
+      note?: string
+      tags?: string[]
+    }) => Promise<unknown>
+    update?: (input: { id: string; color?: string; note?: string | null; tags?: string[] }) => Promise<unknown>
+    delete?: (id: string) => Promise<unknown>
+  }
   settings?: {
     getSettings?: () => Promise<AppSettings>
     saveSettings?: (settings: AppSettings) => Promise<AppSettings>

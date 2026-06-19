@@ -348,6 +348,43 @@ describe("LibraryService", () => {
     }
   })
 
+  it("lists active annotations for a book", async () => {
+    const { client, service, tempDir } = await createTestLibrary()
+    const epubPath = path.join(tempDir, "livro-teste.epub")
+    await writeFile(epubPath, await createMinimalEpub())
+
+    try {
+      const result = await service.importFiles([epubPath])
+      const imported = result.imported[0] as { id: string }
+      const opened = await service.openBook(imported.id)
+      const chapterHref = opened.tableOfContents[0].href
+      const kept = await service.createAnnotation({
+        bookId: imported.id,
+        locator: {
+          href: chapterHref,
+          type: "application/xhtml+xml",
+          text: { highlight: "Texto em portugues brasileiro." }
+        },
+        quote: "Texto em portugues brasileiro.",
+        color: "yellow",
+        tags: []
+      })
+      const deleted = await service.createAnnotation({
+        bookId: imported.id,
+        locator: { href: chapterHref, type: "application/xhtml+xml" },
+        quote: "Trecho removido.",
+        color: "blue",
+        tags: []
+      })
+
+      await service.deleteAnnotation(deleted.id)
+
+      expect(await service.listAnnotations(imported.id)).toEqual([kept])
+    } finally {
+      await client.close()
+    }
+  })
+
   it("deletes a book with its database rows and generated audio files", async () => {
     const { client, db, service, tempDir } = await createTestLibrary()
     const epubPath = path.join(tempDir, "livro-teste.epub")

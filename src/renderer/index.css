@@ -251,3 +251,123 @@ button:disabled {
 .annotation-purple {
   box-shadow: inset 4px 0 0 hsl(262 70% 58%);
 }
+
+button.bg-primary {
+  background-color: hsl(var(--primary)) !important;
+  color: hsl(var(--primary-foreground)) !important;
+}
+
+button.bg-card {
+  background-color: hsl(var(--card)) !important;
+}
+
+button.bg-background {
+  background-color: hsl(var(--background)) !important;
+}
+
+/* Thorium ships a global button reset; restore the Tailwind button utilities used by the app chrome. */
+button.border {
+  border-style: solid !important;
+  border-width: 1px !important;
+}
+
+button.border-l {
+  border-left-style: solid !important;
+  border-left-width: 1px !important;
+}
+
+button.border-r {
+  border-right-style: solid !important;
+  border-right-width: 1px !important;
+}
+
+button.border-t {
+  border-top-style: solid !important;
+  border-top-width: 1px !important;
+}
+
+button.border-b {
+  border-bottom-style: solid !important;
+  border-bottom-width: 1px !important;
+}
+
+button.p-1 {
+  padding: 0.25rem !important;
+}
+
+button.p-2 {
+  padding: 0.5rem !important;
+}
+
+button.p-3 {
+  padding: 0.75rem !important;
+}
+
+button.p-4 {
+  padding: 1rem !important;
+}
+
+button.px-1 {
+  padding-left: 0.25rem !important;
+  padding-right: 0.25rem !important;
+}
+
+button.px-1\.5 {
+  padding-left: 0.375rem !important;
+  padding-right: 0.375rem !important;
+}
+
+button.px-2 {
+  padding-left: 0.5rem !important;
+  padding-right: 0.5rem !important;
+}
+
+button.px-2\.5 {
+  padding-left: 0.625rem !important;
+  padding-right: 0.625rem !important;
+}
+
+button.px-3 {
+  padding-left: 0.75rem !important;
+  padding-right: 0.75rem !important;
+}
+
+button.px-4 {
+  padding-left: 1rem !important;
+  padding-right: 1rem !important;
+}
+
+button.px-6 {
+  padding-left: 1.5rem !important;
+  padding-right: 1.5rem !important;
+}
+
+button.py-0\.5 {
+  padding-top: 0.125rem !important;
+  padding-bottom: 0.125rem !important;
+}
+
+button.py-1 {
+  padding-top: 0.25rem !important;
+  padding-bottom: 0.25rem !important;
+}
+
+button.py-1\.5 {
+  padding-top: 0.375rem !important;
+  padding-bottom: 0.375rem !important;
+}
+
+button.py-2 {
+  padding-top: 0.5rem !important;
+  padding-bottom: 0.5rem !important;
+}
+
+button.py-3 {
+  padding-top: 0.75rem !important;
+  padding-bottom: 0.75rem !important;
+}
+
+button.py-4 {
+  padding-top: 1rem !important;
+  padding-bottom: 1rem !important;
+}
