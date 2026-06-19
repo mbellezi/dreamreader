@@ -278,7 +278,6 @@ button:disabled {
 
 .dreamreader-thorium-shell .dreamreader-annotations-trigger {
   color: var(--dreamreader-reader-text);
-  transition: opacity 200ms ease-in-out;
 }
 
 .dreamreader-thorium-shell .dreamreader-annotations-trigger:is(:hover, :focus-visible) .dreamreader-annotations-trigger-background {
