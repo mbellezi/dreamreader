@@ -26,6 +26,7 @@ import type {
   AudioSettings,
   BookDetails,
   BookSummary,
+  ReaderLocator,
   RuntimeDiagnostic,
   RuntimeInstallBackend,
   RuntimeModel,
@@ -199,6 +200,27 @@ export function App(): ReactElement {
     setSelectedBook(book)
     setActiveView("reader")
   }
+
+  const handleReaderPositionSaved = useCallback((locator: ReaderLocator) => {
+    setSelectedBook((current) => current?.id === locator.bookId
+      ? {
+        ...current,
+        lastChapterId: locator.chapterId,
+        lastPosition: locator,
+        progress: locator.progress,
+        status: locator.progress >= 100 ? "finished" : "reading",
+        updatedAt: locator.updatedAt
+      }
+      : current)
+    setBooks((current) => current.map((book) => book.id === locator.bookId
+      ? {
+        ...book,
+        progress: locator.progress,
+        status: locator.progress >= 100 ? "finished" : "reading",
+        updatedAt: locator.updatedAt
+      }
+      : book))
+  }, [])
 
   useEffect(() => {
     if (activeView !== "audio") {
@@ -879,7 +901,7 @@ export function App(): ReactElement {
           </div>
         ) : (
           <div className="min-h-0 flex-1 overflow-hidden">
-            <ThoriumReaderPane book={selectedBook} locale={locale} t={t} />
+            <ThoriumReaderPane book={selectedBook} locale={locale} t={t} onPositionSaved={handleReaderPositionSaved} />
           </div>
         )}
 

@@ -219,6 +219,74 @@ button:disabled {
   color: hsl(var(--reader-foreground));
 }
 
+.dreamreader-thorium-frame {
+  background-color: var(--dreamreader-reader-background) !important;
+  min-height: 0 !important;
+}
+
+.dreamreader-thorium-frame > *,
+.dreamreader-thorium-frame .thorium_web_reader_app_wrapper,
+.dreamreader-thorium-frame .thorium_web_reader_app_main,
+.dreamreader-thorium-frame .thorium_web_reader_app_shell,
+.dreamreader-thorium-frame .thorium_web_stackedUI,
+.dreamreader-thorium-frame .thorium_web_layeredUI,
+.dreamreader-thorium-frame .thorium_web_reader_app_leftDock,
+.dreamreader-thorium-frame .thorium_web_reader_app_rightDock,
+.dreamreader-thorium-frame .thorium_web_reader_app_iframeContainer,
+.dreamreader-thorium-frame .thorium_web_reader_app_iframeContainer > div {
+  height: 100% !important;
+  max-height: 100% !important;
+  min-height: 0 !important;
+}
+
+.dreamreader-thorium-shell {
+  --dreamreader-reader-background: var(--th-theme-background, hsl(var(--background)));
+  --dreamreader-reader-hover: var(--th-theme-hover, hsl(var(--foreground) / 0.16));
+  --dreamreader-reader-text: var(--th-theme-text, hsl(var(--foreground)));
+  background-color: var(--dreamreader-reader-background) !important;
+  color: var(--dreamreader-reader-text) !important;
+}
+
+.dreamreader-thorium-shell .dreamreader-thorium-frame,
+.dreamreader-thorium-shell .thorium_web_reader_app_wrapper,
+.dreamreader-thorium-shell .thorium_web_reader_app_main,
+.dreamreader-thorium-shell .thorium_web_reader_app_shell,
+.dreamreader-thorium-shell .thorium_web_reader_app_iframeContainer,
+.dreamreader-thorium-shell .thorium_web_reader_app_iframeContainer > div,
+.dreamreader-thorium-shell .thorium_web_reader_app_bottomBar,
+.dreamreader-thorium-shell .thorium_web_reader_app_topBar,
+.dreamreader-thorium-shell .thorium_web_reader_app_main .thorium_web_layeredUI,
+.dreamreader-thorium-shell .thorium_web_reader_app_main .thorium_web_stackedUI {
+  background-color: var(--dreamreader-reader-background) !important;
+  color: var(--dreamreader-reader-text) !important;
+}
+
+.dreamreader-thorium-shell .thorium_web_reader_app_bottomBar button,
+.dreamreader-thorium-shell .thorium_web_reader_app_topBar button,
+.dreamreader-thorium-shell .thorium_web_reader_app_bottomBar svg,
+.dreamreader-thorium-shell .thorium_web_reader_app_topBar svg {
+  color: var(--dreamreader-reader-text) !important;
+  fill: currentColor !important;
+  stroke: currentColor !important;
+}
+
+.dreamreader-thorium-shell .thorium_web_reader_app_bottomBar button[data-hovered],
+.dreamreader-thorium-shell .thorium_web_reader_app_topBar button[data-hovered] {
+  background-color: var(--dreamreader-reader-hover) !important;
+  color: var(--dreamreader-reader-text) !important;
+}
+
+.dreamreader-thorium-shell .dreamreader-annotations-trigger {
+  color: var(--dreamreader-reader-text);
+  transition: opacity 200ms ease-in-out;
+}
+
+.dreamreader-thorium-shell:has(.thorium_web_layeredUI.thorium_web_isImmersive:not(.thorium_web_isHovering)) .dreamreader-annotations-trigger:not([aria-pressed="true"]),
+.dreamreader-thorium-shell:has(.thorium_web_stackedUI.thorium_web_isImmersive:not(.thorium_web_isHovering)) .dreamreader-annotations-trigger:not([aria-pressed="true"]) {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .reader-page-zone {
   color: hsl(var(--reader-muted-foreground));
   transition: background-color 160ms ease;

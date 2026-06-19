@@ -3,6 +3,7 @@ import type { BasicTextSelection } from "@readium/navigator-html-injectables"
 import { Link, Locator, LocatorLocations, LocatorText } from "@readium/shared"
 
 const epubNavigationPatchKey = "__dreamreaderEpubNavigationPatch"
+const epubPositionProgressionBridgeKey = "__dreamreaderPositionProgressionBridge"
 const epubSelectionBridgeKey = "__dreamreaderTextSelectionBridge"
 
 export type ReadiumTextSelectionHandler = (
@@ -44,8 +45,11 @@ export type ReadiumDecorationObserver = {
 
 type EpubNavigatorInternals = {
   [epubSelectionBridgeKey]?: boolean
+  [epubPositionProgressionBridgeKey]?: boolean
   currentLocation?: Locator
+  go(locator: Locator, animated: boolean, cb: (ok: boolean) => void): void
   listeners?: {
+    positionChanged?: (locator: Locator) => void
     textSelected?: (selection: BasicTextSelection) => void
   }
   positions?: Locator[]
@@ -77,6 +81,7 @@ export function installReadiumEpubNavigationPatch(): void {
   const originalDestroy = prototype.destroy
 
   prototype.load = async function patchedLoad(this: EpubNavigatorInternals) {
+    installPositionProgressionBridge(this)
     installTextSelectionBridge(this)
     normalizeNavigatorPositions(this)
     const result = await originalLoad.call(this)
@@ -139,7 +144,26 @@ export function subscribeReadiumEpubNavigator(handler: (navigator: EpubNavigator
 }
 
 export function serializeReadiumLocator(locator: Locator): Record<string, unknown> {
-  return normalizeReadiumLocator(locator).serialize() as Record<string, unknown>
+  return stripUndefinedValues(normalizeReadiumLocator(locator).serialize()) as Record<string, unknown>
+}
+
+export function goToReadiumLocator(navigator: EpubNavigatorInternals, input: Locator | Record<string, unknown>): Promise<boolean> {
+  const locator = input instanceof Locator ? input : Locator.deserialize(input)
+  if (!locator) {
+    return Promise.resolve(false)
+  }
+
+  return new Promise((resolve) => {
+    navigator.go(normalizeReadiumLocator(locator), false, resolve)
+  })
+}
+
+export function readiumLocatorProgress(locator: Locator | Record<string, unknown> | undefined): number {
+  const serialized = locator instanceof Locator ? serializeReadiumLocator(locator) : locator
+  const locations = serialized?.locations && typeof serialized.locations === "object" && !Array.isArray(serialized.locations)
+    ? serialized.locations as Record<string, unknown>
+    : {}
+  return normalizedProgress(locations.totalProgression ?? locations.progression)
 }
 
 export function serializeReadiumTextSelection(
@@ -155,7 +179,7 @@ export function serializeReadiumTextSelection(
   const range = findSelectionRange(selection, navigator)
   const context = range ? textContextFromRange(range, selection.text) : undefined
 
-  return normalizeReadiumLocator(new Locator({
+  return stripUndefinedValues(normalizeReadiumLocator(new Locator({
     href: normalizedLocator.href,
     type: normalizedLocator.type,
     title: normalizedLocator.title,
@@ -165,7 +189,7 @@ export function serializeReadiumTextSelection(
       before: context?.before,
       after: context?.after
     })
-  })).serialize() as Record<string, unknown>
+  })).serialize()) as Record<string, unknown>
 }
 
 export function normalizeReadiumLocator(locator: Locator): Locator {
@@ -176,6 +200,44 @@ export function normalizeReadiumLocator(locator: Locator): Locator {
     locations: normalizeReadiumLocations(locator.locations),
     text: normalizeReadiumText(locator.text)
   })
+}
+
+export function enrichReadiumLocatorProgression(locator: Locator, positions: Locator[] | undefined): Locator {
+  const normalizedLocator = normalizeReadiumLocator(locator)
+  const resourceProgression = normalizedProgress(normalizedLocator.locations.progression)
+  const normalizedPositions = (positions ?? []).map(normalizeReadiumLocator)
+  let startIndex = -1
+  for (let index = normalizedPositions.length - 1; index >= 0; index -= 1) {
+    const position = normalizedPositions[index]
+    if (position.href === normalizedLocator.href && normalizedProgress(position.locations.progression) <= resourceProgression) {
+      startIndex = index
+      break
+    }
+  }
+
+  if (startIndex < 0) {
+    return normalizedLocator
+  }
+
+  const startPosition = normalizedPositions[startIndex]
+  const nextPosition = normalizedPositions[startIndex + 1]
+  const startTotalProgression = normalizedProgress(startPosition.locations.totalProgression)
+  const endTotalProgression = nextPosition
+    ? normalizedProgress(nextPosition.locations.totalProgression)
+    : 1
+  const startResourceProgression = normalizedProgress(startPosition.locations.progression)
+  const endResourceProgression = nextPosition?.href === normalizedLocator.href
+    ? normalizedProgress(nextPosition.locations.progression)
+    : 1
+  const segmentSize = Math.max(endResourceProgression - startResourceProgression, 0)
+  const segmentProgression = segmentSize > 0
+    ? Math.min(Math.max((resourceProgression - startResourceProgression) / segmentSize, 0), 1)
+    : 0
+  const totalProgression = startTotalProgression + segmentProgression * (endTotalProgression - startTotalProgression)
+
+  return normalizeReadiumLocator(normalizedLocator.copyWithLocations({
+    totalProgression: normalizedProgress(totalProgression)
+  }))
 }
 
 export function ensureReadiumPositionForLink(
@@ -206,6 +268,24 @@ function installTextSelectionBridge(navigator: EpubNavigatorInternals): void {
     }
   }
   navigator[epubSelectionBridgeKey] = true
+}
+
+function installPositionProgressionBridge(navigator: EpubNavigatorInternals): void {
+  if (navigator[epubPositionProgressionBridgeKey]) {
+    return
+  }
+  const listeners = navigator.listeners
+  const originalPositionChanged = listeners?.positionChanged
+  if (!listeners || !originalPositionChanged) {
+    return
+  }
+
+  listeners.positionChanged = (locator) => {
+    const enrichedLocator = enrichReadiumLocatorProgression(locator, navigator.positions)
+    navigator.currentLocation = enrichedLocator
+    originalPositionChanged(enrichedLocator)
+  }
+  navigator[epubPositionProgressionBridgeKey] = true
 }
 
 function notifyNavigatorHandlers(navigator: EpubNavigatorInternals | null): void {
@@ -281,4 +361,30 @@ function readiumPositionLocatorFromLink(link: Link, readingOrderIndex = -1): Loc
       progression: 0
     })
   })
+}
+
+function normalizedProgress(value: unknown): number {
+  const numberValue = Number(value)
+  if (!Number.isFinite(numberValue)) {
+    return 0
+  }
+  return Math.min(Math.max(numberValue, 0), 1)
+}
+
+function stripUndefinedValues(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(stripUndefinedValues).filter((item) => item !== undefined)
+  }
+
+  if (!value || typeof value !== "object") {
+    return value
+  }
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .flatMap(([key, child]) => {
+        const cleanChild = stripUndefinedValues(child)
+        return cleanChild === undefined ? [] : [[key, cleanChild]]
+      })
+  )
 }
