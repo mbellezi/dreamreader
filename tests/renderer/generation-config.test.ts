@@ -14,7 +14,7 @@ function voice(id: string, compatibleEngineIds?: string[]): VoiceProfile {
 
 const engineOptions: SelectOption[] = [
   { label: "Qwen Base", value: "qwen3-tts-17b-base-mlx" },
-  { label: "Qwen VoiceDesign", value: "qwen3-tts-17b-mlx" }
+  { label: "Chatterbox", value: "chatterbox-multilingual-mlx" }
 ]
 
 describe("selectPreferredGenerationEngineId", () => {
@@ -22,9 +22,9 @@ describe("selectPreferredGenerationEngineId", () => {
     expect(
       selectPreferredGenerationEngineId({
         engineOptions,
-        voices: [voice("voice-design", ["qwen3-tts-17b-mlx"])]
+        voices: [voice("voice-chatterbox", ["chatterbox-multilingual-mlx"])]
       })
-    ).toBe("qwen3-tts-17b-mlx")
+    ).toBe("chatterbox-multilingual-mlx")
   })
 
   it("keeps the default engine when it can generate", () => {

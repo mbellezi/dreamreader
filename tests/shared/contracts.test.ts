@@ -128,6 +128,7 @@ describe("shared contracts", () => {
         engineId: "qwen3-tts-17b-mlx",
         name: "Narrador quente",
         prompt: "A warm Brazilian Portuguese audiobook narrator with stable speaker identity.",
+        sampleText: "Na manhã clara, Lívia leu uma frase curta para testar a nova voz.",
         language: "pt-BR",
       }).success,
     ).toBe(true);

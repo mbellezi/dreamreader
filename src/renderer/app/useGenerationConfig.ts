@@ -41,6 +41,8 @@ export type BatchGenerationParams = {
 
 export type SelectOption = { label: string; value: string }
 
+const AUDIOBOOK_EXCLUDED_ENGINE_IDS = new Set(["qwen3-tts-17b-mlx"])
+
 export type GenerationConfig = {
   selectedEngineId: string
   setSelectedEngineId: (value: string) => void
@@ -94,7 +96,14 @@ export function useGenerationConfig({
   const [modelSettingsDraft, setModelSettingsDraft] = useState<TtsModelSettings>({})
 
   const installedTtsModels = useMemo(
-    () => models.filter((model) => model.kind === "tts" && model.installStatus === "available" && model.engineId),
+    () =>
+      models.filter(
+        (model) =>
+          model.kind === "tts" &&
+          model.installStatus === "available" &&
+          model.engineId &&
+          !AUDIOBOOK_EXCLUDED_ENGINE_IDS.has(model.engineId)
+      ),
     [models]
   )
   const engineOptions = useMemo<SelectOption[]>(() => {

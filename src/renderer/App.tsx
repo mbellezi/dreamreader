@@ -549,6 +549,8 @@ export function App(): ReactElement {
     language: string
     name: string
     prompt: string
+    referenceVoiceProfileId?: string
+    sampleText: string
   }) => {
     setAudioLoading(true)
     try {

@@ -60,4 +60,11 @@ describe("pickPreviewEngineId", () => {
     const installed = [model(undefined), model("engine-a")]
     expect(pickPreviewEngineId(voice(["engine-a"]), installed)).toBe("engine-a")
   })
+
+  it("skips generation-only VoiceDesign when choosing a preview engine", () => {
+    const installed = [model("qwen3-tts-17b-mlx"), model("qwen3-tts-17b-base-mlx")]
+    expect(pickPreviewEngineId(voice(["qwen3-tts-17b-mlx", "qwen3-tts-17b-base-mlx"]), installed)).toBe(
+      "qwen3-tts-17b-base-mlx"
+    )
+  })
 })

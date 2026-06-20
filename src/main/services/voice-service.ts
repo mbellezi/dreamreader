@@ -31,6 +31,7 @@ import {
 } from "@main/services/default-voices"
 import { LocalTtsAdapter } from "@main/services/local-tts-adapter"
 import { importSidecarAudio, SidecarTtsAdapter } from "@main/services/sidecar-tts-adapter"
+import { neutralProsodyFor } from "@main/services/tts-pipeline"
 import { buildPreviewPlan } from "@main/services/voice-preview"
 import { probeAudio, resampleAudio, TARGET_SAMPLE_RATE } from "@main/lib/audio-transcode"
 
@@ -80,6 +81,8 @@ const VoicePackageManifestSchema = z.object({
 })
 
 type VoicePackageManifest = z.infer<typeof VoicePackageManifestSchema>
+type RuntimeManifestRow = typeof runtimeManifests.$inferSelect
+type TtsEngineRow = typeof ttsEngines.$inferSelect
 
 export class VoiceService {
   private readonly previewAdapter = new LocalTtsAdapter()
@@ -210,9 +213,88 @@ export class VoiceService {
     if (engine.id !== QWEN_VOICE_DESIGN_ENGINE_ID || engine.adapterId !== "qwen3-tts-mlx") {
       throw new AppError("voice_design_unsupported", "Selected engine does not support voice design prompts")
     }
+    if (!engine.installPath) {
+      throw new AppError("tts_engine_not_configured", "TTS engine model is not installed")
+    }
+    const runtimeManifest = await this.db.query.runtimeManifests.findFirst({
+      where: and(eq(runtimeManifests.adapterId, engine.adapterId), eq(runtimeManifests.runtime, engine.runtime))
+    })
+    if (!runtimeManifest?.executablePath) {
+      throw new AppError("tts_sidecar_not_configured", "TTS engine sidecar runtime is not configured")
+    }
+    const engineCapabilities = jsonObject(engine.capabilitiesJson)
+    if (input.referenceVoiceProfileId && engineCapabilities.supportsVoiceClone !== true) {
+      throw new AppError("voice_design_reference_unsupported", "Selected voice design engine cannot use a reference voice")
+    }
+    const reference = input.referenceVoiceProfileId
+      ? await this.referenceForDesignGeneration(input.referenceVoiceProfileId)
+      : undefined
+    const engines = await this.db.query.ttsEngines.findMany()
+    const targetEngines = engines.filter((item) => {
+      if (item.id === QWEN_VOICE_DESIGN_ENGINE_ID || !item.installed) {
+        return false
+      }
+      return jsonObject(item.capabilitiesJson).supportsVoiceClone === true
+    })
+    if (!targetEngines.length) {
+      throw new AppError("voice_design_no_target_engine", "No installed engine can use generated voice references")
+    }
 
     const now = new Date()
     const profileId = createId("voice")
+    const compatibleEngineIds = targetEngines.map((item) => item.id)
+    const compatibleAdapterIds = unique(targetEngines.map((item) => item.adapterId))
+    const designProfile = VoiceProfileSchema.parse({
+      id: profileId,
+      name: input.name,
+      description: "",
+      language: input.language,
+      kind: "generated",
+      source: {
+        type: "voice_design_generated_reference",
+        provider: "qwen3-tts",
+        engineId: input.engineId
+      },
+      tags: [input.language, "voice-design", "gerada"],
+      settings: {
+        compatibleAdapterIds,
+        compatibleEngineIds,
+        generatedSampleText: input.sampleText,
+        ...(input.referenceVoiceProfileId ? { referenceVoiceProfileId: input.referenceVoiceProfileId } : {}),
+        voiceDesignPrompt: input.prompt
+      },
+      createdFromEngineId: input.engineId,
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString()
+    })
+    const designBinding = VoiceEngineBindingSchema.parse({
+      id: createId("voice_binding"),
+      voiceProfileId: profileId,
+      engineId: input.engineId,
+      adapterId: engine.adapterId,
+      status: "ready",
+      bindingKind: "voice_design_prompt",
+      settings: {
+        source: "local-voice-design-generator",
+        voiceDesignPrompt: input.prompt
+      },
+      compatibility: {
+        engineVersion: engine.version,
+        language: input.language
+      },
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString()
+    })
+    const sample = await this.generateReferenceFromDesignPrompt({
+      binding: designBinding,
+      engine,
+      now,
+      profile: designProfile,
+      reference,
+      request: input,
+      runtimeManifest
+    })
+
     const [voice] = await this.db
       .insert(voiceProfiles)
       .values({
@@ -222,11 +304,16 @@ export class VoiceService {
         language: input.language,
         kind: "generated",
         source: JSON.stringify({
-          type: "voice_design_prompt",
-          provider: "qwen3-tts"
+          type: "voice_design_generated_reference",
+          provider: "qwen3-tts",
+          generatedSampleAssetId: sample.assetId
         }),
         tags: [input.language, "voice-design"],
         settingsJson: {
+          compatibleAdapterIds,
+          compatibleEngineIds,
+          generatedSampleText: input.sampleText,
+          ...(input.referenceVoiceProfileId ? { referenceVoiceProfileId: input.referenceVoiceProfileId } : {}),
           voiceDesignPrompt: input.prompt
         },
         createdFromEngineId: input.engineId,
@@ -234,25 +321,160 @@ export class VoiceService {
       })
       .returning()
 
-    await this.db.insert(voiceEngineBindings).values({
-      id: createId("voice_binding"),
+    await this.db.insert(voiceSamples).values({
+      id: sample.id,
       voiceProfileId: profileId,
-      engineId: input.engineId,
-      adapterId: engine.adapterId,
-      status: "ready",
-      bindingKind: "voice_design_prompt",
-      settingsJson: {
-        voiceDesignPrompt: input.prompt,
-        source: "local-voice-design"
-      },
-      compatibilityJson: {
-        language: input.language,
-        engineVersion: engine.version
-      },
-      updatedAt: now
+      assetId: sample.assetId,
+      transcript: input.sampleText,
+      language: input.language,
+      durationMs: sample.durationMs,
+      qualityJson: sample.quality
     })
 
+    for (const targetEngine of targetEngines) {
+      await this.db.insert(voiceEngineBindings).values({
+        id: createId("voice_binding"),
+        voiceProfileId: profileId,
+        engineId: targetEngine.id,
+        adapterId: targetEngine.adapterId,
+        status: "ready",
+        bindingKind: "reference_audio",
+        bindingAssetId: sample.assetId,
+        settingsJson: {
+          generatedByEngineId: input.engineId,
+          ...(input.referenceVoiceProfileId ? { referenceVoiceProfileId: input.referenceVoiceProfileId } : {}),
+          source: "voice-design-generated-reference",
+          transcript: input.sampleText,
+          voiceDesignPrompt: input.prompt
+        },
+        compatibilityJson: {
+          generatedReference: true,
+          language: input.language,
+          engineVersion: targetEngine.version,
+          sampleRate: TARGET_SAMPLE_RATE
+        },
+        updatedAt: now
+      })
+    }
+
     return toVoiceProfile(voice, await this.bindingsForVoice(profileId))
+  }
+
+  private async generateReferenceFromDesignPrompt(input: {
+    binding: VoiceEngineBinding
+    engine: TtsEngineRow
+    now: Date
+    profile: VoiceProfile
+    reference?: { audioPath: string; text: string }
+    request: VoiceDesignPromptInput
+    runtimeManifest: RuntimeManifestRow
+  }) {
+    if (!input.engine.installPath || !input.runtimeManifest.executablePath) {
+      throw new AppError("tts_sidecar_not_configured", "TTS engine sidecar runtime is not configured")
+    }
+    const outputDir = path.join(this.paths.voicesDir, input.profile.id, "voice-design-generation")
+    await mkdir(outputDir, { recursive: true })
+    const plan = buildVoiceDesignSamplePlan({
+      engineId: input.engine.id,
+      language: input.request.language,
+      profileId: input.profile.id,
+      sampleText: input.request.sampleText
+    })
+    const result = await this.sidecarAdapter.synthesize({
+      adapterId: input.engine.adapterId,
+      engineId: input.engine.id,
+      jobId: `voice-design-${input.profile.id}`,
+      modelPath: input.engine.installPath,
+      outputDirectory: outputDir,
+      generationLanguage: input.request.language,
+      modelSettings: {},
+      plan,
+      quality: "standard",
+      referenceAudioPath: input.reference?.audioPath,
+      referenceText: input.reference?.text,
+      runtimeManifest: {
+        adapterId: input.runtimeManifest.adapterId,
+        capabilitiesJson: input.runtimeManifest.capabilitiesJson,
+        environmentJson: input.runtimeManifest.environmentJson,
+        executablePath: input.runtimeManifest.executablePath,
+        healthcheckCommand: input.runtimeManifest.healthcheckCommand,
+        id: input.runtimeManifest.id,
+        runtime: input.runtimeManifest.runtime,
+        version: input.runtimeManifest.version
+      },
+      voiceBinding: input.binding,
+      voiceProfile: input.profile,
+      voiceSamples: []
+    })
+    const audio = await importSidecarAudio(result.chapter)
+    return this.storeGeneratedReferenceSample({
+      audioPath: audio.audioPath,
+      durationMs: audio.durationMs,
+      language: input.request.language,
+      now: input.now,
+      profileId: input.profile.id,
+      prompt: input.request.prompt,
+      referenceVoiceProfileId: input.request.referenceVoiceProfileId,
+      sampleText: input.request.sampleText
+    })
+  }
+
+  private async storeGeneratedReferenceSample(input: {
+    audioPath: string
+    durationMs: number
+    language: string
+    now: Date
+    profileId: string
+    prompt: string
+    referenceVoiceProfileId?: string
+    sampleText: string
+  }) {
+    const targetDir = path.join(this.paths.voicesDir, input.profileId)
+    await mkdir(targetDir, { recursive: true })
+    const sourceProbe = await probeAudio(input.audioPath)
+    const convertedPath = path.join(targetDir, "generated-reference-22050.wav")
+    const sourceIsTargetWav =
+      sourceProbe.sampleRate === TARGET_SAMPLE_RATE && path.extname(input.audioPath).toLowerCase() === ".wav"
+    if (sourceIsTargetWav) {
+      await copyFile(input.audioPath, convertedPath)
+    } else if (!(await resampleAudio(input.audioPath, convertedPath, TARGET_SAMPLE_RATE))) {
+      throw new AppError("voice_design_resample_failed", "Generated voice sample could not be converted to 22 kHz")
+    }
+
+    const finalProbe = await probeAudio(convertedPath)
+    if (finalProbe.sampleRate !== TARGET_SAMPLE_RATE) {
+      throw new AppError("voice_design_resample_failed", "Generated voice sample was not converted to 22 kHz")
+    }
+    const buffer = await readFile(convertedPath)
+    const contentHash = hashBuffer(buffer)
+    const targetPath = path.join(targetDir, `reference-${contentHash.slice(0, 16)}.wav`)
+    await rename(convertedPath, targetPath)
+    const [asset] = await this.db
+      .insert(assets)
+      .values({
+        id: createId("asset"),
+        kind: "voice_sample",
+        path: targetPath,
+        mimeType: "audio/wav",
+        contentHash,
+        sizeBytes: buffer.byteLength,
+        createdAt: input.now
+      })
+      .returning()
+    return {
+      id: createId("voice_sample"),
+      assetId: asset.id,
+      durationMs: finalProbe.durationMs ?? input.durationMs,
+      quality: {
+        converted: !sourceIsTargetWav,
+        generatedBy: "qwen3-tts-voice-design",
+        prompt: input.prompt,
+        referenceVoiceProfileId: input.referenceVoiceProfileId ?? null,
+        sampleRate: TARGET_SAMPLE_RATE,
+        sampleTextBytes: Buffer.byteLength(input.sampleText, "utf8"),
+        sourceSampleRate: sourceProbe.sampleRate ?? null
+      }
+    }
   }
 
   async preview(input: { voiceProfileId: string; engineId: string }) {
@@ -875,6 +1097,25 @@ export class VoiceService {
       text: typeof settings.transcript === "string" ? settings.transcript : undefined
     }
   }
+
+  private async referenceForDesignGeneration(voiceProfileId: string) {
+    const sample = await this.db.query.voiceSamples.findFirst({ where: eq(voiceSamples.voiceProfileId, voiceProfileId) })
+    if (!sample) {
+      throw new AppError("voice_reference_missing", "Selected reference voice has no sample audio")
+    }
+    const transcript = sample.transcript?.trim()
+    if (!transcript) {
+      throw new AppError("voice_transcript_required", "Selected reference voice requires a transcript")
+    }
+    const asset = await this.db.query.assets.findFirst({ where: eq(assets.id, sample.assetId) })
+    if (!asset) {
+      throw new AppError("voice_reference_missing", "Selected reference voice sample asset was not found")
+    }
+    return {
+      audioPath: asset.path,
+      text: transcript
+    }
+  }
 }
 
 function toVoiceProfile(row: typeof voiceProfiles.$inferSelect, bindings: Array<typeof voiceEngineBindings.$inferSelect>): VoiceProfile {
@@ -945,6 +1186,52 @@ function jsonObject(value: unknown): Record<string, unknown> {
 
 function unique(values: string[]): string[] {
   return [...new Set(values)]
+}
+
+function buildVoiceDesignSamplePlan(input: {
+  engineId: string
+  language: string
+  profileId: string
+  sampleText: string
+}): NarrationPlan {
+  const contentHash = hashBuffer(`${input.profileId}:${input.engineId}:${input.language}:${input.sampleText}`)
+  return {
+    schemaVersion: "narration-plan/v1",
+    source: {
+      bookId: "voice-design",
+      chapterHref: input.profileId,
+      contentHash,
+      language: input.language
+    },
+    normalization: {
+      normalizerId: "voice-design-sample",
+      version: "1.0.0",
+      dictionaryVersion: "voice-design"
+    },
+    prosody: {
+      analyzerId: "voice-design-sample",
+      version: "1.0.0"
+    },
+    segments: [
+      {
+        segmentId: `voice-design:${contentHash.slice(0, 12)}`,
+        locator: {
+          href: "voice-design",
+          locations: {
+            progression: 0,
+            segmentIndex: 0
+          }
+        },
+        originalText: input.sampleText,
+        normalizedText: input.sampleText,
+        voiceRole: "narrator",
+        prosody: {
+          ...neutralProsodyFor(input.sampleText),
+          instructionPtBr: ""
+        }
+      }
+    ]
+  }
 }
 
 function designPromptFor(

@@ -27,8 +27,8 @@ function segment(overrides: Partial<TtsSegment> = {}): TtsSegment {
 }
 
 describe("prosodyEngineSupport", () => {
-  it("classifies the Qwen instruct engine as instruction-driven", () => {
-    expect(prosodyEngineSupport("qwen3-tts-17b-mlx")).toBe("instruction")
+  it("treats Qwen VoiceDesign as reference-driven because it is generation-only", () => {
+    expect(prosodyEngineSupport("qwen3-tts-17b-mlx")).toBe("reference")
   })
 
   it("classifies F5 and Qwen base variants as reference-driven", () => {

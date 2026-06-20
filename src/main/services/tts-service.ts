@@ -57,6 +57,7 @@ export const DEFAULT_TTS_ENGINE_ID = "dreamreader-local-tts"
 export const DEFAULT_TTS_ADAPTER_ID = "dreamreader-local-wav"
 export { DEFAULT_VOICE_PROFILE_ID } from "@main/services/default-voices"
 
+const QWEN_VOICE_DESIGN_ENGINE_ID = "qwen3-tts-17b-mlx"
 const activeStatuses = ["queued", "preparing", "analyzing", "synthesizing", "assembling", "updating_m4b"] as const
 const terminalStatuses = ["completed", "failed", "cancelled"] as const
 
@@ -293,6 +294,7 @@ export class TtsService {
   async enqueueChapter(input: EnqueueChapterTtsInput): Promise<TtsJob> {
     await this.ensureReady()
     const engineId = input.engineId || DEFAULT_TTS_ENGINE_ID
+    assertEngineCanGenerateAudiobook(engineId)
     const voice = await this.resolveVoiceForEngine({
       engineId,
       voiceBindingId: input.voiceBindingId,
@@ -1547,6 +1549,7 @@ export class TtsService {
   }
 
   private async assertEngineReady(engineId: string): Promise<ReadyEngine> {
+    assertEngineCanGenerateAudiobook(engineId)
     const adapterId = adapterIdForEngine(engineId)
     const engine = await this.db.query.ttsEngines.findFirst({ where: eq(ttsEngines.id, engineId) })
     if (!engine) {
@@ -1920,6 +1923,12 @@ function localSegmentPacingMs(text: string): number {
 
 function qualityFor(value: unknown): "draft" | "standard" | "high" {
   return value === "draft" || value === "high" ? value : "standard"
+}
+
+function assertEngineCanGenerateAudiobook(engineId: string): void {
+  if (engineId === QWEN_VOICE_DESIGN_ENGINE_ID) {
+    throw new AppError("tts_engine_voice_design_only", "Qwen VoiceDesign is only available for creating reusable voices")
+  }
 }
 
 function stableJsonString(value: unknown): string {

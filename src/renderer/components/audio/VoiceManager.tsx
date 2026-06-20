@@ -8,6 +8,18 @@ import type { RuntimeModel, VoiceProfile } from "@renderer/types"
 
 const CLONE_ENGINE_IDS = ["qwen3-tts-06b-mlx", "qwen3-tts-17b-base-mlx", "chatterbox-multilingual-mlx", "f5-tts-pt-br"]
 const DESIGN_ENGINE_ID = "qwen3-tts-17b-mlx"
+const DESIGN_LANGUAGE_OPTIONS = [
+  { labelKey: "audio.language.portuguese", sampleKey: "voiceManager.sampleText.default.pt-BR", value: "pt-BR" },
+  { labelKey: "audio.language.english", sampleKey: "voiceManager.sampleText.default.en", value: "en" },
+  { labelKey: "audio.language.spanish", sampleKey: "voiceManager.sampleText.default.es", value: "es" },
+  { labelKey: "audio.language.french", sampleKey: "voiceManager.sampleText.default.fr", value: "fr" },
+  { labelKey: "audio.language.german", sampleKey: "voiceManager.sampleText.default.de", value: "de" },
+  { labelKey: "audio.language.italian", sampleKey: "voiceManager.sampleText.default.it", value: "it" },
+  { labelKey: "audio.language.japanese", sampleKey: "voiceManager.sampleText.default.ja", value: "ja" },
+  { labelKey: "audio.language.korean", sampleKey: "voiceManager.sampleText.default.ko", value: "ko" },
+  { labelKey: "audio.language.chinese", sampleKey: "voiceManager.sampleText.default.zh", value: "zh" },
+  { labelKey: "audio.language.russian", sampleKey: "voiceManager.sampleText.default.ru", value: "ru" }
+]
 const REFERENCE_WARN_MS = 12_000
 
 export function VoiceManager({
@@ -36,7 +48,14 @@ export function VoiceManager({
     referenceAudioPath: string
     transcript?: string
   }) => Promise<VoiceProfile | void> | VoiceProfile | void
-  onCreateVoiceFromDesignPrompt: (input: { engineId: string; language: string; name: string; prompt: string }) => Promise<VoiceProfile | void> | VoiceProfile | void
+  onCreateVoiceFromDesignPrompt: (input: {
+    engineId: string
+    language: string
+    name: string
+    prompt: string
+    referenceVoiceProfileId?: string
+    sampleText: string
+  }) => Promise<VoiceProfile | void> | VoiceProfile | void
   onUpdateVoice: (input: { voiceProfileId: string; name: string }) => Promise<void> | void
   onDeleteVoice: (voiceProfileId: string) => Promise<void> | void
   onExportVoice: (voiceProfileId: string) => Promise<void> | void
@@ -52,8 +71,12 @@ export function VoiceManager({
   const [referenceConsentNote, setReferenceConsentNote] = useState("")
   const [referenceConsentConfirmed, setReferenceConsentConfirmed] = useState(false)
   const [designEngineId, setDesignEngineId] = useState(DESIGN_ENGINE_ID)
+  const [designLanguage, setDesignLanguage] = useState("pt-BR")
   const [designName, setDesignName] = useState("")
   const [designPrompt, setDesignPrompt] = useState("")
+  const [designReferenceVoiceId, setDesignReferenceVoiceId] = useState("")
+  const [designSampleText, setDesignSampleText] = useState(() => t("voiceManager.sampleText.default.pt-BR"))
+  const [designSampleTextTouched, setDesignSampleTextTouched] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState("")
   const [importLoading, setImportLoading] = useState(false)
@@ -67,7 +90,21 @@ export function VoiceManager({
     () => installedTtsModels.filter((model) => model.engineId === DESIGN_ENGINE_ID).map((model) => ({ label: model.name, value: model.engineId ?? model.id })),
     [installedTtsModels]
   )
+  const designLanguageOptions = useMemo(
+    () => DESIGN_LANGUAGE_OPTIONS.map((option) => ({ label: t(option.labelKey), value: option.value })),
+    [t]
+  )
   const customVoices = useMemo(() => voices.filter((voice) => voice.kind === "cloned" || voice.kind === "generated" || voice.kind === "imported"), [voices])
+  const selectedDesignModel = installedTtsModels.find((model) => model.engineId === designEngineId)
+  const designSupportsReference = voiceDesignSupportsReference(selectedDesignModel)
+  const designReferenceVoiceOptions = useMemo(
+    () => [
+      { label: t("voiceManager.referenceVoice.none"), value: "" },
+      ...customVoices.map((voice) => ({ label: voice.name, value: voice.id }))
+    ],
+    [customVoices, t]
+  )
+  const designSampleTextDefault = t(sampleTextKeyForLanguage(designLanguage))
 
   const referenceTooLong = typeof referenceDurationMs === "number" && referenceDurationMs > REFERENCE_WARN_MS
   const canCreateReference =
@@ -77,13 +114,29 @@ export function VoiceManager({
     Boolean(referenceConsentNote.trim()) &&
     referenceConsentConfirmed &&
     !loading
-  const canCreateDesign = Boolean(designEngineId) && Boolean(designName.trim()) && Boolean(designPrompt.trim()) && !loading
+  const canCreateDesign =
+    Boolean(designEngineId) &&
+    Boolean(designPrompt.trim()) &&
+    Boolean(designSampleText.trim()) &&
+    !loading
 
   useEffect(() => {
     if (!designEngineOptions.some((option) => option.value === designEngineId)) {
       setDesignEngineId(designEngineOptions[0]?.value ?? DESIGN_ENGINE_ID)
     }
   }, [designEngineId, designEngineOptions])
+
+  useEffect(() => {
+    if (!designSampleTextTouched) {
+      setDesignSampleText(designSampleTextDefault)
+    }
+  }, [designSampleTextDefault, designSampleTextTouched])
+
+  useEffect(() => {
+    if (!designSupportsReference || !designReferenceVoiceOptions.some((option) => option.value === designReferenceVoiceId)) {
+      setDesignReferenceVoiceId("")
+    }
+  }, [designReferenceVoiceId, designReferenceVoiceOptions, designSupportsReference])
 
   const chooseReferenceAudio = async () => {
     const selection = await onSelectVoiceReferenceAudio()
@@ -117,7 +170,14 @@ export function VoiceManager({
     if (!canCreateDesign) {
       return
     }
-    await onCreateVoiceFromDesignPrompt({ engineId: designEngineId, language: "pt-BR", name: designName.trim(), prompt: designPrompt.trim() })
+    await onCreateVoiceFromDesignPrompt({
+      engineId: designEngineId,
+      language: designLanguage,
+      name: designName.trim() || t("voiceManager.defaultDesignName"),
+      prompt: designPrompt.trim(),
+      referenceVoiceProfileId: designReferenceVoiceId || undefined,
+      sampleText: designSampleText.trim()
+    })
     setDesignName("")
     setDesignPrompt("")
   }
@@ -169,7 +229,7 @@ export function VoiceManager({
               <p className="rounded-md border bg-background p-2 text-xs text-muted-foreground">{t("voiceManager.noCloneEngine")}</p>
             ) : null}
             <input
-              className="h-9 rounded-md border bg-background px-3 text-sm outline-none"
+              className="h-9 w-full rounded-md border bg-background px-3 text-sm text-foreground outline-none placeholder:text-muted-foreground"
               placeholder={t("voiceManager.name")}
               value={referenceName}
               onChange={(event) => setReferenceName(event.target.value)}
@@ -189,13 +249,13 @@ export function VoiceManager({
               </p>
             ) : null}
             <textarea
-              className="min-h-20 rounded-md border bg-background px-3 py-2 text-sm outline-none"
+              className="min-h-20 w-full rounded-md border bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground"
               placeholder={t("voiceManager.transcript")}
               value={referenceTranscript}
               onChange={(event) => setReferenceTranscript(event.target.value)}
             />
             <input
-              className="h-9 rounded-md border bg-background px-3 text-sm outline-none"
+              className="h-9 w-full rounded-md border bg-background px-3 text-sm text-foreground outline-none placeholder:text-muted-foreground"
               placeholder={t("voiceManager.consentNote")}
               value={referenceConsentNote}
               onChange={(event) => setReferenceConsentNote(event.target.value)}
@@ -218,18 +278,73 @@ export function VoiceManager({
               value={designEngineId}
               onChange={setDesignEngineId}
             />
-            <input
-              className="h-9 rounded-md border bg-background px-3 text-sm outline-none"
-              placeholder={t("voiceManager.name")}
-              value={designName}
-              onChange={(event) => setDesignName(event.target.value)}
+            {!hasCloneEngine ? (
+              <p className="rounded-md border bg-background p-2 text-xs text-muted-foreground">{t("voiceManager.noGeneratedVoiceTarget")}</p>
+            ) : null}
+            <SelectField
+              label={t("voiceManager.language")}
+              options={designLanguageOptions}
+              value={designLanguage}
+              onChange={(value) => {
+                setDesignLanguage(value)
+                setDesignSampleTextTouched(false)
+              }}
             />
-            <textarea
-              className="min-h-24 rounded-md border bg-background px-3 py-2 text-sm outline-none"
-              placeholder={t("voiceManager.designPrompt")}
-              value={designPrompt}
-              onChange={(event) => setDesignPrompt(event.target.value)}
-            />
+            {designSupportsReference ? (
+              <SelectField
+                label={t("voiceManager.referenceVoice")}
+                options={designReferenceVoiceOptions}
+                value={designReferenceVoiceId}
+                onChange={setDesignReferenceVoiceId}
+              />
+            ) : null}
+            <label className="grid grid-cols-1 gap-2">
+              <span className="text-xs font-medium text-muted-foreground">{t("voiceManager.name")}</span>
+              <div className="flex h-10 w-full items-center rounded-md border bg-background px-3">
+                <input
+                  className={cn(
+                    "h-full min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground",
+                    designName ? "text-foreground" : "text-muted-foreground"
+                  )}
+                  placeholder={t("voiceManager.defaultDesignName")}
+                  value={designName}
+                  onChange={(event) => setDesignName(event.target.value)}
+                />
+              </div>
+            </label>
+            <label className="grid grid-cols-1 gap-2">
+              <span className="text-xs font-medium text-muted-foreground">{t("voiceManager.designPrompt")}</span>
+              <textarea
+                className="min-h-24 w-full rounded-md border bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground"
+                placeholder={t("voiceManager.designPrompt")}
+                value={designPrompt}
+                onChange={(event) => setDesignPrompt(event.target.value)}
+              />
+            </label>
+            <div className="grid grid-cols-1 gap-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-medium text-muted-foreground">{t("voiceManager.sampleText")}</span>
+                <button
+                  className="inline-flex h-7 items-center justify-center gap-1.5 rounded-md border bg-background px-2 text-xs text-muted-foreground hover:text-foreground"
+                  onClick={() => {
+                    setDesignSampleText(designSampleTextDefault)
+                    setDesignSampleTextTouched(false)
+                  }}
+                >
+                  <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
+                  {t("voiceManager.sampleText.fillDefault")}
+                </button>
+              </div>
+              <textarea
+                className="min-h-24 w-full rounded-md border bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground"
+                placeholder={t("voiceManager.sampleText")}
+                value={designSampleText}
+                onChange={(event) => {
+                  setDesignSampleText(event.target.value)
+                  setDesignSampleTextTouched(true)
+                }}
+              />
+            </div>
             <button className="inline-flex h-9 items-center justify-center gap-2 rounded-md border bg-background px-3 text-sm" disabled={!canCreateDesign} onClick={createDesign}>
               <Sparkles className="h-4 w-4" aria-hidden="true" />
               {t("voiceManager.createDesign")}
@@ -434,4 +549,16 @@ function enginesLabel(voice: VoiceProfile): string {
 
 function fileNameForPath(filePath: string): string {
   return filePath.split(/[\\/]/).filter(Boolean).pop() ?? filePath
+}
+
+function sampleTextKeyForLanguage(language: string): string {
+  return DESIGN_LANGUAGE_OPTIONS.find((option) => option.value === language)?.sampleKey ?? "voiceManager.sampleText.default.pt-BR"
+}
+
+function voiceDesignSupportsReference(model: RuntimeModel | undefined): boolean {
+  const capabilities = model?.metadata.capabilities
+  if (capabilities && typeof capabilities === "object" && !Array.isArray(capabilities)) {
+    return (capabilities as Record<string, unknown>).supportsVoiceClone === true
+  }
+  return model?.metadata.supportsVoiceClone === true
 }

@@ -7,7 +7,7 @@ import { migrate } from "drizzle-orm/pglite/migrator"
 import { eq } from "drizzle-orm"
 import { afterEach, describe, expect, it } from "vitest"
 import * as schema from "../../src/main/db/schema"
-import { assets, ttsEngines, voiceEngineBindings } from "../../src/main/db/schema"
+import { assets, runtimeManifests, ttsEngines, voiceEngineBindings } from "../../src/main/db/schema"
 import { AudiobookService } from "../../src/main/services/audiobook-service"
 import { TtsService } from "../../src/main/services/tts-service"
 import { VoiceService } from "../../src/main/services/voice-service"
@@ -68,22 +68,113 @@ describe("VoiceService", () => {
         })
       })
 
+      const voiceDesignSidecarPath = path.join(paths.userData, "mock-voice-design-sidecar.cjs")
+      await writeFile(
+        voiceDesignSidecarPath,
+        `
+const fs = require("fs")
+const path = require("path")
+let input = ""
+process.stdin.setEncoding("utf8")
+process.stdin.on("data", (chunk) => { input += chunk })
+process.stdin.on("end", () => {
+  const request = JSON.parse(input)
+  if (request.engineId !== "qwen3-tts-17b-mlx") {
+    throw new Error("expected VoiceDesign engine")
+  }
+  if (typeof request.voiceBinding?.settings?.voiceDesignPrompt !== "string") {
+    throw new Error("expected VoiceDesign prompt")
+  }
+  if (!request.plan?.segments?.[0]?.normalizedText?.includes("Lívia")) {
+    throw new Error("expected sample text in narration plan")
+  }
+  fs.mkdirSync(request.outputDirectory, { recursive: true })
+  const chapterPath = path.join(request.outputDirectory, "chapter.wav")
+  fs.writeFileSync(chapterPath, createSilentWav(15000))
+  process.stdout.write(JSON.stringify({
+    schemaVersion: "dreamreader-tts-sidecar-result/v1",
+    segments: [],
+    chapter: { audioPath: chapterPath, mimeType: "audio/wav", durationMs: 15000 }
+  }))
+})
+
+function createSilentWav(durationMs) {
+  const sampleRate = 24000
+  const channelCount = 1
+  const bytesPerSample = 2
+  const frameCount = Math.max(1, Math.round((durationMs / 1000) * sampleRate))
+  const dataSize = frameCount * channelCount * bytesPerSample
+  const buffer = Buffer.alloc(44 + dataSize)
+  buffer.write("RIFF", 0)
+  buffer.writeUInt32LE(36 + dataSize, 4)
+  buffer.write("WAVE", 8)
+  buffer.write("fmt ", 12)
+  buffer.writeUInt32LE(16, 16)
+  buffer.writeUInt16LE(1, 20)
+  buffer.writeUInt16LE(channelCount, 22)
+  buffer.writeUInt32LE(sampleRate, 24)
+  buffer.writeUInt32LE(sampleRate * channelCount * bytesPerSample, 28)
+  buffer.writeUInt16LE(channelCount * bytesPerSample, 32)
+  buffer.writeUInt16LE(bytesPerSample * 8, 34)
+  buffer.write("data", 36)
+  buffer.writeUInt32LE(dataSize, 40)
+  return buffer
+}
+`
+      )
+      await db.insert(runtimeManifests).values({
+        id: "runtime_test_voice_design",
+        adapterId: "qwen3-tts-mlx",
+        runtime: "mlx",
+        version: "test",
+        executablePath: process.execPath,
+        environmentJson: {
+          args: [voiceDesignSidecarPath],
+          timeoutMs: 10_000
+        },
+        capabilitiesJson: {
+          protocol: "dreamreader-tts-sidecar/v1"
+        }
+      })
+
       const designed = await service.createFromDesignPrompt({
         engineId: "qwen3-tts-17b-mlx",
         language: "pt-BR",
         name: "Voz prompt teste",
-        prompt: "A warm Brazilian Portuguese audiobook narrator with stable identity."
+        prompt: "A warm Brazilian Portuguese audiobook narrator with stable identity.",
+        sampleText: "Na manhã clara, Lívia leu uma frase curta para testar a nova voz."
       })
       expect(designed.kind).toBe("generated")
       expect(designed.settings).toMatchObject({
-        compatibleEngineIds: expect.arrayContaining(["qwen3-tts-17b-mlx"]),
+        compatibleEngineIds: expect.arrayContaining(["qwen3-tts-17b-base-mlx", "f5-tts-pt-br"]),
+        generatedSampleText: expect.any(String),
         voiceDesignPrompt: expect.any(String)
       })
-      expect((await service.listCompatible("qwen3-tts-17b-mlx")).map((voice) => voice.id)).toContain(designed.id)
-      expect(await db.query.voiceEngineBindings.findFirst({ where: eq(voiceEngineBindings.voiceProfileId, designed.id) })).toMatchObject({
-        engineId: "qwen3-tts-17b-mlx",
-        bindingKind: "voice_design_prompt",
-        status: "ready"
+      expect((await service.listCompatible("qwen3-tts-17b-base-mlx")).map((voice) => voice.id)).toContain(designed.id)
+      expect((await service.listCompatible("qwen3-tts-17b-mlx")).map((voice) => voice.id)).not.toContain(designed.id)
+      expect(await db.query.voiceEngineBindings.findMany({ where: eq(voiceEngineBindings.voiceProfileId, designed.id) })).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            engineId: "qwen3-tts-17b-base-mlx",
+            bindingKind: "reference_audio",
+            status: "ready"
+          }),
+          expect.objectContaining({
+            engineId: "f5-tts-pt-br",
+            bindingKind: "reference_audio",
+            status: "ready"
+          })
+        ])
+      )
+      const designedSample = await db.query.voiceSamples.findFirst({ where: eq(schema.voiceSamples.voiceProfileId, designed.id) })
+      expect(designedSample?.transcript).toContain("Lívia")
+      expect(designedSample?.qualityJson).toMatchObject({
+        generatedBy: "qwen3-tts-voice-design",
+        sampleRate: 22_050
+      })
+      expect(await db.query.assets.findFirst({ where: eq(assets.id, designedSample?.assetId ?? "") })).toMatchObject({
+        kind: "voice_sample",
+        mimeType: "audio/wav"
       })
 
       const samplePath = path.join(paths.voicesDir, "reference.wav")
@@ -175,7 +266,7 @@ describe("VoiceService", () => {
 
       const compatible = await service.listCompatible("f5-tts-pt-br")
       expect(compatible.map((voice) => voice.id)).toContain(cloned.id)
-      expect(await db.query.voiceSamples.findMany()).toHaveLength(3)
+      expect(await db.query.voiceSamples.findMany()).toHaveLength(4)
       expect(await db.query.voiceEngineBindings.findMany()).toEqual(
         expect.arrayContaining([
           expect.objectContaining({

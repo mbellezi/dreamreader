@@ -25,6 +25,12 @@ class TtsSidecarSeedTest(unittest.TestCase):
 
         self.assertEqual(seed, 9876)
 
+    def test_qwen_maps_generation_languages(self):
+        self.assertEqual(self.qwen.language_name("fr"), "French")
+        self.assertEqual(self.qwen.language_name("de-DE"), "German")
+        self.assertEqual(self.qwen.language_name("ja"), "Japanese")
+        self.assertEqual(self.qwen.language_name("zh-CN"), "Chinese")
+
     def test_chatterbox_uses_fixed_request_seed_for_every_segment(self):
         request = {"seed": 9876}
         seed = self.chatterbox.chatterbox_seed(request, {"seed": 1234})

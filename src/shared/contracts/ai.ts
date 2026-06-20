@@ -443,6 +443,8 @@ export const VoiceDesignPromptInputSchema = z.object({
   engineId: IdSchema,
   name: NonEmptyStringSchema,
   prompt: NonEmptyStringSchema.max(1200),
+  referenceVoiceProfileId: IdSchema.optional(),
+  sampleText: NonEmptyStringSchema.max(1600),
   language: LocaleSchema.or(NonEmptyStringSchema).default("pt-BR"),
 });
 export type VoiceDesignPromptInput = z.infer<

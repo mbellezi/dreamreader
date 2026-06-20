@@ -107,6 +107,23 @@ textarea {
   font: inherit;
 }
 
+/* Thorium's reader stylesheet includes a global ::selection that depends on
+   Thorium-only variables. Re-own app selection colors outside the reader. */
+::selection {
+  background-color: hsl(var(--primary) / 0.32);
+  color: hsl(var(--foreground));
+}
+
+.theme-contrast ::selection {
+  background-color: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+
+.dreamreader-thorium-shell ::selection {
+  background-color: var(--th-theme-select, hsl(var(--primary) / 0.32));
+  color: var(--th-theme-onSelect, hsl(var(--foreground)));
+}
+
 button:disabled {
   cursor: not-allowed;
   opacity: 0.45;
@@ -352,6 +369,25 @@ button.bg-card {
 
 button.bg-background {
   background-color: hsl(var(--background)) !important;
+}
+
+input.bg-background,
+select.bg-background,
+textarea.bg-background {
+  background-color: hsl(var(--background)) !important;
+}
+
+input.border,
+select.border,
+textarea.border {
+  border-style: solid !important;
+  border-width: 1px !important;
+}
+
+input[class~="border"]:not([class*="border-"]),
+select[class~="border"]:not([class*="border-"]),
+textarea[class~="border"]:not([class*="border-"]) {
+  border-color: hsl(var(--border));
 }
 
 /* Thorium ships a global button reset; restore the Tailwind button utilities used by the app chrome. */

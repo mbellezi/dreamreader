@@ -132,6 +132,10 @@ describe("TtsService", () => {
       await seedBook(db, paths)
       const tts = new TtsService(db, paths, audiobook)
       await tts.listJobs()
+      const referencePath = path.join(paths.voicesDir, "qwen-reference-sidecar.wav")
+      await mkdir(path.dirname(referencePath), { recursive: true })
+      await writeFile(referencePath, Buffer.from("reference-audio"))
+      await seedQwenReferenceVoice(db, referencePath)
 
       const sidecarPath = path.join(paths.userData, "mock-tts-sidecar.cjs")
       await writeFile(
@@ -143,8 +147,11 @@ process.stdin.setEncoding("utf8")
 process.stdin.on("data", (chunk) => { input += chunk })
 process.stdin.on("end", () => {
   const request = JSON.parse(input)
-  if (typeof request.voiceBinding?.settings?.voiceDesignPrompt !== "string") {
-    throw new Error("expected Qwen VoiceDesign binding")
+  if (request.engineId !== "qwen3-tts-17b-base-mlx") {
+    throw new Error("expected Qwen Base engine")
+  }
+  if (request.voiceBinding?.bindingKind !== "reference_audio") {
+    throw new Error("expected Qwen reference binding")
   }
   if (request.seed !== 2026) {
     throw new Error("expected fixed seed")
@@ -170,9 +177,9 @@ process.stdin.on("end", () => {
         .update(ttsEngines)
         .set({
           installed: true,
-          installPath: path.join(paths.modelsDir, "qwen3-tts-17b")
+          installPath: path.join(paths.modelsDir, "qwen3-tts-17b-base")
         })
-        .where(eq(ttsEngines.id, "qwen3-tts-17b-mlx"))
+        .where(eq(ttsEngines.id, "qwen3-tts-17b-base-mlx"))
       await db.insert(runtimeManifests).values({
         id: "runtime_test_qwen3_tts_mlx",
         adapterId: "qwen3-tts-mlx",
@@ -191,12 +198,12 @@ process.stdin.on("end", () => {
       const queued = await tts.enqueueChapter({
         bookId: "book-audio",
         chapterHref: "chapter-1",
-        engineId: "qwen3-tts-17b-mlx",
+        engineId: "qwen3-tts-17b-base-mlx",
         quality: "draft",
         seed: 2026,
         seedFixed: true,
         useExpressiveNarration: false,
-        voiceProfileId: "voice_qwen3_design_ptbr_neutral"
+        voiceProfileId: "voice_qwen_base_clone"
       })
       expect(queued.status).toBe("queued")
 
@@ -216,12 +223,38 @@ process.stdin.on("end", () => {
     }
   })
 
+  it("rejects Qwen VoiceDesign for audiobook generation", async () => {
+    const { audiobook, client, db, paths } = await createTestServices()
+    try {
+      await seedBook(db, paths)
+      const tts = new TtsService(db, paths, audiobook)
+      await tts.listJobs()
+
+      await expect(
+        tts.enqueueChapter({
+          bookId: "book-audio",
+          chapterHref: "chapter-1",
+          engineId: "qwen3-tts-17b-mlx",
+          quality: "draft",
+          useExpressiveNarration: false,
+          voiceProfileId: "voice_qwen3_design_ptbr_neutral"
+        })
+      ).rejects.toMatchObject({ code: "tts_engine_voice_design_only" })
+    } finally {
+      await client.close()
+    }
+  })
+
   it("persists fragments from a streaming (NDJSON) sidecar as each one arrives", async () => {
     const { audiobook, client, db, paths } = await createTestServices()
     try {
       await seedBook(db, paths)
       const tts = new TtsService(db, paths, audiobook)
       await tts.listJobs()
+      const referencePath = path.join(paths.voicesDir, "qwen-reference-streaming.wav")
+      await mkdir(path.dirname(referencePath), { recursive: true })
+      await writeFile(referencePath, Buffer.from("reference-audio"))
+      await seedQwenReferenceVoice(db, referencePath)
 
       const sidecarPath = path.join(paths.userData, "mock-streaming-sidecar.cjs")
       await writeFile(
@@ -251,8 +284,8 @@ process.stdin.on("end", () => {
       )
       await db
         .update(ttsEngines)
-        .set({ installed: true, installPath: path.join(paths.modelsDir, "qwen3-tts-17b") })
-        .where(eq(ttsEngines.id, "qwen3-tts-17b-mlx"))
+        .set({ installed: true, installPath: path.join(paths.modelsDir, "qwen3-tts-17b-base") })
+        .where(eq(ttsEngines.id, "qwen3-tts-17b-base-mlx"))
       await db.insert(runtimeManifests).values({
         id: "runtime_test_streaming",
         adapterId: "qwen3-tts-mlx",
@@ -266,10 +299,10 @@ process.stdin.on("end", () => {
       const queued = await tts.enqueueChapter({
         bookId: "book-audio",
         chapterHref: "chapter-1",
-        engineId: "qwen3-tts-17b-mlx",
+        engineId: "qwen3-tts-17b-base-mlx",
         quality: "draft",
         useExpressiveNarration: false,
-        voiceProfileId: "voice_qwen3_design_ptbr_neutral"
+        voiceProfileId: "voice_qwen_base_clone"
       })
       await tts.drainQueue()
 
@@ -598,6 +631,10 @@ process.stdin.on("end", () => {
       await seedBook(db, paths)
       const tts = new TtsService(db, paths, audiobook)
       await tts.listJobs()
+      const referencePath = path.join(paths.voicesDir, "qwen-reference-cancel.wav")
+      await mkdir(path.dirname(referencePath), { recursive: true })
+      await writeFile(referencePath, Buffer.from("reference-audio"))
+      await seedQwenReferenceVoice(db, referencePath)
 
       const sidecarPath = path.join(paths.userData, "mock-hanging-sidecar.cjs")
       const startedPath = path.join(paths.userData, "sidecar-started.txt")
@@ -627,9 +664,9 @@ setInterval(() => {}, 1000)
         .update(ttsEngines)
         .set({
           installed: true,
-          installPath: path.join(paths.modelsDir, "qwen3-tts-17b")
+          installPath: path.join(paths.modelsDir, "qwen3-tts-17b-base")
         })
-        .where(eq(ttsEngines.id, "qwen3-tts-17b-mlx"))
+        .where(eq(ttsEngines.id, "qwen3-tts-17b-base-mlx"))
       await db.insert(runtimeManifests).values({
         id: "runtime_test_qwen3_tts_mlx_cancel",
         adapterId: "qwen3-tts-mlx",
@@ -648,10 +685,10 @@ setInterval(() => {}, 1000)
       const queued = await tts.enqueueChapter({
         bookId: "book-audio",
         chapterHref: "chapter-1",
-        engineId: "qwen3-tts-17b-mlx",
+        engineId: "qwen3-tts-17b-base-mlx",
         quality: "draft",
         useExpressiveNarration: false,
-        voiceProfileId: "voice_qwen3_design_ptbr_neutral"
+        voiceProfileId: "voice_qwen_base_clone"
       })
 
       const drain = tts.drainQueue()

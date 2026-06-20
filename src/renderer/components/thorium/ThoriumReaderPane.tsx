@@ -29,6 +29,7 @@ type RgbColor = {
 
 const thoriumI18nLoadPath = "./locales/{{lng}}/{{ns}}.json"
 const thoriumReaderStorageKey = "dreamreader.thorium.reader"
+const readerSelectionStyleId = "dreamreader-reader-selection-style"
 const thoriumReaderPreferences: ThPreferences = {
   ...defaultPreferences,
   theming: {
@@ -211,6 +212,8 @@ function ThoriumPublicationReader({
         return
       }
 
+      ensureReaderSelectionStyle(frameDocument)
+
       const documentObserver = new MutationObserver(syncReaderFooterColors)
       documentObserver.observe(frameDocument.documentElement, { attributes: true, attributeFilter: ["class", "style"] })
       if (frameDocument.body) {
@@ -355,6 +358,22 @@ function firstContentStyle(frameWindow: Window, frameDocument: Document): CSSSty
   }
 
   return null
+}
+
+function ensureReaderSelectionStyle(frameDocument: Document): void {
+  if (!frameDocument.head || frameDocument.getElementById(readerSelectionStyleId)) {
+    return
+  }
+
+  const style = frameDocument.createElement("style")
+  style.id = readerSelectionStyleId
+  style.textContent = `
+::selection {
+  background-color: var(--th-theme-select, Highlight) !important;
+  color: var(--th-theme-onSelect, HighlightText) !important;
+}
+`
+  frameDocument.head.appendChild(style)
 }
 
 function isTransparentCssColor(color: string): boolean {

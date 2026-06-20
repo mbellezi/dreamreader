@@ -1,17 +1,16 @@
 import type { ProsodyEmotion, SegmentProsody, TtsSegment } from "@renderer/types"
 
 // How a TTS engine consumes the canonical NarrationProsody:
-// - "instruction": turns emotion + instructionPtBr into a natural-language steer
-//   (Qwen3-TTS instruct/voice-design). Expressive narration lands fully.
+// - "instruction": turns emotion + instructionPtBr into a natural-language steer.
 // - "controls": maps emotion/intensity/pace into exposed synthesis controls
 //   (Chatterbox exaggeration/CFG). Free-form instructions are not sent through.
 // - "reference": ignores emotion/instruction; tone comes from the reference voice
 //   (F5-TTS, and the Qwen "base" variants). Expressive only affects pauses.
 export type ProsodyEngineSupport = "instruction" | "controls" | "reference"
 
-// Only the instruct/voice-design Qwen model feeds `instruct` to the synthesizer.
-// The 0.6B and 1.7B-base Qwen variants and F5 run reference-driven.
-const INSTRUCTION_ENGINE_IDS = new Set<string>(["qwen3-tts-17b-mlx"])
+// Qwen VoiceDesign is generation-only; audiobook engines currently use controls
+// or reference audio rather than free-form instructions.
+const INSTRUCTION_ENGINE_IDS = new Set<string>()
 const CONTROL_ENGINE_IDS = new Set<string>(["chatterbox-multilingual-mlx"])
 
 export function prosodyEngineSupport(engineId: string | undefined): ProsodyEngineSupport {

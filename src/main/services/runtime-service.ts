@@ -19,6 +19,7 @@ import {
   type RuntimeOperationKind,
   type RuntimeSidecar
 } from "@shared/contracts/ai"
+import type { JsonValue } from "@shared/contracts/common"
 import type { AppDatabase } from "@main/db/client"
 import { modelAssets, modelDownloadJobs, runtimeManifests, settings as settingsTable, ttsEngines } from "@main/db/schema"
 import { AppError } from "@main/lib/errors"
@@ -237,11 +238,22 @@ export class RuntimeService {
   async listModels(): Promise<ModelAsset[]> {
     await this.ensureCatalog()
     const rows = await this.db.query.modelAssets.findMany()
+    const engines = await this.db.query.ttsEngines.findMany()
+    const engineCapabilitiesById = new Map(engines.map((engine) => [engine.id, engine.capabilitiesJson]))
     const order = new Map(recommendedModels.map((model, index) => [model.id, index]))
     const models: ModelAsset[] = []
 
     for (const row of rows) {
       const model = toModelAsset(row)
+      if (model.engineId) {
+        const capabilities = engineCapabilitiesById.get(model.engineId)
+        if (capabilities) {
+          model.metadata = {
+            ...model.metadata,
+            capabilities: capabilities as JsonValue
+          }
+        }
+      }
       const currentSize = model.path ? await pathSize(model.path) : undefined
       if (currentSize !== undefined) {
         model.sizeBytes = currentSize

@@ -49,7 +49,14 @@ export function StudioPane({
   t: TranslationFn
   onCancelJob: (jobId: string) => Promise<void> | void
   onClearFinished: () => Promise<void> | void
-  onCreateVoiceFromDesignPrompt: (input: { engineId: string; language: string; name: string; prompt: string }) => Promise<VoiceProfile | void> | VoiceProfile | void
+  onCreateVoiceFromDesignPrompt: (input: {
+    engineId: string
+    language: string
+    name: string
+    prompt: string
+    referenceVoiceProfileId?: string
+    sampleText: string
+  }) => Promise<VoiceProfile | void> | VoiceProfile | void
   onCreateVoiceFromReference: (input: {
     consentConfirmed: true
     consentNote: string

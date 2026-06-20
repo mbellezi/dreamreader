@@ -97,6 +97,8 @@ def synthesize(request, emit=lambda event: None):
         }
         if model_type == "voice_design":
             kwargs.update({"lang_code": language})
+            if reference:
+                kwargs.update({"ref_audio": reference["audioPath"], "ref_text": reference["text"]})
         elif reference:
             kwargs.update({"ref_audio": reference["audioPath"], "ref_text": reference["text"], "lang_code": language})
         else:
@@ -315,6 +317,20 @@ def language_name(value) -> str:
         return "English"
     if normalized.startswith("es"):
         return "Spanish"
+    if normalized.startswith("fr"):
+        return "French"
+    if normalized.startswith("de"):
+        return "German"
+    if normalized.startswith("it"):
+        return "Italian"
+    if normalized.startswith("ja"):
+        return "Japanese"
+    if normalized.startswith("ko"):
+        return "Korean"
+    if normalized.startswith("zh"):
+        return "Chinese"
+    if normalized.startswith("ru"):
+        return "Russian"
     return "Auto"
 
 

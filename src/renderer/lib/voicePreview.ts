@@ -1,5 +1,7 @@
 import type { RuntimeModel, VoiceProfile } from "@renderer/types"
 
+const VOICE_GENERATION_ONLY_ENGINE_IDS = new Set(["qwen3-tts-17b-mlx"])
+
 /**
  * Picks the engine id to use when previewing a custom voice.
  *
@@ -12,6 +14,11 @@ export function pickPreviewEngineId(voice: VoiceProfile, installedTtsModels: Run
     return undefined
   }
   const compatibleIds = new Set(compatible.map(String))
-  const match = installedTtsModels.find((model) => model.engineId != null && compatibleIds.has(model.engineId))
+  const match = installedTtsModels.find(
+    (model) =>
+      model.engineId != null &&
+      compatibleIds.has(model.engineId) &&
+      !VOICE_GENERATION_ONLY_ENGINE_IDS.has(model.engineId)
+  )
   return match?.engineId ?? undefined
 }

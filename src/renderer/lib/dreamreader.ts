@@ -964,6 +964,8 @@ export const dreamreaderClient = {
     language: string
     name: string
     prompt: string
+    referenceVoiceProfileId?: string
+    sampleText: string
   }): Promise<VoiceProfile> {
     const bridgeCreate = window.dreamreader?.voices?.createFromDesignPrompt
 
