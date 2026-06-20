@@ -430,6 +430,15 @@ export type VoiceProfile = {
   updatedAt?: string
 }
 
+export type VoiceDesignPreview = {
+  id: string
+  audioAssetId: string
+  durationMs: number
+  language: string
+  sampleText: string
+  createdAt: string
+}
+
 export type PronunciationEntry = {
   id: string
   scope: "global" | "book"
@@ -518,6 +527,9 @@ export type DreamReaderBridge = {
     listCompatible?: (engineId?: string) => Promise<unknown[]>
     createFromReference?: (input: Record<string, unknown>) => Promise<unknown>
     createFromDesignPrompt?: (input: Record<string, unknown>) => Promise<unknown>
+    generateDesignPreview?: (input: Record<string, unknown>) => Promise<unknown>
+    commitDesignPreview?: (input: Record<string, unknown>) => Promise<unknown>
+    discardDesignPreview?: (input: Record<string, unknown>) => Promise<unknown>
     selectReferenceAudio?: () => Promise<{ path?: string; durationMs?: number; sampleRate?: number }>
     preview?: (voiceProfileId: string, engineId: string) => Promise<unknown>
     update?: (input: Record<string, unknown>) => Promise<unknown>

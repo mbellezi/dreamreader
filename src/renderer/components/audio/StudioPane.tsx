@@ -21,12 +21,14 @@ export function StudioPane({
   t,
   onCancelJob,
   onClearFinished,
-  onCreateVoiceFromDesignPrompt,
+  onCommitVoiceDesignPreview,
   onCreateVoiceFromReference,
   onCreatePronunciation,
   onDeletePronunciation,
   onDeleteVoice,
+  onDiscardVoiceDesignPreview,
   onExportVoice,
+  onGenerateVoiceDesignPreview,
   onImportVoices,
   onListPronunciation,
   onOpenBook,
@@ -49,14 +51,7 @@ export function StudioPane({
   t: TranslationFn
   onCancelJob: (jobId: string) => Promise<void> | void
   onClearFinished: () => Promise<void> | void
-  onCreateVoiceFromDesignPrompt: (input: {
-    engineId: string
-    language: string
-    name: string
-    prompt: string
-    referenceVoiceProfileId?: string
-    sampleText: string
-  }) => Promise<VoiceProfile | void> | VoiceProfile | void
+  onCommitVoiceDesignPreview: (input: { previewId: string; name: string }) => Promise<VoiceProfile | void> | VoiceProfile | void
   onCreateVoiceFromReference: (input: {
     consentConfirmed: true
     consentNote: string
@@ -68,7 +63,15 @@ export function StudioPane({
   onCreatePronunciation: (input: { bookId?: string; pattern: string; replacement: string; scope: "global" | "book" }) => Promise<void>
   onDeletePronunciation: (id: string) => Promise<void>
   onDeleteVoice: (voiceProfileId: string) => Promise<void> | void
+  onDiscardVoiceDesignPreview: (previewId: string) => Promise<void> | void
   onExportVoice: (voiceProfileId: string) => Promise<void> | void
+  onGenerateVoiceDesignPreview: (input: {
+    engineId: string
+    language: string
+    prompt: string
+    referenceVoiceProfileId?: string
+    sampleText: string
+  }) => Promise<{ id: string; audioAssetId: string; durationMs: number; language: string; sampleText: string; createdAt: string } | void>
   onImportVoices: () => Promise<void> | void
   onListPronunciation: (bookId?: string) => Promise<PronunciationEntry[]>
   onOpenBook: (bookId: string) => void
@@ -159,7 +162,9 @@ export function StudioPane({
             loading={loading}
             t={t}
             onCreateVoiceFromReference={onCreateVoiceFromReference}
-            onCreateVoiceFromDesignPrompt={onCreateVoiceFromDesignPrompt}
+            onGenerateVoiceDesignPreview={onGenerateVoiceDesignPreview}
+            onCommitVoiceDesignPreview={onCommitVoiceDesignPreview}
+            onDiscardVoiceDesignPreview={onDiscardVoiceDesignPreview}
             onUpdateVoice={onUpdateVoice}
             onDeleteVoice={onDeleteVoice}
             onExportVoice={onExportVoice}

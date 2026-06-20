@@ -130,6 +130,15 @@ export function registerIpc(services: Services): void {
   handle("voices.createFromDesignPrompt", contract["voices.createFromDesignPrompt"].request, (input) =>
     services.voices.createFromDesignPrompt(input)
   )
+  handle("voices.generateDesignPreview", contract["voices.generateDesignPreview"].request, (input) =>
+    services.voices.generateDesignPreview(input)
+  )
+  handle("voices.commitDesignPreview", contract["voices.commitDesignPreview"].request, (input) =>
+    services.voices.commitDesignPreview(input)
+  )
+  handle("voices.discardDesignPreview", contract["voices.discardDesignPreview"].request, (input) =>
+    services.voices.discardDesignPreview(input)
+  )
   handle("voices.selectReferenceAudio", contract["voices.selectReferenceAudio"].request, async () => {
     const selectedPath = (
       await dialog.showOpenDialog({

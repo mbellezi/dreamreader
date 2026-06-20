@@ -21,15 +21,10 @@ export function SettingsDialog({
 }) {
   return (
     <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/35 p-4">
-      <section className="w-full max-w-xl rounded-md border bg-card p-5 shadow-lg">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-semibold">{t("settings.title")}</h2>
-            {saved ? <p className="mt-1 text-sm text-primary">{t("settings.saved")}</p> : null}
-          </div>
-          <button className="rounded-md border bg-background px-3 py-2 text-sm" onClick={onClose}>
-            {t("common.close")}
-          </button>
+      <section className="w-full max-w-xl rounded-md border bg-card p-5 shadow-lg" role="dialog" aria-modal="true" aria-label={t("settings.title")}>
+        <div>
+          <h2 className="text-lg font-semibold">{t("settings.title")}</h2>
+          {saved ? <p className="mt-1 text-sm text-primary">{t("settings.saved")}</p> : null}
         </div>
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
           <SelectField
@@ -48,10 +43,15 @@ export function SettingsDialog({
             options={themeOptions.map((theme) => ({ value: theme, label: t(`reader.theme.${theme}`) }))}
           />
         </div>
-        <button className="mt-5 inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground" onClick={onSave}>
-          <Check className="h-4 w-4" aria-hidden="true" />
-          {t("settings.save")}
-        </button>
+        <div className="mt-5 grid grid-cols-2 gap-2">
+          <button className="inline-flex h-10 items-center justify-center rounded-md border bg-background px-4 text-sm" onClick={onClose}>
+            {t("common.close")}
+          </button>
+          <button className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground" onClick={onSave}>
+            <Check className="h-4 w-4" aria-hidden="true" />
+            {t("settings.save")}
+          </button>
+        </div>
       </section>
     </div>
   )

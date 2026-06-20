@@ -451,6 +451,37 @@ export type VoiceDesignPromptInput = z.infer<
   typeof VoiceDesignPromptInputSchema
 >;
 
+export const VoiceDesignPreviewInputSchema =
+  VoiceDesignPromptInputSchema.omit({ name: true });
+export type VoiceDesignPreviewInput = z.infer<
+  typeof VoiceDesignPreviewInputSchema
+>;
+
+export const VoiceDesignPreviewSchema = z.object({
+  id: IdSchema,
+  audioAssetId: IdSchema,
+  durationMs: z.number().int().positive(),
+  language: LocaleSchema.or(NonEmptyStringSchema),
+  sampleText: NonEmptyStringSchema,
+  createdAt: IsoDateTimeStringSchema,
+});
+export type VoiceDesignPreview = z.infer<typeof VoiceDesignPreviewSchema>;
+
+export const CommitVoiceDesignPreviewInputSchema = z.object({
+  previewId: IdSchema,
+  name: NonEmptyStringSchema,
+});
+export type CommitVoiceDesignPreviewInput = z.infer<
+  typeof CommitVoiceDesignPreviewInputSchema
+>;
+
+export const DiscardVoiceDesignPreviewInputSchema = z.object({
+  previewId: IdSchema,
+});
+export type DiscardVoiceDesignPreviewInput = z.infer<
+  typeof DiscardVoiceDesignPreviewInputSchema
+>;
+
 export const VoiceExportResultSchema = z.object({
   exported: z.boolean(),
   path: z.string().trim().optional(),

@@ -14,6 +14,7 @@ import {
   TtsAdapterManifestSchema,
   VoiceCloneInputSchema,
   VoiceDesignPromptInputSchema,
+  VoiceDesignPreviewInputSchema,
 } from "../../src/shared/contracts/ipc";
 
 const now = "2026-06-06T12:00:00.000Z";
@@ -140,6 +141,31 @@ describe("shared contracts", () => {
         prompt: "",
       }).success,
     ).toBe(false);
+  });
+
+  it("validates voice design preview workflow contracts", () => {
+    expect(
+      VoiceDesignPreviewInputSchema.safeParse({
+        engineId: "qwen3-tts-17b-mlx",
+        prompt: "A warm Brazilian Portuguese audiobook narrator with stable speaker identity.",
+        sampleText: "Na manhã clara, Lívia leu uma frase curta para testar a nova voz.",
+        language: "pt-BR",
+      }).success,
+    ).toBe(true);
+
+    expect(IpcContractSchemas["voices.generateDesignPreview"].request.safeParse({
+      engineId: "qwen3-tts-17b-mlx",
+      prompt: "A warm Brazilian Portuguese audiobook narrator with stable speaker identity.",
+      sampleText: "Na manhã clara, Lívia leu uma frase curta para testar a nova voz.",
+      language: "pt-BR",
+    }).success).toBe(true);
+    expect(IpcContractSchemas["voices.commitDesignPreview"].request.parse({ previewId: "preview-1", name: "Minha voz" })).toEqual({
+      previewId: "preview-1",
+      name: "Minha voz",
+    });
+    expect(IpcContractSchemas["voices.discardDesignPreview"].request.parse({ previewId: "preview-1" })).toEqual({
+      previewId: "preview-1",
+    });
   });
 
   it("exports stable input schema aliases", () => {

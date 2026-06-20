@@ -35,14 +35,9 @@ export function ModelSettingsDialog({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 px-4 backdrop-blur-sm">
       <div className="w-full max-w-lg rounded-md border bg-card p-4 shadow-lg" role="dialog" aria-modal="true" aria-label={t("audio.modelSettings.title")}>
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <h3 className="text-sm font-semibold">{t("audio.modelSettings.title")}</h3>
-            <p className="mt-1 truncate text-xs text-muted-foreground">{engineName}</p>
-          </div>
-          <button className="rounded-sm px-2 py-1 text-xs text-muted-foreground hover:text-foreground" onClick={onCancel}>
-            {t("audio.modelSettings.cancel")}
-          </button>
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold">{t("audio.modelSettings.title")}</h3>
+          <p className="mt-1 truncate text-xs text-muted-foreground">{engineName}</p>
         </div>
 
         {fields.length ? (

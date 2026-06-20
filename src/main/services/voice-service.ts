@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises"
+import { copyFile, mkdir, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { and, asc, eq, inArray } from "drizzle-orm"
 import JSZip from "jszip"
@@ -8,8 +8,12 @@ import {
   VoiceProfileSchema,
   VoiceSampleSchema,
   type NarrationPlan,
+  type CommitVoiceDesignPreviewInput,
+  type DiscardVoiceDesignPreviewInput,
   type VoiceCloneInput,
   type VoiceDesignPromptInput,
+  type VoiceDesignPreview,
+  type VoiceDesignPreviewInput,
   type VoiceEngineBinding,
   type VoiceFilter,
   type VoiceProfile,
@@ -83,10 +87,25 @@ const VoicePackageManifestSchema = z.object({
 type VoicePackageManifest = z.infer<typeof VoicePackageManifestSchema>
 type RuntimeManifestRow = typeof runtimeManifests.$inferSelect
 type TtsEngineRow = typeof ttsEngines.$inferSelect
+type VoiceDesignGenerationContext = {
+  engine: TtsEngineRow
+  reference?: { audioPath: string; text: string }
+  runtimeManifest: RuntimeManifestRow
+  targetEngines: TtsEngineRow[]
+}
+type VoiceDesignPreviewRecord = VoiceDesignPreview & {
+  engineId: string
+  prompt: string
+  referenceVoiceProfileId?: string
+  sampleAssetId: string
+  samplePath: string
+  quality: Record<string, unknown>
+}
 
 export class VoiceService {
   private readonly previewAdapter = new LocalTtsAdapter()
   private readonly sidecarAdapter = new SidecarTtsAdapter()
+  private readonly designPreviews = new Map<string, VoiceDesignPreviewRecord>()
   private readyPromise: Promise<void> | undefined
 
   constructor(
@@ -202,7 +221,226 @@ export class VoiceService {
   }
 
   async createFromDesignPrompt(input: VoiceDesignPromptInput): Promise<VoiceProfile> {
+    const preview = await this.generateDesignPreview(input)
+    try {
+      return await this.commitDesignPreview({ previewId: preview.id, name: input.name })
+    } catch (error) {
+      await this.discardDesignPreview({ previewId: preview.id }).catch(() => undefined)
+      throw error
+    }
+  }
+
+  async generateDesignPreview(input: VoiceDesignPreviewInput): Promise<VoiceDesignPreview> {
     await this.ensureReady()
+    const context = await this.voiceDesignGenerationContext(input)
+    const now = new Date()
+    const previewId = createId("voice_preview")
+    const compatibleEngineIds = context.targetEngines.map((item) => item.id)
+    const compatibleAdapterIds = unique(context.targetEngines.map((item) => item.adapterId))
+    const designProfile = VoiceProfileSchema.parse({
+      id: previewId,
+      name: "Voice design preview",
+      description: "",
+      language: input.language,
+      kind: "generated",
+      source: {
+        type: "voice_design_generated_reference",
+        provider: "qwen3-tts",
+        engineId: input.engineId
+      },
+      tags: [input.language, "voice-design", "gerada"],
+      settings: {
+        compatibleAdapterIds,
+        compatibleEngineIds,
+        generatedSampleText: input.sampleText,
+        ...(input.referenceVoiceProfileId ? { referenceVoiceProfileId: input.referenceVoiceProfileId } : {}),
+        voiceDesignPrompt: input.prompt
+      },
+      createdFromEngineId: input.engineId,
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString()
+    })
+    const designBinding = VoiceEngineBindingSchema.parse({
+      id: createId("voice_binding"),
+      voiceProfileId: previewId,
+      engineId: input.engineId,
+      adapterId: context.engine.adapterId,
+      status: "ready",
+      bindingKind: "voice_design_prompt",
+      settings: {
+        source: "local-voice-design-generator",
+        voiceDesignPrompt: input.prompt
+      },
+      compatibility: {
+        engineVersion: context.engine.version,
+        language: input.language
+      },
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString()
+    })
+    const sample = await this.generateReferenceFromDesignPrompt({
+      binding: designBinding,
+      engine: context.engine,
+      now,
+      profile: designProfile,
+      reference: context.reference,
+      request: input,
+      runtimeManifest: context.runtimeManifest
+    }).catch(async (error) => {
+      await this.cleanupDesignPreview(previewId)
+      throw error
+    })
+
+    const preview: VoiceDesignPreview = {
+      id: previewId,
+      audioAssetId: sample.assetId,
+      durationMs: sample.durationMs,
+      language: input.language,
+      sampleText: input.sampleText,
+      createdAt: now.toISOString()
+    }
+    this.designPreviews.set(previewId, {
+      ...preview,
+      engineId: input.engineId,
+      prompt: input.prompt,
+      referenceVoiceProfileId: input.referenceVoiceProfileId,
+      sampleAssetId: sample.id,
+      samplePath: sample.path,
+      quality: sample.quality
+    })
+    return preview
+  }
+
+  async commitDesignPreview(input: CommitVoiceDesignPreviewInput): Promise<VoiceProfile> {
+    await this.ensureReady()
+    const preview = this.designPreviews.get(input.previewId)
+    if (!preview) {
+      throw new AppError("voice_design_preview_not_found", "Generated voice preview was not found")
+    }
+    const asset = await this.db.query.assets.findFirst({ where: eq(assets.id, preview.audioAssetId) })
+    if (!asset || asset.kind !== "voice_design_preview") {
+      this.designPreviews.delete(input.previewId)
+      throw new AppError("voice_design_preview_not_found", "Generated voice preview was not found")
+    }
+
+    const context = await this.voiceDesignGenerationContext({
+      engineId: preview.engineId,
+      language: preview.language,
+      prompt: preview.prompt,
+      referenceVoiceProfileId: preview.referenceVoiceProfileId,
+      sampleText: preview.sampleText
+    })
+    const now = new Date()
+    const profileId = createId("voice")
+    const targetDir = path.join(this.paths.voicesDir, profileId)
+    const sourcePath = asset.path
+    const targetPath = path.join(targetDir, path.basename(sourcePath))
+    await mkdir(targetDir, { recursive: true })
+
+    try {
+      await rename(sourcePath, targetPath)
+      await this.db
+        .update(assets)
+        .set({
+          kind: "voice_sample",
+          path: targetPath
+        })
+        .where(eq(assets.id, asset.id))
+
+      const compatibleEngineIds = context.targetEngines.map((item) => item.id)
+      const compatibleAdapterIds = unique(context.targetEngines.map((item) => item.adapterId))
+      const [voice] = await this.db
+        .insert(voiceProfiles)
+        .values({
+          id: profileId,
+          name: input.name,
+          description: "",
+          language: preview.language,
+          kind: "generated",
+          source: JSON.stringify({
+            type: "voice_design_generated_reference",
+            provider: "qwen3-tts",
+            generatedSampleAssetId: preview.audioAssetId
+          }),
+          tags: [preview.language, "voice-design"],
+          settingsJson: {
+            compatibleAdapterIds,
+            compatibleEngineIds,
+            generatedSampleText: preview.sampleText,
+            ...(preview.referenceVoiceProfileId ? { referenceVoiceProfileId: preview.referenceVoiceProfileId } : {}),
+            voiceDesignPrompt: preview.prompt
+          },
+          createdFromEngineId: preview.engineId,
+          updatedAt: now
+        })
+        .returning()
+
+      await this.db.insert(voiceSamples).values({
+        id: preview.sampleAssetId,
+        voiceProfileId: profileId,
+        assetId: preview.audioAssetId,
+        transcript: preview.sampleText,
+        language: preview.language,
+        durationMs: preview.durationMs,
+        qualityJson: preview.quality
+      })
+
+      for (const targetEngine of context.targetEngines) {
+        await this.db.insert(voiceEngineBindings).values({
+          id: createId("voice_binding"),
+          voiceProfileId: profileId,
+          engineId: targetEngine.id,
+          adapterId: targetEngine.adapterId,
+          status: "ready",
+          bindingKind: "reference_audio",
+          bindingAssetId: preview.audioAssetId,
+          settingsJson: {
+            generatedByEngineId: preview.engineId,
+            ...(preview.referenceVoiceProfileId ? { referenceVoiceProfileId: preview.referenceVoiceProfileId } : {}),
+            source: "voice-design-generated-reference",
+            transcript: preview.sampleText,
+            voiceDesignPrompt: preview.prompt
+          },
+          compatibilityJson: {
+            generatedReference: true,
+            language: preview.language,
+            engineVersion: targetEngine.version,
+            sampleRate: TARGET_SAMPLE_RATE
+          },
+          updatedAt: now
+        })
+      }
+
+      this.designPreviews.delete(input.previewId)
+      await rm(this.voiceDesignPreviewDir(input.previewId), { force: true, recursive: true })
+      return toVoiceProfile(voice, await this.bindingsForVoice(profileId))
+    } catch (error) {
+      this.designPreviews.delete(input.previewId)
+      await this.db.delete(voiceProfiles).where(eq(voiceProfiles.id, profileId)).catch(() => undefined)
+      await this.db.delete(assets).where(eq(assets.id, asset.id)).catch(() => undefined)
+      await unlink(targetPath).catch(() => undefined)
+      await rm(targetDir, { force: true, recursive: true }).catch(() => undefined)
+      await rm(this.voiceDesignPreviewDir(input.previewId), { force: true, recursive: true }).catch(() => undefined)
+      throw error
+    }
+  }
+
+  async discardDesignPreview(input: DiscardVoiceDesignPreviewInput) {
+    await this.ensureReady()
+    const preview = this.designPreviews.get(input.previewId)
+    this.designPreviews.delete(input.previewId)
+    if (preview) {
+      const asset = await this.db.query.assets.findFirst({ where: eq(assets.id, preview.audioAssetId) })
+      if (asset?.kind === "voice_design_preview") {
+        await this.db.delete(assets).where(eq(assets.id, asset.id))
+        await unlink(asset.path).catch(() => undefined)
+      }
+    }
+    await this.cleanupDesignPreview(input.previewId)
+    return { discarded: true as const }
+  }
+
+  private async voiceDesignGenerationContext(input: VoiceDesignPreviewInput): Promise<VoiceDesignGenerationContext> {
     const engine = await this.db.query.ttsEngines.findFirst({ where: eq(ttsEngines.id, input.engineId) })
     if (!engine) {
       throw new AppError("tts_engine_not_found", "TTS engine not found")
@@ -239,125 +477,32 @@ export class VoiceService {
     if (!targetEngines.length) {
       throw new AppError("voice_design_no_target_engine", "No installed engine can use generated voice references")
     }
+    return { engine, reference, runtimeManifest, targetEngines }
+  }
 
-    const now = new Date()
-    const profileId = createId("voice")
-    const compatibleEngineIds = targetEngines.map((item) => item.id)
-    const compatibleAdapterIds = unique(targetEngines.map((item) => item.adapterId))
-    const designProfile = VoiceProfileSchema.parse({
-      id: profileId,
-      name: input.name,
-      description: "",
-      language: input.language,
-      kind: "generated",
-      source: {
-        type: "voice_design_generated_reference",
-        provider: "qwen3-tts",
-        engineId: input.engineId
-      },
-      tags: [input.language, "voice-design", "gerada"],
-      settings: {
-        compatibleAdapterIds,
-        compatibleEngineIds,
-        generatedSampleText: input.sampleText,
-        ...(input.referenceVoiceProfileId ? { referenceVoiceProfileId: input.referenceVoiceProfileId } : {}),
-        voiceDesignPrompt: input.prompt
-      },
-      createdFromEngineId: input.engineId,
-      createdAt: now.toISOString(),
-      updatedAt: now.toISOString()
-    })
-    const designBinding = VoiceEngineBindingSchema.parse({
-      id: createId("voice_binding"),
-      voiceProfileId: profileId,
-      engineId: input.engineId,
-      adapterId: engine.adapterId,
-      status: "ready",
-      bindingKind: "voice_design_prompt",
-      settings: {
-        source: "local-voice-design-generator",
-        voiceDesignPrompt: input.prompt
-      },
-      compatibility: {
-        engineVersion: engine.version,
-        language: input.language
-      },
-      createdAt: now.toISOString(),
-      updatedAt: now.toISOString()
-    })
-    const sample = await this.generateReferenceFromDesignPrompt({
-      binding: designBinding,
-      engine,
-      now,
-      profile: designProfile,
-      reference,
-      request: input,
-      runtimeManifest
-    })
+  private voiceDesignPreviewDir(previewId: string): string {
+    return path.join(this.paths.voicesDir, "_tmp", "voice-design", sanitizePathPart(previewId))
+  }
 
-    const [voice] = await this.db
-      .insert(voiceProfiles)
-      .values({
-        id: profileId,
-        name: input.name,
-        description: "",
-        language: input.language,
-        kind: "generated",
-        source: JSON.stringify({
-          type: "voice_design_generated_reference",
-          provider: "qwen3-tts",
-          generatedSampleAssetId: sample.assetId
-        }),
-        tags: [input.language, "voice-design"],
-        settingsJson: {
-          compatibleAdapterIds,
-          compatibleEngineIds,
-          generatedSampleText: input.sampleText,
-          ...(input.referenceVoiceProfileId ? { referenceVoiceProfileId: input.referenceVoiceProfileId } : {}),
-          voiceDesignPrompt: input.prompt
-        },
-        createdFromEngineId: input.engineId,
-        updatedAt: now
-      })
-      .returning()
-
-    await this.db.insert(voiceSamples).values({
-      id: sample.id,
-      voiceProfileId: profileId,
-      assetId: sample.assetId,
-      transcript: input.sampleText,
-      language: input.language,
-      durationMs: sample.durationMs,
-      qualityJson: sample.quality
-    })
-
-    for (const targetEngine of targetEngines) {
-      await this.db.insert(voiceEngineBindings).values({
-        id: createId("voice_binding"),
-        voiceProfileId: profileId,
-        engineId: targetEngine.id,
-        adapterId: targetEngine.adapterId,
-        status: "ready",
-        bindingKind: "reference_audio",
-        bindingAssetId: sample.assetId,
-        settingsJson: {
-          generatedByEngineId: input.engineId,
-          ...(input.referenceVoiceProfileId ? { referenceVoiceProfileId: input.referenceVoiceProfileId } : {}),
-          source: "voice-design-generated-reference",
-          transcript: input.sampleText,
-          voiceDesignPrompt: input.prompt
-        },
-        compatibilityJson: {
-          generatedReference: true,
-          language: input.language,
-          engineVersion: targetEngine.version,
-          sampleRate: TARGET_SAMPLE_RATE
-        },
-        updatedAt: now
-      })
+  private async cleanupDesignPreviews(): Promise<void> {
+    const previewAssets = await this.db.query.assets.findMany({ where: eq(assets.kind, "voice_design_preview") })
+    if (previewAssets.length) {
+      await this.db.delete(assets).where(inArray(assets.id, previewAssets.map((asset) => asset.id)))
+      await Promise.all(previewAssets.map((asset) => unlink(asset.path).catch(() => undefined)))
     }
+    await rm(path.join(this.paths.voicesDir, "_tmp", "voice-design"), { force: true, recursive: true }).catch(() => undefined)
+  }
 
-    return toVoiceProfile(voice, await this.bindingsForVoice(profileId))
+  private async cleanupDesignPreview(previewId: string): Promise<void> {
+    const previewDir = this.voiceDesignPreviewDir(previewId)
+    const resolvedPreviewDir = path.resolve(previewDir)
+    const previewAssets = (await this.db.query.assets.findMany({ where: eq(assets.kind, "voice_design_preview") }))
+      .filter((asset) => path.resolve(asset.path).startsWith(`${resolvedPreviewDir}${path.sep}`))
+    if (previewAssets.length) {
+      await this.db.delete(assets).where(inArray(assets.id, previewAssets.map((asset) => asset.id)))
+      await Promise.all(previewAssets.map((asset) => unlink(asset.path).catch(() => undefined)))
+    }
+    await rm(previewDir, { force: true, recursive: true }).catch(() => undefined)
   }
 
   private async generateReferenceFromDesignPrompt(input: {
@@ -366,13 +511,13 @@ export class VoiceService {
     now: Date
     profile: VoiceProfile
     reference?: { audioPath: string; text: string }
-    request: VoiceDesignPromptInput
+    request: VoiceDesignPreviewInput
     runtimeManifest: RuntimeManifestRow
   }) {
     if (!input.engine.installPath || !input.runtimeManifest.executablePath) {
       throw new AppError("tts_sidecar_not_configured", "TTS engine sidecar runtime is not configured")
     }
-    const outputDir = path.join(this.paths.voicesDir, input.profile.id, "voice-design-generation")
+    const outputDir = path.join(this.voiceDesignPreviewDir(input.profile.id), "generation")
     await mkdir(outputDir, { recursive: true })
     const plan = buildVoiceDesignSamplePlan({
       engineId: input.engine.id,
@@ -429,7 +574,7 @@ export class VoiceService {
     referenceVoiceProfileId?: string
     sampleText: string
   }) {
-    const targetDir = path.join(this.paths.voicesDir, input.profileId)
+    const targetDir = this.voiceDesignPreviewDir(input.profileId)
     await mkdir(targetDir, { recursive: true })
     const sourceProbe = await probeAudio(input.audioPath)
     const convertedPath = path.join(targetDir, "generated-reference-22050.wav")
@@ -453,7 +598,7 @@ export class VoiceService {
       .insert(assets)
       .values({
         id: createId("asset"),
-        kind: "voice_sample",
+        kind: "voice_design_preview",
         path: targetPath,
         mimeType: "audio/wav",
         contentHash,
@@ -464,6 +609,7 @@ export class VoiceService {
     return {
       id: createId("voice_sample"),
       assetId: asset.id,
+      path: targetPath,
       durationMs: finalProbe.durationMs ?? input.durationMs,
       quality: {
         converted: !sourceIsTargetWav,
@@ -976,6 +1122,7 @@ export class VoiceService {
 
   private async ensureDefaults(): Promise<void> {
     await mkdir(this.paths.voicesDir, { recursive: true })
+    await this.cleanupDesignPreviews()
     const now = new Date()
     const engines = await this.db.query.ttsEngines.findMany()
 

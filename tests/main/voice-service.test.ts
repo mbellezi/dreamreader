@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { PGlite } from "@electric-sql/pglite"
@@ -137,12 +137,30 @@ function createSilentWav(durationMs) {
         }
       })
 
-      const designed = await service.createFromDesignPrompt({
+      const disposablePreview = await service.generateDesignPreview({
         engineId: "qwen3-tts-17b-mlx",
         language: "pt-BR",
-        name: "Voz prompt teste",
         prompt: "A warm Brazilian Portuguese audiobook narrator with stable identity.",
         sampleText: "Na manhã clara, Lívia leu uma frase curta para testar a nova voz."
+      })
+      const disposableAsset = await db.query.assets.findFirst({ where: eq(assets.id, disposablePreview.audioAssetId) })
+      expect(disposableAsset?.kind).toBe("voice_design_preview")
+      expect(await stat(disposableAsset?.path ?? "")).toBeTruthy()
+      expect(await db.query.voiceProfiles.findFirst({ where: eq(schema.voiceProfiles.id, disposablePreview.id) })).toBeUndefined()
+      await service.discardDesignPreview({ previewId: disposablePreview.id })
+      expect(await db.query.assets.findFirst({ where: eq(assets.id, disposablePreview.audioAssetId) })).toBeUndefined()
+      await expect(stat(disposableAsset?.path ?? "")).rejects.toThrow()
+
+      const preview = await service.generateDesignPreview({
+        engineId: "qwen3-tts-17b-mlx",
+        language: "pt-BR",
+        prompt: "A warm Brazilian Portuguese audiobook narrator with stable identity.",
+        sampleText: "Na manhã clara, Lívia leu uma frase curta para testar a nova voz."
+      })
+      expect((await service.listCompatible("qwen3-tts-17b-base-mlx")).map((voice) => voice.id)).not.toContain(preview.id)
+      const designed = await service.commitDesignPreview({
+        previewId: preview.id,
+        name: "Voz prompt teste"
       })
       expect(designed.kind).toBe("generated")
       expect(designed.settings).toMatchObject({

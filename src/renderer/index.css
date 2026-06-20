@@ -390,6 +390,25 @@ textarea[class~="border"]:not([class*="border-"]) {
   border-color: hsl(var(--border));
 }
 
+input.px-2,
+select.px-2,
+textarea.px-2 {
+  padding-left: 0.5rem !important;
+  padding-right: 0.5rem !important;
+}
+
+input.px-3,
+select.px-3,
+textarea.px-3 {
+  padding-left: 0.75rem !important;
+  padding-right: 0.75rem !important;
+}
+
+textarea.py-2 {
+  padding-top: 0.5rem !important;
+  padding-bottom: 0.5rem !important;
+}
+
 /* Thorium ships a global button reset; restore the Tailwind button utilities used by the app chrome. */
 button.border {
   border-style: solid !important;

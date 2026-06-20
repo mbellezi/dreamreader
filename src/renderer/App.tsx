@@ -544,22 +544,34 @@ export function App(): ReactElement {
     }
   }
 
-  const createVoiceFromDesignPrompt = async (input: {
+  const generateVoiceDesignPreview = async (input: {
     engineId: string
     language: string
-    name: string
     prompt: string
     referenceVoiceProfileId?: string
     sampleText: string
   }) => {
     setAudioLoading(true)
     try {
-      const voice = await dreamreaderClient.createVoiceFromDesignPrompt(input)
+      return await dreamreaderClient.generateVoiceDesignPreview(input)
+    } finally {
+      setAudioLoading(false)
+    }
+  }
+
+  const commitVoiceDesignPreview = async (input: { previewId: string; name: string }) => {
+    setAudioLoading(true)
+    try {
+      const voice = await dreamreaderClient.commitVoiceDesignPreview(input)
       await refreshActiveAudioView()
       return voice
     } finally {
       setAudioLoading(false)
     }
+  }
+
+  const discardVoiceDesignPreview = async (previewId: string) => {
+    await dreamreaderClient.discardVoiceDesignPreview(previewId)
   }
 
   const updateVoice = async (input: { voiceProfileId: string; name: string }) => {
@@ -882,12 +894,14 @@ export function App(): ReactElement {
                 t={t}
                 onCancelJob={cancelTtsJob}
                 onClearFinished={clearAllTerminalTtsJobs}
+                onCommitVoiceDesignPreview={commitVoiceDesignPreview}
                 onCreatePronunciation={createPronunciation}
-                onCreateVoiceFromDesignPrompt={createVoiceFromDesignPrompt}
                 onCreateVoiceFromReference={createVoiceFromReference}
                 onDeletePronunciation={deletePronunciation}
                 onDeleteVoice={deleteVoice}
+                onDiscardVoiceDesignPreview={discardVoiceDesignPreview}
                 onExportVoice={exportVoice}
+                onGenerateVoiceDesignPreview={generateVoiceDesignPreview}
                 onImportVoices={importVoices}
                 onListPronunciation={listPronunciation}
                 onOpenBook={openBookAudio}

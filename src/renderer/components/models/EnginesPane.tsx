@@ -750,14 +750,9 @@ function OperationLogDialog({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 px-4 backdrop-blur-sm">
       <div className="flex max-h-[85vh] w-full max-w-3xl flex-col rounded-md border bg-card p-4 shadow-lg" role="dialog" aria-modal="true" aria-label={t("modelManager.logs.title")}>
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h3 className="truncate text-sm font-semibold">{operationTitle(operation, models, sidecars, t)}</h3>
-            <p className="mt-1 text-xs text-muted-foreground">{operationProgressLabel(operation, t)}</p>
-          </div>
-          <button className="rounded-sm px-2 py-1 text-xs text-muted-foreground hover:text-foreground" onClick={onClose}>
-            {t("common.close")}
-          </button>
+        <div className="min-w-0">
+          <h3 className="truncate text-sm font-semibold">{operationTitle(operation, models, sidecars, t)}</h3>
+          <p className="mt-1 text-xs text-muted-foreground">{operationProgressLabel(operation, t)}</p>
         </div>
         <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
           <div className="h-full bg-primary transition-[width]" style={{ width: `${Math.round(operation.progress * 100)}%` }} />
@@ -772,6 +767,11 @@ function OperationLogDialog({
           ) : (
             <p className="text-muted-foreground">{t("modelManager.logs.empty")}</p>
           )}
+        </div>
+        <div className="mt-4 flex justify-end">
+          <button className="inline-flex h-9 min-w-0 items-center justify-center rounded-md border bg-background px-3 text-sm" onClick={onClose}>
+            {t("common.close")}
+          </button>
         </div>
       </div>
     </div>

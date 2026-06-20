@@ -24,6 +24,7 @@ import type {
   RuntimeSidecar,
   TtsJob,
   TtsSegment,
+  VoiceDesignPreview,
   VoiceProfile
 } from "@renderer/types"
 import { defaultSettings, sampleAnnotations, sampleBooks } from "@renderer/lib/sampleData"
@@ -976,6 +977,47 @@ export const dreamreaderClient = {
     return fallbackVoice(input.name, input.language, "generated", input.engineId)
   },
 
+  async generateVoiceDesignPreview(input: {
+    engineId: string
+    language: string
+    prompt: string
+    referenceVoiceProfileId?: string
+    sampleText: string
+  }): Promise<VoiceDesignPreview> {
+    const bridgeGenerate = window.dreamreader?.voices?.generateDesignPreview
+
+    if (bridgeGenerate) {
+      return toVoiceDesignPreview(await bridgeGenerate(input))
+    }
+
+    return {
+      id: crypto.randomUUID(),
+      audioAssetId: "",
+      durationMs: 1,
+      language: input.language,
+      sampleText: input.sampleText,
+      createdAt: new Date().toISOString()
+    }
+  },
+
+  async commitVoiceDesignPreview(input: { previewId: string; name: string }): Promise<VoiceProfile> {
+    const bridgeCommit = window.dreamreader?.voices?.commitDesignPreview
+
+    if (bridgeCommit) {
+      return toVoiceProfile(await bridgeCommit(input))
+    }
+
+    return fallbackVoice(input.name, "pt-BR", "generated", "qwen3-tts-17b-mlx")
+  },
+
+  async discardVoiceDesignPreview(previewId: string): Promise<void> {
+    const bridgeDiscard = window.dreamreader?.voices?.discardDesignPreview
+
+    if (bridgeDiscard) {
+      await bridgeDiscard({ previewId })
+    }
+  },
+
   async updateVoice(input: { voiceProfileId: string; name?: string; description?: string | null }): Promise<VoiceProfile> {
     const bridgeUpdate = window.dreamreader?.voices?.update
 
@@ -1341,6 +1383,18 @@ function toVoiceProfile(input: unknown): VoiceProfile {
     createdFromEngineId: optionalString(voice.createdFromEngineId),
     createdAt: optionalString(voice.createdAt),
     updatedAt: optionalString(voice.updatedAt)
+  }
+}
+
+function toVoiceDesignPreview(input: unknown): VoiceDesignPreview {
+  const preview = (input ?? {}) as Record<string, unknown>
+  return {
+    id: String(preview.id ?? ""),
+    audioAssetId: String(preview.audioAssetId ?? ""),
+    durationMs: Number(preview.durationMs ?? 0),
+    language: String(preview.language ?? "pt-BR"),
+    sampleText: String(preview.sampleText ?? ""),
+    createdAt: String(preview.createdAt ?? new Date().toISOString())
   }
 }
 
