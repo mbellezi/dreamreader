@@ -1,9 +1,8 @@
 import { ChevronDown, ChevronRight, RotateCcw, Square, Trash2, Volume2, Wand2 } from "lucide-react"
 import { useMemo, useState } from "react"
 import { GenerationProgress } from "@renderer/components/audio/GenerationProgress"
-import { ProsodyInspector } from "@renderer/components/audio/ProsodyInspector"
 import type { TranslationFn } from "@renderer/app/types"
-import { isPartialTtsJob, isTerminalJobStatus } from "@renderer/lib/jobQueue"
+import { isTerminalJobStatus } from "@renderer/lib/jobQueue"
 import { formatDuration } from "@renderer/lib/formatDuration"
 import type { AudiobookExport, Chapter, TtsJob, TtsSegment } from "@renderer/types"
 
@@ -47,9 +46,6 @@ export function ChapterDetail({
   const activeJob = chapterJobs.find((job) => !isTerminalJobStatus(job.status)) ?? null
   const canRetry = currentJob?.status === "failed" || currentJob?.status === "cancelled"
   const hasChapterGeneration = Boolean(chapterAudio || chapterJobs.length)
-  const neutralComparisonJob = comparisonJobFor(jobs, chapter?.id, false)
-  const expressiveComparisonJob = comparisonJobFor(jobs, chapter?.id, true)
-  const latestExpressiveJob = useMemo(() => latestExpressiveJobFor(jobs, chapter?.id), [chapter?.id, jobs])
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [previewParagraphs, setPreviewParagraphs] = useState(3)
 
@@ -158,72 +154,9 @@ export function ChapterDetail({
                 <span className="truncate">{t("studio.preview.generate")}</span>
               </button>
             </div>
-
-            <div className="space-y-2">
-              <h3 className="text-sm font-semibold">{t("audio.comparison")}</h3>
-              <div className="grid grid-cols-1 gap-2">
-                <ComparisonCard job={neutralComparisonJob} label={t("audio.comparison.neutral")} t={t} />
-                <ComparisonCard job={expressiveComparisonJob} label={t("audio.comparison.expressive")} t={t} />
-              </div>
-            </div>
-
-            <ProsodyInspector job={latestExpressiveJob} t={t} onListSegments={onListSegments} />
           </div>
         ) : null}
       </section>
     </div>
   )
-}
-
-function ComparisonCard({ job, label, t }: { job?: TtsJob; label: string; t: TranslationFn }) {
-  const audioAssetId = jobAudioAssetId(job)
-  const durationMs = jobDurationMs(job)
-  return (
-    <div className="rounded-md border bg-card p-3">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-medium">{label}</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {audioAssetId ? t("audio.comparison.ready", { duration: formatDuration(durationMs ?? 0) }) : t("audio.comparison.empty")}
-          </p>
-        </div>
-        {Number(job?.settings.prosodyFallbackCount ?? 0) > 0 ? (
-          <span className="shrink-0 rounded-sm bg-muted px-2 py-1 text-[11px] text-muted-foreground">{t("audio.comparison.fallback")}</span>
-        ) : null}
-      </div>
-      {audioAssetId ? (
-        <audio className="mt-3 w-full" controls preload="metadata" src={`dreamreader://asset/${encodeURIComponent(audioAssetId)}`} />
-      ) : null}
-    </div>
-  )
-}
-
-function comparisonJobFor(jobs: TtsJob[], chapterHref: string | undefined, expressive: boolean): TtsJob | undefined {
-  return jobs
-    .filter((job) => {
-      return (
-        job.chapterHref === chapterHref &&
-        job.status === "completed" &&
-        !isPartialTtsJob(job) &&
-        Boolean(job.settings.useExpressiveNarration) === expressive &&
-        Boolean(jobAudioAssetId(job))
-      )
-    })
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
-}
-
-// Latest expressive job for the chapter regardless of status, so the prosody
-// monitor reflects the most recent LLM run even while it is still generating.
-function latestExpressiveJobFor(jobs: TtsJob[], chapterHref: string | undefined): TtsJob | undefined {
-  return jobs
-    .filter((job) => job.chapterHref === chapterHref && Boolean(job.settings.useExpressiveNarration))
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
-}
-
-function jobAudioAssetId(job: TtsJob | undefined): string | undefined {
-  return typeof job?.settings.chapterAudioAssetId === "string" ? job.settings.chapterAudioAssetId : undefined
-}
-
-function jobDurationMs(job: TtsJob | undefined): number | undefined {
-  return typeof job?.settings.chapterDurationMs === "number" ? job.settings.chapterDurationMs : undefined
 }

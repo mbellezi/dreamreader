@@ -48,10 +48,6 @@ export type GenerationConfig = {
   setSelectedEngineId: (value: string) => void
   selectedVoiceId: string
   setSelectedVoiceId: (value: string) => void
-  quality: GenerationQuality
-  setQuality: (value: GenerationQuality) => void
-  useExpressiveNarration: boolean
-  setUseExpressiveNarration: (value: boolean) => void
   engineOptions: SelectOption[]
   voiceOptions: SelectOption[]
   hasCompatibleVoice: boolean
@@ -144,8 +140,8 @@ export function useGenerationConfig({
     audioSettings.generationLanguageByEngineId[selectedEngineId] ?? defaultGenerationLanguageForEngine(selectedEngineId) ?? ""
   const generationLanguage = generationLanguageOptions.length ? selectedGenerationLanguage : undefined
   const seed = normalizeSeed(audioSettings.seed)
-  const quality = audioSettings.defaultQuality ?? "standard"
-  const useExpressiveNarration = audioSettings.expressiveNarrationEnabled
+  const quality: GenerationQuality = "standard"
+  const useExpressiveNarration = false
 
   const updateAudioSettingsPatch = (patch: Partial<AudioSettings>, delay = 450) => {
     onUpdateAudioSettings(
@@ -245,10 +241,6 @@ export function useGenerationConfig({
         updateAudioSettingsPatch({ defaultVoiceProfileId: value }, 0)
       }
     },
-    quality,
-    setQuality: (value: GenerationQuality) => updateAudioSettingsPatch({ defaultQuality: value }, 0),
-    useExpressiveNarration,
-    setUseExpressiveNarration: (value: boolean) => updateAudioSettingsPatch({ expressiveNarrationEnabled: value }, 0),
     engineOptions,
     voiceOptions,
     hasCompatibleVoice,
