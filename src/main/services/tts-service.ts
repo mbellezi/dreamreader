@@ -56,11 +56,12 @@ import { importSidecarAudio, SidecarTtsAdapter, type SidecarRuntimeManifest, typ
 import type { AudiobookService } from "@main/services/audiobook-service"
 import {
   buildNarrationPlan,
+  canonicalTtsLanguage,
   dictionaryVersionFor,
   NORMALIZER_ID,
   NARRATION_PLAN_VERSION,
   NORMALIZER_VERSION,
-  normalizePtBr,
+  normalizeForTts,
   PROSODY_ANALYZER_ID,
   PROSODY_VERSION,
   neutralProsodyFor,
@@ -338,6 +339,7 @@ export class TtsService {
     })
     const source = await this.getChapterSource(input.bookId, input.chapterHref)
     const pronunciation = await this.pronunciationEntriesForBook(input.bookId)
+    const narrationLanguage = narrationLanguageFor(source.language, input.generationLanguage)
     const dictionaryVersion = dictionaryVersionFor(pronunciation)
     const modelSettings = jsonObject(input.modelSettings)
     const seed = input.seedFixed ? input.seed : undefined
@@ -353,6 +355,7 @@ export class TtsService {
       dictionaryVersion,
       engineId,
       generationConfigSignature,
+      narrationLanguage,
       voiceBindingId: voice.bindingId,
       voiceProfileId: voice.profileId,
       useExpressiveNarration: input.useExpressiveNarration,
@@ -384,6 +387,7 @@ export class TtsService {
           seed,
           seedFixed: input.seedFixed,
           normalizationDictionaryVersion: dictionaryVersion,
+          normalizationLanguage: narrationLanguage,
           normalizationVersion: NORMALIZER_VERSION,
           sourceContentHash: source.contentHash,
           useExpressiveNarration: input.useExpressiveNarration,
@@ -475,6 +479,7 @@ export class TtsService {
           progress: 0,
           settingsJson: compactJson({
             normalizationDictionaryVersion: plan.normalization.dictionaryVersion,
+            normalizationLanguage: plan.source.language,
             normalizationVersion: plan.normalization.version,
             prosodyMode: "neutral",
             segmentsOnly: true,
@@ -643,13 +648,15 @@ export class TtsService {
 
     const originalText = input.text.replace(/\s+/g, " ").trim()
     const pronunciation = await this.pronunciationEntriesForBook(existing.bookId)
+    const regenerationContext = await this.segmentRegenerationContext(job, input)
+    const source = await this.getChapterSource(existing.bookId, job.chapterHref)
+    const narrationLanguage = narrationLanguageFor(source.language, regenerationContext.generationLanguage)
     const dictionaryVersion = dictionaryVersionFor(pronunciation)
-    const normalizedText = normalizePtBr(originalText, pronunciation)
+    const normalizedText = normalizeForTts(originalText, { language: narrationLanguage, pronunciationEntries: pronunciation })
     if (!normalizedText) {
       throw new AppError("tts_no_speakable_text", "No speakable text found for audio generation")
     }
 
-    const regenerationContext = await this.segmentRegenerationContext(job, input)
     const readyEngine = await this.assertEngineReady(regenerationContext.job.engineId)
     const segmentHash = hashBuffer(`${existing.id}:${normalizedText}`)
     const prosody = NarrationProsodySchema.safeParse(existing.prosodyJson).success
@@ -673,7 +680,8 @@ export class TtsService {
       readyEngine,
       seed: regenerationContext.seed,
       segment,
-      dictionaryVersion
+      dictionaryVersion,
+      language: narrationLanguage
     })
     const previousAssetId = existing.audioAssetId ?? undefined
     const [updated] = await this.db
@@ -689,6 +697,7 @@ export class TtsService {
           engineId: regenerationContext.job.engineId,
           generationLanguage: regenerationContext.generationLanguage,
           modelSettings: regenerationContext.modelSettings,
+          normalizationLanguage: narrationLanguage,
           quality: regenerationContext.quality,
           regeneratedAt: new Date().toISOString(),
           regeneratedFromSegmentId: existing.id,
@@ -992,6 +1001,7 @@ export class TtsService {
               seed: typeof jobSettings.seed === "number" ? jobSettings.seed : undefined
             })
       const pronunciation = await this.pronunciationEntriesForBook(job.bookId)
+      const narrationLanguage = narrationLanguageFor(source.language, optionalStringValue(jobSettings.generationLanguage))
       const dictionaryVersion = dictionaryVersionFor(pronunciation)
       const cached = await this.findCachedJob({
         bookId: job.bookId,
@@ -1001,6 +1011,7 @@ export class TtsService {
         engineId: job.engineId,
         excludeJobId: job.id,
         generationConfigSignature,
+        narrationLanguage,
         voiceBindingId: job.voiceBindingId ?? undefined,
         voiceProfileId: job.voiceProfileId ?? undefined,
         useExpressiveNarration,
@@ -1017,6 +1028,7 @@ export class TtsService {
             chapterAudioAssetId: cached.chapterAudioAssetId,
             chapterDurationMs: cached.chapterDurationMs,
             normalizationDictionaryVersion: dictionaryVersion,
+            normalizationLanguage: narrationLanguage,
             normalizationVersion: NORMALIZER_VERSION,
             sourceContentHash: source.contentHash
           }),
@@ -1033,7 +1045,7 @@ export class TtsService {
         chapterHref: job.chapterHref,
         contentHash: source.contentHash,
         html: source.html,
-        language: source.language,
+        language: narrationLanguage,
         pronunciationEntries: pronunciation,
         paragraphLimit
       })
@@ -1059,6 +1071,7 @@ export class TtsService {
           prosodyMode: useExpressiveNarration ? "expressive" : "neutral",
           prosodyPromptVersion: prosodyResult.promptVersion,
           normalizationDictionaryVersion: plan.normalization.dictionaryVersion,
+          normalizationLanguage: plan.source.language,
           normalizationVersion: plan.normalization.version,
           sourceContentHash: source.contentHash
         }),
@@ -1555,6 +1568,7 @@ export class TtsService {
     dictionaryVersion: string
     generationLanguage?: string
     job: TtsJobRow
+    language: string
     modelSettings: TtsModelSettings
     outputDir: string
     quality: "draft" | "standard" | "high"
@@ -1601,7 +1615,7 @@ export class TtsService {
       outputDirectory: input.outputDir,
       generationLanguage: input.generationLanguage,
       modelSettings: input.modelSettings,
-      plan: singleSegmentNarrationPlan(input.job, input.segment, input.dictionaryVersion),
+      plan: singleSegmentNarrationPlan(input.job, input.segment, input.dictionaryVersion, input.language),
       quality: input.quality,
       referenceAudioPath: reference?.audioPath,
       referenceText: reference?.text,
@@ -1946,6 +1960,7 @@ export class TtsService {
     useExpressiveNarration: boolean
     paragraphLimit?: number
     generationConfigSignature: string
+    narrationLanguage: string
   }) {
     const candidates = await this.db.query.ttsJobs.findMany({
       where: and(eq(ttsJobs.bookId, input.bookId), eq(ttsJobs.chapterHref, input.chapterHref), eq(ttsJobs.status, "completed")),
@@ -1966,6 +1981,7 @@ export class TtsService {
       return (
         settings.sourceContentHash === input.contentHash &&
         settings.normalizationDictionaryVersion === input.dictionaryVersion &&
+        settings.normalizationLanguage === input.narrationLanguage &&
         settings.normalizationVersion === NORMALIZER_VERSION &&
         settings.useExpressiveNarration === input.useExpressiveNarration &&
         settings.generationConfigSignature === input.generationConfigSignature &&
@@ -2334,6 +2350,11 @@ function optionalStringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined
 }
 
+function narrationLanguageFor(bookLanguage: string, generationLanguage?: string): string {
+  const selected = generationLanguage?.trim()
+  return canonicalTtsLanguage(selected && selected.toLocaleLowerCase("en-US") !== "auto" ? selected : bookLanguage)
+}
+
 function optional(value: string | null | undefined): string | undefined {
   return value || undefined
 }
@@ -2421,14 +2442,14 @@ function localSegmentPacingMs(text: string): number {
   return Math.min(700, Math.max(150, Math.round(text.length * 4)))
 }
 
-function singleSegmentNarrationPlan(job: TtsJobRow, segment: NarrationSegment, dictionaryVersion: string): NarrationPlan {
+function singleSegmentNarrationPlan(job: TtsJobRow, segment: NarrationSegment, dictionaryVersion: string, language: string): NarrationPlan {
   return {
     schemaVersion: NARRATION_PLAN_VERSION,
     source: {
       bookId: job.bookId,
       chapterHref: job.chapterHref,
       contentHash: hashBuffer(`${segment.segmentId}:${segment.normalizedText}`),
-      language: "pt-BR"
+      language
     },
     normalization: {
       normalizerId: NORMALIZER_ID,

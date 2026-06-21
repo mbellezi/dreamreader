@@ -5,6 +5,7 @@ import {
   htmlToReadableText,
   limitParagraphs,
   MAX_TTS_SEGMENT_CHARS,
+  normalizeForTts,
   normalizePtBr,
   segmentTextForTts
 } from "../../src/main/services/tts-pipeline"
@@ -38,6 +39,30 @@ describe("TTS pipeline", () => {
     expect(normalized).toContain("quatorze horas e trinta minutos")
     expect(normalized).toContain("vinte e cinco reais e noventa centavos")
     expect(normalized).toContain("doze por cento")
+  })
+
+  it("normalizes abbreviations with the selected language", () => {
+    expect(normalizeForTts("Prof. Ana falou com Dr. Silva.", { language: "pt-BR" })).toContain(
+      "professor Ana falou com doutor Silva"
+    )
+    expect(normalizeForTts("Prof. Alice met Dr. Smith in Fig. 2.", { language: "English" })).toContain(
+      "professor Alice met doctor Smith in figure 2"
+    )
+    expect(normalizeForTts("Dr. Smith arrived.", { language: "en" })).not.toContain("Dr.")
+  })
+
+  it("uses the chosen language when building narration plans", () => {
+    const plan = buildNarrationPlan({
+      bookId: "book-en",
+      chapterHref: "chapter-en",
+      contentHash: "hash-en",
+      html: "<article><p>Dr. Smith met Prof. Jones.</p></article>",
+      language: "English"
+    })
+
+    expect(plan.source.language).toBe("en")
+    expect(plan.normalization.normalizerId).toBe("basic-multilingual-normalizer")
+    expect(plan.segments[0].normalizedText).toContain("doctor Smith met professor Jones")
   })
 
   it("segments readable chapter text into deterministic narration plan segments", () => {
@@ -118,7 +143,7 @@ describe("TTS pipeline", () => {
       language: "pt-BR"
     })
 
-    expect(plan.normalization.version).toBe("1.1.3")
+    expect(plan.normalization.version).toBe("2.0.0")
     expect(plan.segments.map((segment) => segment.originalText).join(" ")).not.toMatch(/\[[^\]]+\]/)
     expect(plan.segments.map((segment) => segment.normalizedText).join(" ")).toContain("Trecho interrompido. proxima frase.")
   })

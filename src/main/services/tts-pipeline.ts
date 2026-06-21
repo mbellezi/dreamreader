@@ -1,24 +1,31 @@
 import type { NarrationPlan, NarrationProsody, NarrationSegment, PronunciationEntry, VoiceRole } from "@shared/contracts/ai"
 import { hashBuffer } from "@main/lib/hash"
+import {
+  canonicalTtsLanguage,
+  dictionaryVersionFor,
+  normalizerMetadataForLanguage,
+  normalizeForTts,
+  sanitizeReadableText,
+  sentenceAbbreviationsForLanguage,
+  type TtsNormalizationOptions
+} from "@main/services/tts-normalizers"
 
-export const NORMALIZER_ID = "pt-br-basic-normalizer"
-export const NORMALIZER_VERSION = "1.1.3"
-export const DICTIONARY_VERSION = "builtin-pt-br-v1"
+export {
+  applyPronunciationEntries,
+  canonicalTtsLanguage,
+  dictionaryVersionFor,
+  DICTIONARY_VERSION,
+  NORMALIZER_ID,
+  NORMALIZER_VERSION,
+  normalizeForTts,
+  normalizePtBr,
+  numberToPtBr
+} from "@main/services/tts-normalizers"
+
 export const PROSODY_ANALYZER_ID = "neutral-rule-prosody"
 export const PROSODY_VERSION = "1.0.0"
 export const NARRATION_PLAN_VERSION = "narration-plan/v1"
 export const MAX_TTS_SEGMENT_CHARS = 420
-
-const commonAbbreviations: Record<string, string> = {
-  "Dr.": "doutor",
-  "Dra.": "doutora",
-  "Sr.": "senhor",
-  "Sra.": "senhora",
-  "Srs.": "senhores",
-  "Prof.": "professor",
-  "Profa.": "professora",
-  "etc.": "etcetera"
-}
 
 const htmlEntities: Record<string, string> = {
   amp: "&",
@@ -38,22 +45,6 @@ const htmlEntities: Record<string, string> = {
   rsquo: "’"
 }
 
-const monthNames = [
-  "",
-  "janeiro",
-  "fevereiro",
-  "março",
-  "abril",
-  "maio",
-  "junho",
-  "julho",
-  "agosto",
-  "setembro",
-  "outubro",
-  "novembro",
-  "dezembro"
-]
-
 export type ChapterNarrationInput = {
   bookId: string
   chapterHref: string
@@ -65,14 +56,22 @@ export type ChapterNarrationInput = {
   paragraphLimit?: number
 }
 
+type SegmentTextForTtsInput = TtsNormalizationOptions | PronunciationEntry[]
+
 export function buildNarrationPlan(input: ChapterNarrationInput): NarrationPlan {
   const fullText = htmlToReadableText(input.html)
   const text = input.paragraphLimit ? limitParagraphs(fullText, input.paragraphLimit) : fullText
-  const chunks = segmentTextForTts(text, input.pronunciationEntries)
+  const language = canonicalTtsLanguage(input.language)
+  const normalizer = normalizerMetadataForLanguage(language)
+  const normalizationOptions = {
+    language,
+    pronunciationEntries: input.pronunciationEntries
+  }
+  const chunks = segmentTextForTts(text, normalizationOptions)
   const dictionaryVersion = dictionaryVersionFor(input.pronunciationEntries ?? [])
   const segments = chunks.map((chunk, index): NarrationSegment => {
     const segmentHash = hashBuffer(`${input.bookId}:${input.chapterHref}:${index}:${chunk}`)
-    const normalizedText = normalizePtBr(chunk, input.pronunciationEntries)
+    const normalizedText = normalizeForTts(chunk, normalizationOptions)
     return {
       segmentId: `${input.bookId}:${input.chapterHref}:${index}:${segmentHash.slice(0, 12)}`,
       locator: {
@@ -95,11 +94,11 @@ export function buildNarrationPlan(input: ChapterNarrationInput): NarrationPlan 
       bookId: input.bookId,
       chapterHref: input.chapterHref,
       contentHash: input.contentHash,
-      language: input.language
+      language
     },
     normalization: {
-      normalizerId: NORMALIZER_ID,
-      version: NORMALIZER_VERSION,
+      normalizerId: normalizer.id,
+      version: normalizer.version,
       dictionaryVersion
     },
     prosody: {
@@ -148,7 +147,8 @@ export function limitParagraphs(text: string, limit: number): string {
   return paragraphs.slice(0, Math.floor(limit)).join("\n\n")
 }
 
-export function segmentTextForTts(text: string, pronunciationEntries: PronunciationEntry[] = []): string[] {
+export function segmentTextForTts(text: string, input: SegmentTextForTtsInput = {}): string[] {
+  const options = normalizationOptionsFrom(input)
   const paragraphs = sanitizeReadableText(text)
     .split(/\n{2,}/)
     .map((paragraph) => paragraph.replace(/\s+/g, " ").trim())
@@ -156,7 +156,7 @@ export function segmentTextForTts(text: string, pronunciationEntries: Pronunciat
   const segments: string[] = []
 
   for (const paragraph of paragraphs) {
-    segments.push(...chunkSentencesForTts(splitSentences(paragraph), pronunciationEntries))
+    segments.push(...chunkSentencesForTts(splitSentences(paragraph, options.language), options))
   }
 
   const speakableSegments = segments.filter(hasSpeakableText)
@@ -169,18 +169,18 @@ export function segmentTextForTts(text: string, pronunciationEntries: Pronunciat
 
 // The engine synthesizes normalizedText, which expands numbers/dates/abbreviations,
 // so chunks must fit the limit both before and after normalization.
-function fitsTtsLimit(text: string, pronunciationEntries: PronunciationEntry[]): boolean {
+function fitsTtsLimit(text: string, options: TtsNormalizationOptions): boolean {
   return (
-    text.length <= MAX_TTS_SEGMENT_CHARS && normalizePtBr(text, pronunciationEntries).length <= MAX_TTS_SEGMENT_CHARS
+    text.length <= MAX_TTS_SEGMENT_CHARS && normalizeForTts(text, options).length <= MAX_TTS_SEGMENT_CHARS
   )
 }
 
-function splitOversizedWord(word: string, pronunciationEntries: PronunciationEntry[]): string[] {
+function splitOversizedWord(word: string, options: TtsNormalizationOptions): string[] {
   const pieces: string[] = []
   let rest = word
   while (rest.length > 0) {
     let piece = rest.slice(0, MAX_TTS_SEGMENT_CHARS)
-    while (piece.length > 1 && !fitsTtsLimit(piece, pronunciationEntries)) {
+    while (piece.length > 1 && !fitsTtsLimit(piece, options)) {
       piece = piece.slice(0, Math.ceil(piece.length / 2))
     }
     pieces.push(piece)
@@ -189,8 +189,8 @@ function splitOversizedWord(word: string, pronunciationEntries: PronunciationEnt
   return pieces
 }
 
-function splitLongSentence(sentence: string, pronunciationEntries: PronunciationEntry[]): string[] {
-  if (fitsTtsLimit(sentence, pronunciationEntries)) {
+function splitLongSentence(sentence: string, options: TtsNormalizationOptions): string[] {
+  if (fitsTtsLimit(sentence, options)) {
     return [sentence]
   }
   const words = sentence.split(/\s+/)
@@ -198,7 +198,7 @@ function splitLongSentence(sentence: string, pronunciationEntries: Pronunciation
   let current = ""
   for (const word of words) {
     const candidate = current ? `${current} ${word}` : word
-    if (fitsTtsLimit(candidate, pronunciationEntries)) {
+    if (fitsTtsLimit(candidate, options)) {
       current = candidate
       continue
     }
@@ -206,10 +206,10 @@ function splitLongSentence(sentence: string, pronunciationEntries: Pronunciation
       chunks.push(current)
       current = ""
     }
-    if (fitsTtsLimit(word, pronunciationEntries)) {
+    if (fitsTtsLimit(word, options)) {
       current = word
     } else {
-      chunks.push(...splitOversizedWord(word, pronunciationEntries))
+      chunks.push(...splitOversizedWord(word, options))
     }
   }
   if (current) {
@@ -218,113 +218,30 @@ function splitLongSentence(sentence: string, pronunciationEntries: Pronunciation
   return chunks
 }
 
-function chunkSentencesForTts(sentences: string[], pronunciationEntries: PronunciationEntry[]): string[] {
+function chunkSentencesForTts(sentences: string[], options: TtsNormalizationOptions): string[] {
   const chunks: string[] = []
   let current = ""
 
   for (const sentence of sentences) {
     const candidate = current ? `${current} ${sentence}` : sentence
-    if (fitsTtsLimit(candidate, pronunciationEntries)) {
+    if (fitsTtsLimit(candidate, options)) {
       current = candidate
       continue
     }
     if (current) {
-      chunks.push(...splitLongSentence(current, pronunciationEntries))
+      chunks.push(...splitLongSentence(current, options))
     }
     current = sentence
   }
 
   if (current) {
-    chunks.push(...splitLongSentence(current, pronunciationEntries))
+    chunks.push(...splitLongSentence(current, options))
   }
   return chunks
 }
 
-export function normalizePtBr(text: string, pronunciationEntries: PronunciationEntry[] = []): string {
-  let normalized = sanitizeReadableText(text)
-
-  normalized = normalized.replace(/\bR\$\s*(\d{1,6})(?:,(\d{2}))?\b/g, (_match, reais: string, centavos: string | undefined) => {
-    const realCount = Number(reais)
-    const centCount = Number(centavos ?? 0)
-    const realLabel = realCount === 1 ? "real" : "reais"
-    const centsLabel = centCount === 1 ? "centavo" : "centavos"
-    const realText = `${numberToPtBr(realCount)} ${realLabel}`
-    return centCount > 0 ? `${realText} e ${numberToPtBr(centCount)} ${centsLabel}` : realText
-  })
-
-  normalized = normalized.replace(/\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b/g, (_match, day: string, month: string, year: string) => {
-    const monthIndex = Number(month)
-    const monthName = monthNames[monthIndex]
-    if (!monthName) {
-      return _match
-    }
-    return `${numberToPtBr(Number(day))} de ${monthName} de ${numberToPtBr(normalizeYear(Number(year)))}`
-  })
-
-  normalized = normalized.replace(/\b(\d{1,2})h(?:(\d{2}))?\b/gi, (_match, hours: string, minutes: string | undefined) => {
-    const hourCount = Number(hours)
-    const minuteCount = Number(minutes ?? 0)
-    const hourLabel = hourCount === 1 ? "hora" : "horas"
-    if (!minuteCount) {
-      return `${numberToPtBr(hourCount)} ${hourLabel}`
-    }
-    const minuteLabel = minuteCount === 1 ? "minuto" : "minutos"
-    return `${numberToPtBr(hourCount)} ${hourLabel} e ${numberToPtBr(minuteCount)} ${minuteLabel}`
-  })
-
-  normalized = normalized.replace(/\b(\d{1,3})%/g, (_match, value: string) => `${numberToPtBr(Number(value))} por cento`)
-
-  for (const [abbreviation, replacement] of Object.entries(commonAbbreviations)) {
-    normalized = normalized.replace(new RegExp(`\\b${escapeRegExp(abbreviation)}`, "g"), replacement)
-  }
-
-  normalized = applyPronunciationEntries(normalized, pronunciationEntries)
-
-  return normalized.replace(/\s+/g, " ").trim()
-}
-
-export function dictionaryVersionFor(pronunciationEntries: PronunciationEntry[] = []): string {
-  if (!pronunciationEntries.length) {
-    return DICTIONARY_VERSION
-  }
-  const signature = pronunciationEntries
-    .map((entry) =>
-      [entry.scope, entry.bookId ?? "", entry.pattern, entry.replacement, entry.matchKind, entry.caseSensitive ? "1" : "0"].join(":")
-    )
-    .sort()
-    .join("\n")
-  return `${DICTIONARY_VERSION}:${hashBuffer(signature).slice(0, 12)}`
-}
-
-export function applyPronunciationEntries(text: string, pronunciationEntries: PronunciationEntry[]): string {
-  return pronunciationEntries.reduce((current, entry) => {
-    if (!entry.pattern.trim()) {
-      return current
-    }
-    try {
-      const flags = entry.caseSensitive ? "g" : "gi"
-      if (entry.matchKind === "regex") {
-        return current.replace(new RegExp(entry.pattern, flags), entry.replacement)
-      }
-      const escaped = escapeRegExp(entry.pattern)
-      const expression =
-        entry.matchKind === "word"
-          ? new RegExp(`(^|[^\\p{L}\\p{N}_])(${escaped})(?=$|[^\\p{L}\\p{N}_])`, `${flags}u`)
-          : new RegExp(escaped, flags)
-      return current.replace(expression, (match, prefix: string) => {
-        if (entry.matchKind !== "word") {
-          return entry.replacement
-        }
-        return `${prefix}${entry.replacement}`
-      })
-    } catch {
-      return current
-    }
-  }, text)
-}
-
-function splitSentences(paragraph: string): string[] {
-  const protectedParagraph = Object.keys(commonAbbreviations).reduce(
+function splitSentences(paragraph: string, language?: string): string[] {
+  const protectedParagraph = sentenceAbbreviationsForLanguage(language).reduce(
     (value, abbreviation) => value.replaceAll(abbreviation, abbreviation.replaceAll(".", "<dot>")),
     paragraph
   )
@@ -332,21 +249,6 @@ function splitSentences(paragraph: string): string[] {
     .split(/(?<=[.!?…])\s+/)
     .map((sentence) => sentence.replaceAll("<dot>", ".").trim())
     .filter(Boolean)
-}
-
-function sanitizeReadableText(text: string): string {
-  return removeAudiobookReferenceMarkers(text)
-    .normalize("NFC")
-    .replace(/\u00ad/g, "")
-    .replace(/[\u200b-\u200f\u202a-\u202e\u2060\ufeff]/g, "")
-}
-
-function removeAudiobookReferenceMarkers(text: string): string {
-  return text
-    .replace(/\s*\[\s*(?:\.{3}|…)\s*\]\s*/g, ". ")
-    .replace(/\s*\[[^\]\r\n]{1,120}\]\s*/g, " ")
-    .replace(/[^\S\n]+([,.;:!?])/g, "$1")
-    .replace(/([.!?])\s+([.!?])/g, "$1")
 }
 
 function hasSpeakableText(text: string): boolean {
@@ -410,70 +312,6 @@ export function voiceRoleFor(text: string): VoiceRole {
   return "narrator"
 }
 
-function normalizeYear(value: number): number {
-  if (value < 100) {
-    return value >= 50 ? 1900 + value : 2000 + value
-  }
-  return value
-}
-
-export function numberToPtBr(value: number): string {
-  if (!Number.isFinite(value)) {
-    return String(value)
-  }
-  const integer = Math.trunc(Math.abs(value))
-  if (integer === 0) {
-    return "zero"
-  }
-  if (integer < 0) {
-    return `menos ${numberToPtBr(Math.abs(integer))}`
-  }
-  if (integer < 1000) {
-    return underThousand(integer)
-  }
-  if (integer < 1_000_000) {
-    const thousands = Math.floor(integer / 1000)
-    const rest = integer % 1000
-    const thousandText = thousands === 1 ? "mil" : `${underThousand(thousands)} mil`
-    return rest ? [thousandText, joinerFor(rest), underThousand(rest)].filter(Boolean).join(" ") : thousandText
-  }
-  return String(value)
-}
-
-function underThousand(value: number): string {
-  const units = ["", "um", "dois", "três", "quatro", "cinco", "seis", "sete", "oito", "nove"]
-  const teens = [
-    "dez",
-    "onze",
-    "doze",
-    "treze",
-    "quatorze",
-    "quinze",
-    "dezesseis",
-    "dezessete",
-    "dezoito",
-    "dezenove"
-  ]
-  const tens = ["", "", "vinte", "trinta", "quarenta", "cinquenta", "sessenta", "setenta", "oitenta", "noventa"]
-  const hundreds = ["", "cento", "duzentos", "trezentos", "quatrocentos", "quinhentos", "seiscentos", "setecentos", "oitocentos", "novecentos"]
-
-  if (value < 10) return units[value]
-  if (value < 20) return teens[value - 10]
-  if (value < 100) {
-    const ten = Math.floor(value / 10)
-    const unit = value % 10
-    return unit ? `${tens[ten]} e ${units[unit]}` : tens[ten]
-  }
-  if (value === 100) return "cem"
-  const hundred = Math.floor(value / 100)
-  const rest = value % 100
-  return rest ? `${hundreds[hundred]} e ${underThousand(rest)}` : hundreds[hundred]
-}
-
-function joinerFor(rest: number): string {
-  return rest < 100 || rest % 100 === 0 ? "e" : ""
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+function normalizationOptionsFrom(input: SegmentTextForTtsInput): TtsNormalizationOptions {
+  return Array.isArray(input) ? { pronunciationEntries: input } : input
 }
