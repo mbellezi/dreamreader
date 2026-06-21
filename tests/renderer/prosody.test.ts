@@ -21,6 +21,7 @@ function segment(overrides: Partial<TtsSegment> = {}): TtsSegment {
     jobId: "job-1",
     segmentIndex: 0,
     status: "completed",
+    text: "texto",
     textPreview: "texto",
     ...overrides
   }

@@ -36,6 +36,13 @@
       "when": 1780769097668,
       "tag": "0004_many_barracuda",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1781998426012,
+      "tag": "0005_tan_mauler",
+      "breakpoints": true
     }
   ]
 }

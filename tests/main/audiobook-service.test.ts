@@ -201,6 +201,66 @@ describe("AudiobookService.rebuild", () => {
     expect(deleted.manifest?.chapters[0]?.audioAssetId).toBe("asset-1")
   })
 
+  it("adds two seconds of silence between M4B chapters", async () => {
+    const { audiobook, db, paths } = await createTestServices()
+
+    await seedBook(db, paths, "book-with-gaps", "Livro com Intervalos", 2)
+    await db.insert(ttsEngines).values({
+      id: "dreamreader-local-tts",
+      displayName: "DreamReader Local TTS",
+      version: "0.1.0",
+      adapterId: "dreamreader-local-wav",
+      runtime: "cpu",
+      modelFormat: "unknown",
+      accelerator: "cpu",
+      installed: true,
+      updatedAt: new Date()
+    })
+
+    for (const index of [1, 2]) {
+      const chapterPath = path.join(paths.audioCacheDir, `gap-chapter-${index}.wav`)
+      await mkdir(path.dirname(chapterPath), { recursive: true })
+      await writeFile(chapterPath, createSilentWav(1_000, 22_050))
+      await db.insert(assets).values({
+        id: `gap-asset-${index}`,
+        kind: "audio_chapter",
+        bookId: "book-with-gaps",
+        path: chapterPath,
+        mimeType: "audio/wav",
+        contentHash: `gap-audio-hash-${index}`,
+        sizeBytes: (await readFile(chapterPath)).byteLength
+      })
+      await audiobook.recordChapterAudio({
+        audioAssetId: `gap-asset-${index}`,
+        audioHash: `gap-audio-hash-${index}`,
+        bookId: "book-with-gaps",
+        chapterHref: `chapter-${index}`,
+        chapterIndex: index,
+        contentHash: `gap-content-hash-${index}`,
+        durationMs: 1_000,
+        engineId: "dreamreader-local-tts",
+        title: `Capitulo ${index}`
+      })
+    }
+
+    const withManifest = await audiobook.getExport("book-with-gaps")
+    expect(withManifest.durationMs).toBe(4_000)
+    expect(withManifest.manifest?.chapters.map((chapter) => [chapter.startMs, chapter.endMs])).toEqual([
+      [0, 3_000],
+      [3_000, 4_000]
+    ])
+
+    const rebuilt = await audiobook.rebuild("book-with-gaps")
+    const asset = await db.query.assets.findFirst({
+      where: (table, { eq }) => eq(table.id, rebuilt.draftAssetId ?? "")
+    })
+    expect(rebuilt.metadata).toMatchObject({
+      audioMode: "encode",
+      chapterGapMs: 2_000
+    })
+    expect((await probeAudio(asset?.path ?? "")).durationMs).toBeGreaterThan(3_800)
+  })
+
   it("waits for active audio jobs before rebuilding automatic M4B", async () => {
     const { audiobook, db, paths } = await createTestServices()
 

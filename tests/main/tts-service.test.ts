@@ -49,10 +49,12 @@ describe("TtsService", () => {
       })
 
       expect(queued.status).toBe("queued")
+      expect(queued.chapterTitle).toBe("Capitulo 1")
 
       await tts.drainQueue()
 
       const [completed] = await tts.listJobs({ bookId: "book-audio" })
+      expect(completed.chapterTitle).toBe("Capitulo 1")
       expect(completed.status).toBe("completed")
       expect(completed.progress).toBe(1)
 
@@ -121,6 +123,189 @@ describe("TtsService", () => {
       const clearedExport = await audiobook.getExport("book-audio")
       expect(clearedExport.chaptersReady).toBe(0)
       expect(clearedExport.stale).toBe(true)
+    } finally {
+      await client.close()
+    }
+  })
+
+  it("searches segments and regenerates a single edited segment", async () => {
+    const { audiobook, client, db, paths } = await createTestServices()
+    try {
+      await seedBook(db, paths)
+      const tts = new TtsService(db, paths, audiobook)
+
+      const queued = await tts.enqueueChapter({
+        bookId: "book-audio",
+        chapterHref: "chapter-1",
+        engineId: DEFAULT_TTS_ENGINE_ID,
+        voiceProfileId: DEFAULT_VOICE_PROFILE_ID,
+        quality: "draft",
+        useExpressiveNarration: false
+      })
+      await tts.drainQueue()
+      await audiobook.rebuild("book-audio")
+      expect((await audiobook.getExport("book-audio")).stale).toBe(false)
+
+      const matches = await tts.searchSegments({ bookId: "book-audio", query: "Cust", limit: 10 })
+      expect(matches.length).toBeGreaterThan(0)
+      expect(matches[0].text).toContain("Custou")
+
+      const [segment] = await tts.listSegments(queued.id)
+      const oldAssetId = segment.audioAssetId
+      const updated = await tts.regenerateSegment({
+        segmentId: segment.id,
+        text: "Texto alterado às 14h30."
+      })
+
+      expect(updated.text).toBe("Texto alterado às 14h30.")
+      expect(updated.textPreview).toContain("Texto alterado")
+      expect(updated.audioAssetId).toBeTruthy()
+      expect(updated.audioAssetId).not.toBe(oldAssetId)
+
+      const row = await db.query.ttsSegments.findFirst({ where: eq(ttsSegments.id, segment.id) })
+      expect(row?.originalText).toBe("Texto alterado às 14h30.")
+      expect(row?.normalizedText).toContain("quatorze horas e trinta minutos")
+      expect(await db.query.assets.findFirst({ where: eq(assets.id, oldAssetId ?? "") })).toBeUndefined()
+
+      const editedMatches = await tts.searchSegments({ bookId: "book-audio", query: "alter", limit: 10 })
+      expect(editedMatches.map((item) => item.id)).toContain(segment.id)
+      expect((await audiobook.getExport("book-audio")).stale).toBe(true)
+    } finally {
+      await client.close()
+    }
+  })
+
+  it("segments selected chapters without generating audio and replaces previous segment-only jobs", async () => {
+    const { audiobook, client, db, paths } = await createTestServices()
+    try {
+      await seedBook(db, paths)
+      const tts = new TtsService(db, paths, audiobook)
+
+      const [firstJob] = await tts.segmentChapters({
+        bookId: "book-audio",
+        chapterHrefs: ["chapter-1"]
+      })
+      expect(firstJob.status).toBe("completed")
+      expect(firstJob.progress).toBe(0)
+      expect(firstJob.chapterTitle).toBe("Capitulo 1")
+      expect(firstJob.settings.segmentsOnly).toBe(true)
+
+      const firstSegments = await tts.listSegments(firstJob.id)
+      expect(firstSegments.length).toBeGreaterThan(0)
+      expect(firstSegments.every((segment) => !segment.audioAssetId)).toBe(true)
+      const firstSegmentId = firstSegments[0].id
+      const regenerated = await tts.regenerateSegment({
+        segmentId: firstSegmentId,
+        text: firstSegments[0].text,
+        engineId: DEFAULT_TTS_ENGINE_ID,
+        voiceProfileId: DEFAULT_VOICE_PROFILE_ID
+      })
+      expect(regenerated.audioAssetId).toBeTruthy()
+      const regeneratedAssetId = regenerated.audioAssetId
+
+      const [secondJob] = await tts.segmentChapters({
+        bookId: "book-audio",
+        chapterHrefs: ["chapter-1"]
+      })
+      expect(secondJob.id).not.toBe(firstJob.id)
+      expect(secondJob.progress).toBe(0)
+      expect(secondJob.chapterTitle).toBe("Capitulo 1")
+
+      const jobs = await tts.listJobs({ bookId: "book-audio" })
+      expect(jobs.find((job) => job.id === secondJob.id)?.chapterTitle).toBe("Capitulo 1")
+      expect(jobs.filter((job) => job.settings.segmentsOnly === true)).toHaveLength(1)
+      expect(await db.query.ttsSegments.findFirst({ where: eq(ttsSegments.id, firstSegmentId) })).toBeUndefined()
+
+      const secondSegments = await tts.listSegments(secondJob.id)
+      expect(secondSegments.length).toBe(firstSegments.length)
+      expect(secondSegments[0].audioAssetId).toBe(regeneratedAssetId)
+      expect(await db.query.assets.findFirst({ where: eq(assets.id, regeneratedAssetId ?? "") })).toBeTruthy()
+      expect(await db.query.assets.findMany({ where: eq(assets.kind, "audio_segment") })).toHaveLength(1)
+    } finally {
+      await client.close()
+    }
+  })
+
+  it("regenerates segment-only audio with the requested synthesis engine", async () => {
+    const { audiobook, client, db, paths } = await createTestServices()
+    try {
+      await seedBook(db, paths)
+      const tts = new TtsService(db, paths, audiobook)
+      await tts.listJobs()
+      const referencePath = path.join(paths.voicesDir, "qwen-reference-segment.wav")
+      await mkdir(path.dirname(referencePath), { recursive: true })
+      await writeFile(referencePath, Buffer.from("reference-audio"))
+      await seedQwenReferenceVoice(db, referencePath)
+
+      const sidecarPath = path.join(paths.userData, "mock-single-segment-sidecar.cjs")
+      await writeFile(
+        sidecarPath,
+        `
+const fs = require("fs")
+const path = require("path")
+let input = ""
+process.stdin.setEncoding("utf8")
+process.stdin.on("data", (chunk) => { input += chunk })
+process.stdin.on("end", () => {
+  const request = JSON.parse(input)
+  if (request.engineId !== "qwen3-tts-17b-base-mlx") {
+    throw new Error("expected requested Qwen Base engine")
+  }
+  if (request.plan.segments.length !== 1) {
+    throw new Error("expected single segment regeneration")
+  }
+  if (request.voiceProfile?.id !== "voice_qwen_base_clone") {
+    throw new Error("expected selected Qwen voice")
+  }
+  fs.mkdirSync(request.outputDirectory, { recursive: true })
+  const audioPath = path.join(request.outputDirectory, "segment.wav")
+  fs.writeFileSync(audioPath, Buffer.from("single-segment-" + request.engineId))
+  const chapterPath = path.join(request.outputDirectory, "chapter.wav")
+  fs.writeFileSync(chapterPath, Buffer.from("chapter-" + request.engineId))
+  process.stdout.write(JSON.stringify({
+    schemaVersion: "dreamreader-tts-sidecar-result/v1",
+    segments: [{ segmentId: request.plan.segments[0].segmentId, segmentIndex: 0, audioPath, mimeType: "audio/wav", durationMs: 250 }],
+    chapter: { audioPath: chapterPath, mimeType: "audio/wav", durationMs: 250 }
+  }))
+})
+`
+      )
+      await db
+        .update(ttsEngines)
+        .set({ installed: true, installPath: path.join(paths.modelsDir, "qwen3-tts-17b-base") })
+        .where(eq(ttsEngines.id, "qwen3-tts-17b-base-mlx"))
+      await db.insert(runtimeManifests).values({
+        id: "runtime_test_single_segment",
+        adapterId: "qwen3-tts-mlx",
+        runtime: "mlx",
+        version: "test",
+        executablePath: process.execPath,
+        environmentJson: { args: [sidecarPath], timeoutMs: 10_000 },
+        capabilitiesJson: { protocol: "dreamreader-tts-sidecar/v1" }
+      })
+
+      const [job] = await tts.segmentChapters({
+        bookId: "book-audio",
+        chapterHrefs: ["chapter-1"]
+      })
+      const [segment] = await tts.listSegments(job.id)
+      const updated = await tts.regenerateSegment({
+        segmentId: segment.id,
+        text: segment.text,
+        engineId: "qwen3-tts-17b-base-mlx",
+        voiceProfileId: "voice_qwen_base_clone",
+        quality: "draft"
+      })
+
+      expect(updated.audioAssetId).toBeTruthy()
+      const row = await db.query.ttsSegments.findFirst({ where: eq(ttsSegments.id, segment.id) })
+      expect(row?.adapterPayloadJson).toMatchObject({
+        adapterId: "qwen3-tts-mlx",
+        engineId: "qwen3-tts-17b-base-mlx",
+        voiceProfileId: "voice_qwen_base_clone"
+      })
+      const asset = await db.query.assets.findFirst({ where: eq(assets.id, updated.audioAssetId ?? "") })
+      expect(await readFile(asset?.path ?? "", "utf8")).toBe("single-segment-qwen3-tts-17b-base-mlx")
     } finally {
       await client.close()
     }

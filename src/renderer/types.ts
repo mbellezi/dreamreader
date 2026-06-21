@@ -223,8 +223,10 @@ export type SegmentProsody = {
 export type TtsSegment = {
   id: string
   jobId: string
+  chapterHref?: string
   segmentIndex: number
   status: string
+  text: string
   textPreview: string
   audioAssetId?: string
   durationMs?: number
@@ -236,6 +238,7 @@ export type TtsJob = {
   id: string
   bookId: string
   chapterHref: string
+  chapterTitle?: string
   engineId: string
   voiceProfileId?: string
   voiceBindingId?: string
@@ -512,6 +515,7 @@ export type DreamReaderBridge = {
   tts?: {
     enqueueChapter?: (input: Record<string, unknown>) => Promise<unknown>
     enqueueChapters?: (input: Record<string, unknown>) => Promise<unknown[]>
+    segmentChapters?: (input: { bookId: string; chapterHrefs?: string[] }) => Promise<unknown[]>
     cancelJob?: (id: string) => Promise<unknown>
     pauseJob?: (id: string) => Promise<unknown>
     resumeJob?: (id: string) => Promise<unknown>
@@ -519,6 +523,19 @@ export type DreamReaderBridge = {
     getJob?: (id: string) => Promise<unknown>
     listJobs?: (filter?: { bookId?: string; engineId?: string }) => Promise<unknown[]>
     listSegments?: (jobId: string) => Promise<unknown[]>
+    searchSegments?: (input: { bookId: string; query: string; limit?: number }) => Promise<unknown[]>
+    regenerateSegment?: (input: {
+      engineId?: string
+      generationLanguage?: string
+      modelSettings?: Record<string, unknown>
+      quality?: "draft" | "standard" | "high"
+      seed?: number
+      seedFixed?: boolean
+      segmentId: string
+      text: string
+      voiceBindingId?: string
+      voiceProfileId?: string
+    }) => Promise<unknown>
     clearChapterAudio?: (input: { bookId: string; chapterHref: string }) => Promise<unknown>
     clearTerminalJobs?: (input: { bookId: string }) => Promise<unknown>
   }

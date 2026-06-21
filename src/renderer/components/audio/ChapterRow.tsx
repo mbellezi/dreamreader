@@ -1,41 +1,60 @@
-import { Trash2, Wand2 } from "lucide-react"
+import { ChevronDown, ChevronRight, RotateCcw, Trash2, Wand2 } from "lucide-react"
 import { ChapterStatusBadge } from "@renderer/components/audio/ChapterStatusBadge"
+import { GenerationProgress } from "@renderer/components/audio/GenerationProgress"
 import type { TranslationFn } from "@renderer/app/types"
 import type { ChapterAudioStatus } from "@renderer/lib/chapterStatus"
 import { cn } from "@renderer/lib/utils"
-import type { AudiobookChapter, Chapter } from "@renderer/types"
+import type { AudiobookChapter, Chapter, TtsJob, TtsSegment } from "@renderer/types"
 
 export function ChapterRow({
   chapter,
   status,
   manifestChapter,
   active,
+  expanded,
   selected,
   canGenerate,
   loading,
   hasActiveJob,
   hasGeneration,
+  currentJob,
   t,
   onSelect,
   onToggleSelected,
   onGenerate,
-  onClear
+  onClear,
+  onCancelJob,
+  onListSegments,
+  onPauseJob,
+  onRegenerateSegment,
+  onResumeJob,
+  onRetryJob
 }: {
   chapter: Chapter
   status: ChapterAudioStatus
   manifestChapter?: AudiobookChapter
   active: boolean
+  expanded: boolean
   selected: boolean
   canGenerate: boolean
   loading: boolean
   hasActiveJob: boolean
   hasGeneration: boolean
+  currentJob?: TtsJob
   t: TranslationFn
   onSelect: () => void
   onToggleSelected: (checked: boolean) => void
   onGenerate: () => void
   onClear: () => void
+  onCancelJob: (jobId: string) => Promise<void> | void
+  onListSegments: (jobId: string) => Promise<TtsSegment[]>
+  onPauseJob: (jobId: string) => Promise<void> | void
+  onRegenerateSegment: (input: { segmentId: string; text: string }) => Promise<TtsSegment>
+  onResumeJob: (jobId: string) => Promise<void> | void
+  onRetryJob: (jobId: string) => Promise<void> | void
 }) {
+  const canRetry = currentJob?.status === "failed" || currentJob?.status === "cancelled"
+
   return (
     <div
       className={cn(
@@ -44,6 +63,18 @@ export function ChapterRow({
       )}
     >
       <div className="flex items-center gap-3">
+        <button
+          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+          type="button"
+          aria-expanded={expanded}
+          onClick={onSelect}
+        >
+          {expanded ? (
+            <ChevronDown className="h-4 w-4" aria-hidden="true" />
+          ) : (
+            <ChevronRight className="h-4 w-4" aria-hidden="true" />
+          )}
+        </button>
         <input
           className="h-4 w-4 shrink-0 accent-primary"
           type="checkbox"
@@ -80,6 +111,16 @@ export function ChapterRow({
               <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
             </button>
           ) : null}
+          {canRetry ? (
+            <button
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md border bg-background text-muted-foreground hover:text-primary disabled:opacity-50"
+              disabled={loading}
+              title={t("audio.retry")}
+              onClick={() => currentJob && onRetryJob(currentJob.id)}
+            >
+              <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -95,6 +136,18 @@ export function ChapterRow({
           controls
           preload="none"
           src={`dreamreader://asset/${encodeURIComponent(manifestChapter.audioAssetId)}`}
+        />
+      ) : null}
+
+      {expanded && currentJob ? (
+        <GenerationProgress
+          job={currentJob}
+          t={t}
+          onCancel={onCancelJob}
+          onListSegments={onListSegments}
+          onPause={onPauseJob}
+          onRegenerateSegment={onRegenerateSegment}
+          onResume={onResumeJob}
         />
       ) : null}
     </div>

@@ -1,6 +1,5 @@
-import { ArrowLeft, FileX, RefreshCw, Save, Square, Trash2, Wand2 } from "lucide-react"
+import { ArrowLeft, FileX, ListPlus, RefreshCw, Save, Square, Trash2, Wand2 } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
-import { ChapterDetail } from "@renderer/components/audio/ChapterDetail"
 import { ChapterList } from "@renderer/components/audio/ChapterList"
 import { GenerationControls } from "@renderer/components/audio/GenerationControls"
 import { JobQueue } from "@renderer/components/audio/JobQueue"
@@ -45,6 +44,19 @@ type GenerateChaptersInput = {
   voiceProfileId?: string
 }
 
+type RegenerateSegmentInput = {
+  engineId?: string
+  generationLanguage?: string
+  modelSettings?: TtsModelSettings
+  quality?: "draft" | "standard" | "high"
+  seed?: number
+  seedFixed?: boolean
+  segmentId: string
+  text: string
+  voiceBindingId?: string
+  voiceProfileId?: string
+}
+
 export function BookStudioPane({
   audiobook,
   audiobookBuildJob,
@@ -66,10 +78,13 @@ export function BookStudioPane({
   onGenerateChapters,
   onListSegments,
   onPauseJob,
+  onRegenerateSegment,
   onRebuildAudiobook,
   onSaveAudiobook,
   onResumeJob,
   onRetryJob,
+  onSearchSegments,
+  onSegmentChapters,
   onToggleAutoBuild,
   onUpdateAudioSettings
 }: {
@@ -93,10 +108,13 @@ export function BookStudioPane({
   onGenerateChapters: (input: GenerateChaptersInput) => Promise<void> | void
   onListSegments: (jobId: string) => Promise<TtsSegment[]>
   onPauseJob: (jobId: string) => Promise<void> | void
+  onRegenerateSegment: (input: RegenerateSegmentInput) => Promise<TtsSegment>
   onRebuildAudiobook: () => Promise<void> | void
   onSaveAudiobook: () => Promise<void> | void
   onResumeJob: (jobId: string) => Promise<void> | void
   onRetryJob: (jobId: string) => Promise<void> | void
+  onSearchSegments: (input: { bookId: string; query: string; limit?: number }) => Promise<TtsSegment[]>
+  onSegmentChapters: (chapterHrefs: string[]) => Promise<void> | void
   onToggleAutoBuild: (enabled: boolean) => Promise<void> | void
   onUpdateAudioSettings: (audioSettings: AudioSettings, delay?: number) => Promise<void> | void
 }) {
@@ -111,7 +129,7 @@ export function BookStudioPane({
       if (current && chapters.some((chapter) => chapter.id === current)) {
         return current
       }
-      return chapters[0]?.id ?? null
+      return null
     })
   }, [chapters])
 
@@ -123,10 +141,6 @@ export function BookStudioPane({
     })
   }, [chapters])
 
-  const activeChapter = useMemo(
-    () => chapters.find((chapter) => chapter.id === activeChapterId) ?? null,
-    [activeChapterId, chapters]
-  )
   const activeBuildJob = audiobookBuildJob && ["queued", "building", "validating"].includes(audiobookBuildJob.status)
     ? audiobookBuildJob
     : null
@@ -157,10 +171,11 @@ export function BookStudioPane({
   const handleGenerateChapter = (chapterId: string) => {
     void onGenerateChapter(config.buildChapterParams(chapterId))
   }
-
-  const handleGeneratePreview = (chapterId: string, paragraphLimit: number) => {
-    void onGenerateChapter(config.buildChapterParams(chapterId, paragraphLimit))
-  }
+  const regenerateSegment = (input: { segmentId: string; text: string }) =>
+    onRegenerateSegment({
+      ...config.buildBatchParams(),
+      ...input
+    })
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -187,6 +202,14 @@ export function BookStudioPane({
             </button>
             <button
               className="inline-flex h-10 min-w-0 items-center justify-center gap-2 rounded-md border bg-card px-3 text-sm disabled:opacity-50"
+              disabled={!selectedChapters.size || loading}
+              onClick={() => void onSegmentChapters([...selectedChapters])}
+            >
+              <ListPlus className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span className="truncate">{t("audio.batch.generateSegments")}</span>
+            </button>
+            <button
+              className="inline-flex h-10 min-w-0 items-center justify-center gap-2 rounded-md border bg-card px-3 text-sm disabled:opacity-50"
               disabled={!cancellableJobs.length || loading}
               onClick={() => void onCancelQueuedJobs(cancellableJobs.map((job) => job.id))}
             >
@@ -201,66 +224,44 @@ export function BookStudioPane({
               <Trash2 className="h-4 w-4 shrink-0" aria-hidden="true" />
               <span className="truncate">{t("audio.batch.clearAllAudio")}</span>
             </button>
-            <button
-              className="inline-flex h-10 min-w-0 items-center justify-center gap-2 rounded-md border bg-card px-3 text-sm text-destructive disabled:opacity-50"
-              disabled={!hasCompiledM4b || Boolean(activeBuildJob) || loading}
-              onClick={() => void onDeleteAudiobookExport()}
-            >
-              <FileX className="h-4 w-4 shrink-0" aria-hidden="true" />
-              <span className="truncate">{t("audio.deleteM4b")}</span>
-            </button>
           </section>
 
           <GenerationControls config={config} t={t} />
 
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
-            <ChapterList
-              chapters={chapters}
-              audiobook={audiobook}
-              jobs={jobs}
-              loading={loading}
-              canGenerate={config.canGenerate}
-              activeChapterId={activeChapterId}
-              selectedChapters={selectedChapters}
-              t={t}
-              onSelectChapter={setActiveChapterId}
-              onToggleChapterSelected={(chapterId, checked) => {
+          <ChapterList
+            bookId={book.id}
+            chapters={chapters}
+            audiobook={audiobook}
+            jobs={jobs}
+            loading={loading}
+            canGenerate={config.canGenerate}
+            activeChapterId={activeChapterId}
+            selectedChapters={selectedChapters}
+            t={t}
+            onSelectChapter={setActiveChapterId}
+            onToggleChapterSelected={(chapterId, checked) => {
+              setSelectedChapters((current) => {
+                const next = new Set(current)
                 if (checked) {
-                  setActiveChapterId(chapterId)
+                  next.add(chapterId)
+                } else {
+                  next.delete(chapterId)
                 }
-                setSelectedChapters((current) => {
-                  const next = new Set(current)
-                  if (checked) {
-                    next.add(chapterId)
-                  } else {
-                    next.delete(chapterId)
-                  }
-                  return next
-                })
-              }}
-              onSelectAll={() => setSelectedChapters(new Set(chapters.map((chapter) => chapter.id)))}
-              onClearSelection={() => setSelectedChapters(new Set())}
-              onGenerateChapter={handleGenerateChapter}
-              onClearChapter={(chapterId) => onClearChapterAudio(chapterId)}
-            />
-
-            <ChapterDetail
-              chapter={activeChapter}
-              audiobook={audiobook}
-              jobs={jobs}
-              loading={loading}
-              canGenerate={config.canGenerate}
-              t={t}
-              onGenerateChapter={handleGenerateChapter}
-              onGeneratePreview={handleGeneratePreview}
-              onClearChapterAudio={onClearChapterAudio}
-              onCancelJob={onCancelJob}
-              onListSegments={onListSegments}
-              onPauseJob={onPauseJob}
-              onResumeJob={onResumeJob}
-              onRetryJob={onRetryJob}
-            />
-          </div>
+                return next
+              })
+            }}
+            onSelectAll={() => setSelectedChapters(new Set(chapters.map((chapter) => chapter.id)))}
+            onClearSelection={() => setSelectedChapters(new Set())}
+            onGenerateChapter={handleGenerateChapter}
+            onClearChapter={(chapterId) => onClearChapterAudio(chapterId)}
+            onCancelJob={onCancelJob}
+            onListSegments={onListSegments}
+            onPauseJob={onPauseJob}
+            onRegenerateSegment={regenerateSegment}
+            onResumeJob={onResumeJob}
+            onRetryJob={onRetryJob}
+            onSearchSegments={onSearchSegments}
+          />
 
           <section className="space-y-3">
             <h3 className="text-sm font-semibold">{t("studio.book.export")}</h3>
@@ -273,7 +274,7 @@ export function BookStudioPane({
                 onChange={(event) => onToggleAutoBuild(event.target.checked)}
               />
             </label>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
               <button
                 className="inline-flex h-10 min-w-0 items-center justify-center gap-2 rounded-md border bg-card px-3 text-sm disabled:opacity-50"
                 disabled={loading || Boolean(activeBuildJob) || !audiobook?.chaptersReady}
@@ -281,6 +282,14 @@ export function BookStudioPane({
               >
                 <RefreshCw className={`h-4 w-4 shrink-0 ${activeBuildJob ? "animate-spin" : ""}`} aria-hidden="true" />
                 <span className="truncate">{activeBuildJob ? t("audio.m4bBuilding") : t("audio.rebuild")}</span>
+              </button>
+              <button
+                className="inline-flex h-10 min-w-0 items-center justify-center gap-2 rounded-md border bg-card px-3 text-sm text-destructive disabled:opacity-50"
+                disabled={!hasCompiledM4b || Boolean(activeBuildJob) || loading}
+                onClick={() => void onDeleteAudiobookExport()}
+              >
+                <FileX className="h-4 w-4 shrink-0" aria-hidden="true" />
+                <span className="truncate">{t("audio.deleteM4b")}</span>
               </button>
               <button
                 className="inline-flex h-10 min-w-0 items-center justify-center gap-2 rounded-md border bg-card px-3 text-sm disabled:opacity-50"
@@ -316,7 +325,7 @@ export function BookStudioPane({
             jobs={jobs}
             loading={loading}
             t={t}
-            describeJob={(job) => ({ title: chapterTitleFor(chapters, job.chapterHref) })}
+            describeJob={(job) => ({ title: job.chapterTitle ?? chapterTitleFor(chapters, job.chapterHref) })}
             onCancelJob={onCancelJob}
             onPauseJob={onPauseJob}
             onResumeJob={onResumeJob}

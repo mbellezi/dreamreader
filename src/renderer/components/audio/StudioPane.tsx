@@ -174,18 +174,6 @@ export function StudioPane({
           />
         ) : (
           <>
-            <JobQueue
-              jobs={jobs}
-              loading={loading}
-              t={t}
-              describeJob={(job) => ({ title: titleById.get(job.bookId) ?? job.bookId, subtitle: job.chapterHref })}
-              onCancelJob={onCancelJob}
-              onPauseJob={onPauseJob}
-              onResumeJob={onResumeJob}
-              onRetryJob={onRetryJob}
-              onClearFinished={onClearFinished}
-            />
-
             <BookGroup
               title={t("audioDashboard.withAudio")}
               emptyMessage={t("audioDashboard.withAudioEmpty")}
@@ -204,6 +192,18 @@ export function StudioPane({
               booksById={booksById}
               t={t}
               onOpenBook={onOpenBook}
+            />
+
+            <JobQueue
+              jobs={jobs}
+              loading={loading}
+              t={t}
+              describeJob={(job) => ({ title: titleById.get(job.bookId) ?? job.bookId, subtitle: job.chapterTitle ?? job.chapterHref })}
+              onCancelJob={onCancelJob}
+              onPauseJob={onPauseJob}
+              onResumeJob={onResumeJob}
+              onRetryJob={onRetryJob}
+              onClearFinished={onClearFinished}
             />
           </>
         )}

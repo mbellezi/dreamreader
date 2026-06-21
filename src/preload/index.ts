@@ -175,6 +175,7 @@ const api = {
   tts: {
     enqueueChapter: (input: Record<string, unknown>) => invoke("tts.enqueueChapter", input),
     enqueueChapters: (input: Record<string, unknown>) => invoke("tts.enqueueChapters", input),
+    segmentChapters: (input: { bookId: string; chapterHrefs?: string[] }) => invoke("tts.segmentChapters", input),
     cancelJob: (id: string) => invoke("tts.cancelJob", { id }),
     pauseJob: (id: string) => invoke("tts.pauseJob", { id }),
     resumeJob: (id: string) => invoke("tts.resumeJob", { id }),
@@ -182,6 +183,19 @@ const api = {
     getJob: (id: string) => invoke("tts.getJob", { id }),
     listJobs: (filter?: { bookId?: string; engineId?: string }) => invoke("tts.listJobs", filter ?? {}),
     listSegments: (jobId: string) => invoke("tts.listSegments", { jobId }),
+    searchSegments: (input: { bookId: string; query: string; limit?: number }) => invoke("tts.searchSegments", input),
+    regenerateSegment: (input: {
+      engineId?: string
+      generationLanguage?: string
+      modelSettings?: Record<string, unknown>
+      quality?: "draft" | "standard" | "high"
+      seed?: number
+      seedFixed?: boolean
+      segmentId: string
+      text: string
+      voiceBindingId?: string
+      voiceProfileId?: string
+    }) => invoke("tts.regenerateSegment", input),
     clearChapterAudio: (input: { bookId: string; chapterHref: string }) => invoke("tts.clearChapterAudio", input),
     clearTerminalJobs: (input: { bookId: string }) => invoke("tts.clearTerminalJobs", input)
   },

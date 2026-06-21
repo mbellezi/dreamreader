@@ -12,6 +12,38 @@ afterEach(() => {
 })
 
 describe("dreamreaderClient", () => {
+  it("preserves job chapter titles returned by the bridge", async () => {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        dreamreader: {
+          tts: {
+            listJobs: async () => [
+              {
+                id: "job-1",
+                bookId: "book-1",
+                chapterHref: "chapter-1",
+                chapterTitle: "Capitulo 1",
+                status: "queued",
+                progress: 0,
+                settings: {},
+                createdAt: "2026-06-06T12:00:00.000Z",
+                updatedAt: "2026-06-06T12:00:00.000Z"
+              }
+            ]
+          }
+        }
+      }
+    })
+
+    await expect(dreamreaderClient.listTtsJobs()).resolves.toMatchObject([
+      {
+        chapterHref: "chapter-1",
+        chapterTitle: "Capitulo 1"
+      }
+    ])
+  })
+
   it("preserves segment prosody returned by the bridge", async () => {
     Object.defineProperty(globalThis, "window", {
       configurable: true,
@@ -24,6 +56,7 @@ describe("dreamreaderClient", () => {
                 jobId: "job-1",
                 segmentIndex: 0,
                 status: "completed",
+                text: "A pergunta apareceu em voz baixa.",
                 textPreview: "A pergunta apareceu em voz baixa.",
                 audioAssetId: "asset-1",
                 durationMs: 1200,
@@ -52,6 +85,7 @@ describe("dreamreaderClient", () => {
         jobId: "job-1",
         segmentIndex: 0,
         status: "completed",
+        text: "A pergunta apareceu em voz baixa.",
         textPreview: "A pergunta apareceu em voz baixa.",
         audioAssetId: "asset-1",
         durationMs: 1200,

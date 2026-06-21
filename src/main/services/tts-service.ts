@@ -1,6 +1,6 @@
 import { mkdir, rm, unlink, writeFile } from "node:fs/promises"
 import path from "node:path"
-import { and, asc, eq, inArray } from "drizzle-orm"
+import { and, asc, eq, inArray, sql } from "drizzle-orm"
 import {
   NarrationProsodySchema,
   PronunciationEntrySchema,
@@ -10,7 +10,11 @@ import {
   type EnqueueChapterTtsRequest,
   type EnqueueChaptersTtsRequest,
   type NarrationPlan,
+  type NarrationSegment,
   type PronunciationEntry,
+  type RegenerateTtsSegmentRequest,
+  type SearchTtsSegmentsRequest,
+  type SegmentChaptersTtsRequest,
   type TtsJob,
   type TtsModelSettings,
   type TtsSegmentSummary
@@ -50,7 +54,18 @@ import {
 import { LocalTtsAdapter } from "@main/services/local-tts-adapter"
 import { importSidecarAudio, SidecarTtsAdapter, type SidecarRuntimeManifest, type SidecarSegmentResult } from "@main/services/sidecar-tts-adapter"
 import type { AudiobookService } from "@main/services/audiobook-service"
-import { buildNarrationPlan, dictionaryVersionFor, NARRATION_PLAN_VERSION, NORMALIZER_VERSION } from "@main/services/tts-pipeline"
+import {
+  buildNarrationPlan,
+  dictionaryVersionFor,
+  NORMALIZER_ID,
+  NARRATION_PLAN_VERSION,
+  NORMALIZER_VERSION,
+  normalizePtBr,
+  PROSODY_ANALYZER_ID,
+  PROSODY_VERSION,
+  neutralProsodyFor,
+  voiceRoleFor
+} from "@main/services/tts-pipeline"
 import { createDefaultProsodyAnalyzerProvider, ProsodyService, type ProsodyPlanResult } from "@main/services/prosody-service"
 
 export const DEFAULT_TTS_ENGINE_ID = "dreamreader-local-tts"
@@ -81,12 +96,33 @@ type EnqueueChaptersTtsInput = Omit<EnqueueChaptersTtsRequest, "modelSettings" |
   modelSettings?: TtsModelSettings
   seedFixed?: boolean
 }
+type SegmentChaptersTtsInput = SegmentChaptersTtsRequest
+type RegenerateTtsSegmentInput = Omit<RegenerateTtsSegmentRequest, "modelSettings" | "quality" | "seedFixed"> & {
+  modelSettings?: TtsModelSettings
+  quality?: "draft" | "standard" | "high"
+  seedFixed?: boolean
+}
 
 type ReadyEngine = {
   adapterId: string
   engine: TtsEngineRow
   modelPath?: string
   runtimeManifest?: SidecarRuntimeManifest
+}
+
+type ReusableSegmentAudio = {
+  adapterPayloadJson: Record<string, unknown>
+  audioAssetId: string
+  durationMs?: number
+  previousSegmentId: string
+}
+
+type SegmentRegenerationContext = {
+  generationLanguage?: string
+  job: TtsJobRow
+  modelSettings: TtsModelSettings
+  quality: "draft" | "standard" | "high"
+  seed?: number
 }
 
 type SynthesizedChapterAudio = {
@@ -369,7 +405,7 @@ export class TtsService {
     if (!cached) {
       this.scheduleQueue()
     }
-    return toTtsJob(job)
+    return toTtsJob(job, source.title)
   }
 
   async enqueueChapters(input: EnqueueChaptersTtsInput): Promise<TtsJob[]> {
@@ -399,11 +435,88 @@ export class TtsService {
     return jobs
   }
 
+  async segmentChapters(input: SegmentChaptersTtsInput): Promise<TtsJob[]> {
+    await this.ensureReady()
+    const engineId = DEFAULT_TTS_ENGINE_ID
+    const chapters = await this.getBookChapters(input.bookId)
+    const selected = input.chapterHrefs?.length
+      ? chapters.filter((chapter) => input.chapterHrefs?.includes(chapter.href))
+      : chapters
+    const jobs: TtsJob[] = []
+
+    for (const chapter of selected) {
+      const source = await this.getChapterSource(input.bookId, chapter.href)
+      const pronunciation = await this.pronunciationEntriesForBook(input.bookId)
+      const plan = buildNarrationPlan({
+        bookId: input.bookId,
+        chapterHref: chapter.href,
+        contentHash: source.contentHash,
+        html: source.html,
+        language: source.language,
+        pronunciationEntries: pronunciation
+      })
+      if (!plan.segments.length) {
+        continue
+      }
+      const reusableAudio = await this.reusableSegmentAudioForPlan(input.bookId, chapter.href, plan)
+      await this.deleteSegmentOnlyJobs(input.bookId, chapter.href, reusableAudio.preservedAssetIds)
+
+      const now = new Date()
+      const adapterId = adapterIdForEngine(engineId)
+      const [job] = await this.db
+        .insert(ttsJobs)
+        .values({
+          id: createId("tts_job"),
+          bookId: input.bookId,
+          chapterHref: chapter.href,
+          engineId,
+          voiceProfileId: DEFAULT_VOICE_PROFILE_ID,
+          status: "completed",
+          progress: 0,
+          settingsJson: compactJson({
+            normalizationDictionaryVersion: plan.normalization.dictionaryVersion,
+            normalizationVersion: plan.normalization.version,
+            prosodyMode: "neutral",
+            segmentsOnly: true,
+            sourceContentHash: source.contentHash
+          }),
+          narrationPlanVersion: plan.schemaVersion,
+          resourcePolicyJson: {
+            acceleratorPreference: "text_segmentation_only",
+            exclusiveGpuJobs: false,
+            engine: adapterId
+          },
+          startedAt: now,
+          finishedAt: now,
+          updatedAt: now
+        })
+        .returning()
+
+      await this.persistSegments(
+        job.id,
+        plan,
+        {
+          analyzerId: plan.prosody.analyzerId,
+          cacheHits: 0,
+          fallbackCount: 0,
+          generatedCount: 0,
+          plan
+        },
+        adapterId,
+        "completed",
+        reusableAudio.audioByKey
+      )
+      jobs.push(toTtsJob(job, chapter.title))
+    }
+
+    return jobs
+  }
+
   async cancelJob(id: string): Promise<TtsJob> {
     await this.ensureReady()
     const job = await this.getJobRow(id)
     if (terminalStatuses.includes(job.status as (typeof terminalStatuses)[number])) {
-      return toTtsJob(job)
+      return this.toTtsJobWithChapterTitle(job)
     }
     const [updated] = await this.db
       .update(ttsJobs)
@@ -419,14 +532,14 @@ export class TtsService {
     if (!activeStatuses.includes(job.status as (typeof activeStatuses)[number])) {
       await this.cleanupTtsJobArtifacts([updated], { removeAudiobookChapters: "withChapterAudio" })
     }
-    return toTtsJob(updated)
+    return this.toTtsJobWithChapterTitle(updated)
   }
 
   async pauseJob(id: string): Promise<TtsJob> {
     await this.ensureReady()
     const job = await this.getJobRow(id)
     if (terminalStatuses.includes(job.status as (typeof terminalStatuses)[number]) || job.status === "paused") {
-      return toTtsJob(job)
+      return this.toTtsJobWithChapterTitle(job)
     }
     // Cooperative pause: the synthesis loop checks this set between paragraphs
     // (real pause for the local adapter). Sidecars synthesize a whole chapter in
@@ -438,7 +551,7 @@ export class TtsService {
       .set({ status: "paused", updatedAt: new Date() })
       .where(eq(ttsJobs.id, id))
       .returning()
-    return toTtsJob(updated)
+    return this.toTtsJobWithChapterTitle(updated)
   }
 
   async resumeJob(id: string): Promise<TtsJob> {
@@ -446,7 +559,7 @@ export class TtsService {
     const job = await this.getJobRow(id)
     this.pausedJobIds.delete(id)
     if (job.status !== "paused") {
-      return toTtsJob(job)
+      return this.toTtsJobWithChapterTitle(job)
     }
     const [updated] = await this.db
       .update(ttsJobs)
@@ -454,7 +567,7 @@ export class TtsService {
       .where(eq(ttsJobs.id, id))
       .returning()
     this.scheduleQueue()
-    return toTtsJob(updated)
+    return this.toTtsJobWithChapterTitle(updated)
   }
 
   async listSegments(jobId: string): Promise<TtsSegmentSummary[]> {
@@ -483,6 +596,172 @@ export class TtsService {
     return rows.map((row) => toTtsSegmentSummary(row, jobId))
   }
 
+  async searchSegments(input: SearchTtsSegmentsRequest): Promise<TtsSegmentSummary[]> {
+    await this.ensureReady()
+    const tsquery = prefixTsQueryFor(input.query)
+    if (!tsquery) {
+      return []
+    }
+
+    const rows = await this.db
+      .select()
+      .from(ttsSegments)
+      .where(
+        and(
+          eq(ttsSegments.bookId, input.bookId),
+          sql`${ttsSegments.jobId} in (
+            select id from (
+              select tj.id, row_number() over (partition by tj.chapter_href order by tj.created_at desc) as rn
+              from tts_jobs tj
+              where tj.book_id = ${input.bookId}
+                and exists (select 1 from tts_segments ts where ts.job_id = tj.id)
+            ) ranked_tts_jobs
+            where rn = 1
+          )`,
+          sql`to_tsvector('simple', coalesce(${ttsSegments.originalText}, '') || ' ' || coalesce(${ttsSegments.normalizedText}, '')) @@ to_tsquery('simple', ${tsquery})`
+        )
+      )
+      .orderBy(asc(ttsSegments.chapterHref), asc(ttsSegments.segmentIndex))
+      .limit(input.limit)
+
+    return rows.map((row) => toTtsSegmentSummary(row))
+  }
+
+  async regenerateSegment(input: RegenerateTtsSegmentInput): Promise<TtsSegmentSummary> {
+    await this.ensureReady()
+    const existing = await this.db.query.ttsSegments.findFirst({
+      where: eq(ttsSegments.id, input.segmentId)
+    })
+    if (!existing) {
+      throw new AppError("tts_segment_not_found", "TTS segment not found")
+    }
+
+    const job = await this.getJobRow(existing.jobId)
+    if (!terminalStatuses.includes(job.status as (typeof terminalStatuses)[number])) {
+      throw new AppError("tts_job_active", "Wait for the active TTS job before regenerating a segment")
+    }
+
+    const originalText = input.text.replace(/\s+/g, " ").trim()
+    const pronunciation = await this.pronunciationEntriesForBook(existing.bookId)
+    const dictionaryVersion = dictionaryVersionFor(pronunciation)
+    const normalizedText = normalizePtBr(originalText, pronunciation)
+    if (!normalizedText) {
+      throw new AppError("tts_no_speakable_text", "No speakable text found for audio generation")
+    }
+
+    const regenerationContext = await this.segmentRegenerationContext(job, input)
+    const readyEngine = await this.assertEngineReady(regenerationContext.job.engineId)
+    const segmentHash = hashBuffer(`${existing.id}:${normalizedText}`)
+    const prosody = NarrationProsodySchema.safeParse(existing.prosodyJson).success
+      ? NarrationProsodySchema.parse(existing.prosodyJson)
+      : neutralProsodyFor(originalText)
+    const segment: NarrationSegment = {
+      segmentId: `${existing.id}:${segmentHash.slice(0, 12)}`,
+      locator: existing.locatorJson,
+      originalText,
+      normalizedText,
+      voiceRole: voiceRoleFor(originalText),
+      prosody
+    }
+    const outputDir = path.join(this.jobOutputDirectory(job), "regenerated-segments", `${existing.id}-${Date.now()}`)
+    const audio = await this.synthesizeSingleSegment({
+      generationLanguage: regenerationContext.generationLanguage,
+      job: regenerationContext.job,
+      modelSettings: regenerationContext.modelSettings,
+      outputDir,
+      quality: regenerationContext.quality,
+      readyEngine,
+      seed: regenerationContext.seed,
+      segment,
+      dictionaryVersion
+    })
+    const previousAssetId = existing.audioAssetId ?? undefined
+    const [updated] = await this.db
+      .update(ttsSegments)
+      .set({
+        segmentHash,
+        originalText,
+        normalizedText,
+        prosodyJson: prosody,
+        adapterPayloadJson: compactJson({
+          ...jsonObject(existing.adapterPayloadJson),
+          adapterId: readyEngine.adapterId,
+          engineId: regenerationContext.job.engineId,
+          generationLanguage: regenerationContext.generationLanguage,
+          modelSettings: regenerationContext.modelSettings,
+          quality: regenerationContext.quality,
+          regeneratedAt: new Date().toISOString(),
+          regeneratedFromSegmentId: existing.id,
+          voiceBindingId: regenerationContext.job.voiceBindingId ?? undefined,
+          voiceProfileId: regenerationContext.job.voiceProfileId ?? undefined
+        }),
+        audioAssetId: audio.assetId,
+        durationMs: audio.durationMs,
+        status: "completed",
+        errorMessage: null,
+        updatedAt: new Date()
+      })
+      .where(eq(ttsSegments.id, existing.id))
+      .returning()
+
+    await this.cleanupReplacedSegmentAsset(previousAssetId)
+    await this.updateJob(job.id, {})
+    await this.audiobook.markStale(existing.bookId)
+    return toTtsSegmentSummary(updated)
+  }
+
+  private async segmentRegenerationContext(
+    job: TtsJobRow,
+    input: RegenerateTtsSegmentInput
+  ): Promise<SegmentRegenerationContext> {
+    const requestedEngineId = optionalStringValue(input.engineId)
+    if (requestedEngineId) {
+      const voice = await this.resolveVoiceForEngine({
+        engineId: requestedEngineId,
+        voiceBindingId: input.voiceBindingId,
+        voiceProfileId: input.voiceProfileId
+      })
+      return {
+        generationLanguage: input.generationLanguage,
+        job: {
+          ...job,
+          engineId: requestedEngineId,
+          voiceBindingId: voice.bindingId,
+          voiceProfileId: voice.profileId
+        },
+        modelSettings: jsonObject(input.modelSettings) as TtsModelSettings,
+        quality: qualityFor(input.quality),
+        seed: input.seedFixed ? input.seed : undefined
+      }
+    }
+
+    const sourceJob = jsonObject(job.settingsJson).segmentsOnly === true
+      ? await this.latestCompletedAudioJobForChapter(job.bookId, job.chapterHref)
+      : job
+    if (!sourceJob) {
+      throw new AppError("tts_regeneration_engine_required", "Choose a TTS engine before regenerating segment audio")
+    }
+    const settings = jsonObject(sourceJob.settingsJson)
+    return {
+      generationLanguage: optionalStringValue(settings.generationLanguage),
+      job: sourceJob,
+      modelSettings: jsonObject(settings.modelSettings) as TtsModelSettings,
+      quality: qualityFor(settings.quality),
+      seed: typeof settings.seed === "number" ? settings.seed : undefined
+    }
+  }
+
+  private async latestCompletedAudioJobForChapter(bookId: string, chapterHref: string): Promise<TtsJobRow | undefined> {
+    const jobs = await this.db.query.ttsJobs.findMany({
+      where: and(eq(ttsJobs.bookId, bookId), eq(ttsJobs.chapterHref, chapterHref)),
+      orderBy: [asc(ttsJobs.createdAt)]
+    })
+    return jobs.reverse().find((item) => {
+      const settings = jsonObject(item.settingsJson)
+      return item.status === "completed" && settings.segmentsOnly !== true && typeof settings.chapterAudioAssetId === "string"
+    })
+  }
+
   async retryJob(id: string): Promise<TtsJob> {
     await this.ensureReady()
     await this.getJobRow(id)
@@ -502,12 +781,12 @@ export class TtsService {
       .where(eq(ttsJobs.id, id))
       .returning()
     this.scheduleQueue()
-    return toTtsJob(updated)
+    return this.toTtsJobWithChapterTitle(updated)
   }
 
   async getJob(id: string): Promise<TtsJob> {
     await this.ensureReady()
-    return toTtsJob(await this.getJobRow(id))
+    return this.toTtsJobWithChapterTitle(await this.getJobRow(id))
   }
 
   async listJobs(filter: { bookId?: string; engineId?: string } = {}): Promise<TtsJob[]> {
@@ -515,13 +794,13 @@ export class TtsService {
     const rows = await this.db.query.ttsJobs.findMany({
       orderBy: [asc(ttsJobs.createdAt)]
     })
-    return rows
-      .filter((job) => {
-        if (filter.bookId && job.bookId !== filter.bookId) return false
-        if (filter.engineId && job.engineId !== filter.engineId) return false
-        return true
-      })
-      .map(toTtsJob)
+    const filteredRows = rows.filter((job) => {
+      if (filter.bookId && job.bookId !== filter.bookId) return false
+      if (filter.engineId && job.engineId !== filter.engineId) return false
+      return true
+    })
+    const chapterTitles = await this.chapterTitlesForJobs(filteredRows)
+    return filteredRows.map((row) => toTtsJob(row, chapterTitles.get(chapterTitleKey(row.bookId, row.chapterHref))))
   }
 
   async clearChapterAudio(input: { bookId: string; chapterHref: string }) {
@@ -553,7 +832,7 @@ export class TtsService {
 
   private async deleteTtsJobRows(
     jobs: TtsJobRow[],
-    options: { removeAudiobookChapters: "all" | "withChapterAudio" }
+    options: { preserveAssetIds?: Set<string>; removeAudiobookChapters: "all" | "withChapterAudio" }
   ): Promise<{ assetsDeleted: number; jobsDeleted: number }> {
     const cleanup = await this.cleanupTtsJobArtifacts(jobs, options)
     const jobIds = jobs.map((job) => job.id)
@@ -565,9 +844,10 @@ export class TtsService {
 
   private async cleanupTtsJobArtifacts(
     jobs: TtsJobRow[],
-    options: { removeAudiobookChapters: "all" | "withChapterAudio" }
+    options: { preserveAssetIds?: Set<string>; removeAudiobookChapters: "all" | "withChapterAudio" }
   ): Promise<{ assetsDeleted: number }> {
     const assetIds = new Set<string>()
+    const preserveAssetIds = options.preserveAssetIds ?? new Set<string>()
     const jobIds = jobs.map((job) => job.id)
     const chapterKeys = uniqueChapterKeys(
       options.removeAudiobookChapters === "all" ? jobs : jobs.filter((job) => hasChapterAudioAsset(job))
@@ -575,7 +855,7 @@ export class TtsService {
 
     jobs.forEach((job) => {
       const chapterAudioAssetId = chapterAudioAssetIdFor(job)
-      if (chapterAudioAssetId) {
+      if (chapterAudioAssetId && !preserveAssetIds.has(chapterAudioAssetId)) {
         assetIds.add(chapterAudioAssetId)
       }
     })
@@ -585,7 +865,7 @@ export class TtsService {
         where: inArray(ttsSegments.jobId, jobIds)
       })
       segments.forEach((segment) => {
-        if (segment.audioAssetId) {
+        if (segment.audioAssetId && !preserveAssetIds.has(segment.audioAssetId)) {
           assetIds.add(segment.audioAssetId)
         }
       })
@@ -593,11 +873,20 @@ export class TtsService {
 
     for (const chapter of chapterKeys) {
       const audiobookAssetIds = await this.audiobook.removeChapterAudio(chapter.bookId, chapter.chapterHref)
-      audiobookAssetIds.forEach((assetId) => assetIds.add(assetId))
+      audiobookAssetIds.forEach((assetId) => {
+        if (!preserveAssetIds.has(assetId)) {
+          assetIds.add(assetId)
+        }
+      })
     }
     const assetRows = assetIds.size
       ? await this.db.query.assets.findMany({
           where: inArray(assets.id, [...assetIds])
+        })
+      : []
+    const preservedAssetRows = preserveAssetIds.size
+      ? await this.db.query.assets.findMany({
+          where: inArray(assets.id, [...preserveAssetIds])
         })
       : []
 
@@ -608,9 +897,12 @@ export class TtsService {
     if (assetIds.size) {
       await this.db.delete(assets).where(inArray(assets.id, [...assetIds]))
     }
+    const preservedPaths = preservedAssetRows.map((asset) => asset.path)
     await Promise.all([
       ...assetRows.map((asset) => unlink(asset.path).catch(() => undefined)),
-      ...jobs.map((job) => rm(this.jobOutputDirectory(job), { force: true, recursive: true }).catch(() => undefined))
+      ...jobs
+        .filter((job) => !preservedPaths.some((assetPath) => pathContains(this.jobOutputDirectory(job), assetPath)))
+        .map((job) => rm(this.jobOutputDirectory(job), { force: true, recursive: true }).catch(() => undefined))
     ])
     return { assetsDeleted: assetRows.length }
   }
@@ -833,10 +1125,13 @@ export class TtsService {
     jobId: string,
     plan: NarrationPlan,
     prosodyResult: ProsodyPlanResult,
-    adapterId: string
+    adapterId: string,
+    status = "queued",
+    reusableAudioByKey?: Map<string, ReusableSegmentAudio>
   ): Promise<void> {
     await this.db.delete(ttsSegments).where(eq(ttsSegments.jobId, jobId))
     for (const [index, segment] of plan.segments.entries()) {
+      const reusableAudio = reusableAudioByKey?.get(segmentReuseKey(index, segment.originalText, segment.normalizedText))
       await this.db.insert(ttsSegments).values({
         id: createId("tts_segment"),
         jobId,
@@ -848,14 +1143,19 @@ export class TtsService {
         originalText: segment.originalText,
         normalizedText: segment.normalizedText,
         prosodyJson: segment.prosody,
-        adapterPayloadJson: {
+        adapterPayloadJson: compactJson({
           adapterId,
           prosodyAnalyzerId: prosodyResult.analyzerId,
           prosodyMode: prosodyResult.promptVersion ? "expressive" : "neutral",
           prosodyPromptVersion: prosodyResult.promptVersion,
-          unsupportedProsodyFields: []
-        },
-        status: "queued"
+          unsupportedProsodyFields: [],
+          ...reusableAudio?.adapterPayloadJson,
+          audioReassociatedAt: reusableAudio ? new Date().toISOString() : undefined,
+          audioReassociatedFromSegmentId: reusableAudio?.previousSegmentId
+        }),
+        audioAssetId: reusableAudio?.audioAssetId,
+        durationMs: reusableAudio?.durationMs,
+        status: reusableAudio ? "completed" : status
       })
     }
   }
@@ -1249,6 +1549,150 @@ export class TtsService {
       rawChapterMimeType: chapterAudio.mimeType,
       rawChapterSizeBytes: chapterAudio.sizeBytes
     }
+  }
+
+  private async synthesizeSingleSegment(input: {
+    dictionaryVersion: string
+    generationLanguage?: string
+    job: TtsJobRow
+    modelSettings: TtsModelSettings
+    outputDir: string
+    quality: "draft" | "standard" | "high"
+    readyEngine: ReadyEngine
+    seed?: number
+    segment: NarrationSegment
+  }): Promise<{ assetId: string; durationMs: number }> {
+    await mkdir(input.outputDir, { recursive: true })
+
+    if (input.readyEngine.adapterId === DEFAULT_TTS_ADAPTER_ID) {
+      await this.adapter.warmup()
+      const audio = this.adapter.synthesizeSegment(input.segment, input.seed)
+      const filePath = path.join(input.outputDir, `${hashBuffer(input.segment.segmentId).slice(0, 16)}.wav`)
+      await writeFile(filePath, audio.buffer)
+      const [asset] = await this.db
+        .insert(assets)
+        .values({
+          id: createId("asset"),
+          kind: "audio_segment",
+          bookId: input.job.bookId,
+          path: filePath,
+          mimeType: audio.mimeType,
+          contentHash: audio.contentHash,
+          sizeBytes: audio.buffer.byteLength
+        })
+        .returning()
+      return { assetId: asset.id, durationMs: audio.durationMs }
+    }
+
+    if (!input.readyEngine.runtimeManifest || !input.readyEngine.modelPath) {
+      throw new AppError("tts_sidecar_not_configured", "TTS engine sidecar runtime is not configured")
+    }
+
+    const voice = await this.voiceForJob(input.job)
+    const reference = voice.binding?.bindingAssetId
+      ? await this.referenceForBinding(voice.binding.bindingAssetId, voice.binding.settings)
+      : undefined
+    let streamedSegment: SidecarSegmentResult | undefined
+    const result = await this.sidecarAdapter.synthesize({
+      adapterId: input.readyEngine.adapterId,
+      engineId: input.job.engineId,
+      jobId: input.job.id,
+      modelPath: input.readyEngine.modelPath,
+      outputDirectory: input.outputDir,
+      generationLanguage: input.generationLanguage,
+      modelSettings: input.modelSettings,
+      plan: singleSegmentNarrationPlan(input.job, input.segment, input.dictionaryVersion),
+      quality: input.quality,
+      referenceAudioPath: reference?.audioPath,
+      referenceText: reference?.text,
+      runtimeManifest: input.readyEngine.runtimeManifest,
+      seed: input.seed,
+      voiceBinding: voice.binding,
+      voiceProfile: voice.profile,
+      voiceSamples: voice.samples,
+      onSegment: (segment) => {
+        streamedSegment = segment
+      }
+    })
+    const audio = await importSidecarAudio(streamedSegment ?? result.segments[0] ?? result.chapter)
+    const [asset] = await this.db
+      .insert(assets)
+      .values({
+        id: createId("asset"),
+        kind: "audio_segment",
+        bookId: input.job.bookId,
+        path: audio.audioPath,
+        mimeType: audio.mimeType,
+        contentHash: audio.contentHash,
+        sizeBytes: audio.sizeBytes
+      })
+      .returning()
+    return { assetId: asset.id, durationMs: audio.durationMs }
+  }
+
+  private async cleanupReplacedSegmentAsset(assetId?: string): Promise<void> {
+    if (!assetId) {
+      return
+    }
+    const asset = await this.db.query.assets.findFirst({ where: eq(assets.id, assetId) })
+    if (!asset) {
+      return
+    }
+    await this.db.delete(assets).where(eq(assets.id, assetId))
+    await unlink(asset.path).catch(() => undefined)
+  }
+
+  private async reusableSegmentAudioForPlan(
+    bookId: string,
+    chapterHref: string,
+    plan: NarrationPlan
+  ): Promise<{ audioByKey: Map<string, ReusableSegmentAudio>; preservedAssetIds: Set<string> }> {
+    const jobs = await this.db.query.ttsJobs.findMany({
+      where: and(eq(ttsJobs.bookId, bookId), eq(ttsJobs.chapterHref, chapterHref)),
+      orderBy: [asc(ttsJobs.createdAt)]
+    })
+    const segmentOnlyJobs = jobs.filter((job) => jsonObject(job.settingsJson).segmentsOnly === true)
+    const planKeys = new Set(
+      plan.segments.map((segment, index) => segmentReuseKey(index, segment.originalText, segment.normalizedText))
+    )
+    const audioByKey = new Map<string, ReusableSegmentAudio>()
+    const preservedAssetIds = new Set<string>()
+
+    for (const job of segmentOnlyJobs) {
+      const rows = await this.db.query.ttsSegments.findMany({
+        where: eq(ttsSegments.jobId, job.id),
+        orderBy: [asc(ttsSegments.segmentIndex)]
+      })
+      for (const row of rows) {
+        if (!row.audioAssetId) {
+          continue
+        }
+        const key = segmentReuseKey(row.segmentIndex, row.originalText, row.normalizedText)
+        if (!planKeys.has(key)) {
+          continue
+        }
+        audioByKey.set(key, {
+          adapterPayloadJson: jsonObject(row.adapterPayloadJson),
+          audioAssetId: row.audioAssetId,
+          durationMs: typeof row.durationMs === "number" ? row.durationMs : undefined,
+          previousSegmentId: row.id
+        })
+        preservedAssetIds.add(row.audioAssetId)
+      }
+    }
+
+    return { audioByKey, preservedAssetIds }
+  }
+
+  private async deleteSegmentOnlyJobs(bookId: string, chapterHref: string, preserveAssetIds = new Set<string>()): Promise<void> {
+    const jobs = await this.db.query.ttsJobs.findMany({
+      where: and(eq(ttsJobs.bookId, bookId), eq(ttsJobs.chapterHref, chapterHref))
+    })
+    const segmentOnlyJobs = jobs.filter((job) => jsonObject(job.settingsJson).segmentsOnly === true)
+    if (!segmentOnlyJobs.length) {
+      return
+    }
+    await this.deleteTtsJobRows(segmentOnlyJobs, { preserveAssetIds, removeAudiobookChapters: "withChapterAudio" })
   }
 
   private async ensureReady(): Promise<void> {
@@ -1742,13 +2186,50 @@ export class TtsService {
       .returning()
     return updated
   }
+
+  private async toTtsJobWithChapterTitle(row: TtsJobRow): Promise<TtsJob> {
+    const chapterTitles = await this.chapterTitlesForJobs([row])
+    return toTtsJob(row, chapterTitles.get(chapterTitleKey(row.bookId, row.chapterHref)))
+  }
+
+  private async chapterTitlesForJobs(rows: Array<Pick<TtsJobRow, "bookId" | "chapterHref">>): Promise<Map<string, string>> {
+    const titles = new Map<string, string>()
+    for (const bookId of new Set(rows.map((row) => row.bookId))) {
+      const book = await this.db.query.books.findFirst({ where: eq(books.id, bookId) })
+      if (!book) {
+        continue
+      }
+      titles.set(
+        chapterTitleKey(book.id, AUDIOBOOK_INTRO_CHAPTER_HREF),
+        buildAudiobookIntroTitle({
+          authors: book.authors,
+          publishedAt: book.publishedAt,
+          title: book.title
+        })
+      )
+      const manifest = book.manifestJson as {
+        chapters?: Array<{ href?: string; id?: string; title?: string }>
+      }
+      for (const [index, chapter] of (manifest.chapters ?? []).entries()) {
+        const title = chapter.title ?? `Capitulo ${index + 1}`
+        if (chapter.href) {
+          titles.set(chapterTitleKey(book.id, chapter.href), title)
+        }
+        if (chapter.id) {
+          titles.set(chapterTitleKey(book.id, chapter.id), title)
+        }
+      }
+    }
+    return titles
+  }
 }
 
-function toTtsJob(row: TtsJobRow): TtsJob {
+function toTtsJob(row: TtsJobRow, chapterTitle?: string): TtsJob {
   return {
     id: row.id,
     bookId: row.bookId,
     chapterHref: row.chapterHref,
+    chapterTitle,
     engineId: row.engineId,
     voiceProfileId: optional(row.voiceProfileId),
     voiceBindingId: optional(row.voiceBindingId),
@@ -1766,6 +2247,10 @@ function toTtsJob(row: TtsJobRow): TtsJob {
   }
 }
 
+function chapterTitleKey(bookId: string, chapterHref: string): string {
+  return `${bookId}\u0000${chapterHref}`
+}
+
 function toTtsSegmentSummary(row: TtsSegmentRow, jobId = row.jobId): TtsSegmentSummary {
   const prosody = NarrationProsodySchema.safeParse(row.prosodyJson)
   const rawMode = (row.adapterPayloadJson as { prosodyMode?: unknown }).prosodyMode
@@ -1773,8 +2258,10 @@ function toTtsSegmentSummary(row: TtsSegmentRow, jobId = row.jobId): TtsSegmentS
   return {
     id: row.id,
     jobId,
+    chapterHref: row.chapterHref,
     segmentIndex: row.segmentIndex,
     status: row.status,
+    text: row.originalText,
     textPreview: row.originalText.slice(0, 160),
     audioAssetId: row.audioAssetId ?? undefined,
     durationMs: typeof row.durationMs === "number" ? row.durationMs : undefined,
@@ -1859,6 +2346,15 @@ function sanitizePathPart(value: string): string {
   return value.replace(/[^a-z0-9._-]+/gi, "_").slice(0, 96) || "chapter"
 }
 
+function segmentReuseKey(index: number, originalText: string, normalizedText: string): string {
+  return `${index}\n${hashBuffer(`${originalText}\n${normalizedText}`)}`
+}
+
+function pathContains(parentDir: string, childPath: string): boolean {
+  const relative = path.relative(parentDir, childPath)
+  return Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative)
+}
+
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values)]
 }
@@ -1919,6 +2415,36 @@ function localSegmentPacingMs(text: string): number {
   // Roughly proportional to paragraph length, bounded so streaming stays visible
   // without making batch/whole-book generation feel slow.
   return Math.min(700, Math.max(150, Math.round(text.length * 4)))
+}
+
+function singleSegmentNarrationPlan(job: TtsJobRow, segment: NarrationSegment, dictionaryVersion: string): NarrationPlan {
+  return {
+    schemaVersion: NARRATION_PLAN_VERSION,
+    source: {
+      bookId: job.bookId,
+      chapterHref: job.chapterHref,
+      contentHash: hashBuffer(`${segment.segmentId}:${segment.normalizedText}`),
+      language: "pt-BR"
+    },
+    normalization: {
+      normalizerId: NORMALIZER_ID,
+      version: NORMALIZER_VERSION,
+      dictionaryVersion
+    },
+    prosody: {
+      analyzerId: PROSODY_ANALYZER_ID,
+      version: PROSODY_VERSION
+    },
+    segments: [segment]
+  }
+}
+
+function prefixTsQueryFor(value: string): string {
+  const terms = [...value.normalize("NFC").matchAll(/[\p{L}\p{N}_]+/gu)]
+    .map((match) => match[0].trim())
+    .filter((term) => term.length > 0)
+    .slice(0, 8)
+  return terms.map((term) => `${term}:*`).join(" & ")
 }
 
 function qualityFor(value: unknown): "draft" | "standard" | "high" {

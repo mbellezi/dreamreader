@@ -88,6 +88,31 @@ describe("getChapterAudioStatus", () => {
     expect(getChapterAudioStatus("ch-1", null, jobs)).toEqual({ kind: "none" })
   })
 
+  it("does not treat generated text segments as chapter-ready audio", () => {
+    const jobs = [
+      job({
+        status: "completed",
+        chapterHref: "ch-1",
+        settings: { segmentsOnly: true }
+      })
+    ]
+    expect(getChapterAudioStatus("ch-1", null, jobs)).toEqual({ kind: "none" })
+  })
+
+  it("ignores newer text segmentation jobs when reporting audio generation failures", () => {
+    const jobs = [
+      job({ id: "failed-audio", status: "failed", chapterHref: "ch-1", createdAt: "2026-06-06T10:00:00.000Z" }),
+      job({
+        id: "segments-only",
+        status: "completed",
+        chapterHref: "ch-1",
+        createdAt: "2026-06-06T12:00:00.000Z",
+        settings: { segmentsOnly: true }
+      })
+    ]
+    expect(getChapterAudioStatus("ch-1", null, jobs)).toEqual({ kind: "failed" })
+  })
+
   it("keeps showing a real manifest entry after a partial preview job", () => {
     const jobs = [
       job({

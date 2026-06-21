@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm"
 import {
   bigint,
   boolean,
@@ -358,7 +359,11 @@ export const ttsSegments = pgTable(
   (table) => ({
     ttsSegmentsJobIdx: index("tts_segments_job_id_idx").on(table.jobId),
     ttsSegmentsHashIdx: index("tts_segments_segment_hash_idx").on(table.segmentHash),
-    ttsSegmentsBookChapterIdx: index("tts_segments_book_chapter_idx").on(table.bookId, table.chapterHref)
+    ttsSegmentsBookChapterIdx: index("tts_segments_book_chapter_idx").on(table.bookId, table.chapterHref),
+    ttsSegmentsTextSearchIdx: index("tts_segments_text_search_idx").using(
+      "gin",
+      sql`to_tsvector('simple', coalesce(${table.originalText}, '') || ' ' || coalesce(${table.normalizedText}, ''))`
+    )
   })
 )
 

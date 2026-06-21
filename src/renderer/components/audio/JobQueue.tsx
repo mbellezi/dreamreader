@@ -1,7 +1,7 @@
 import { Pause, Play, RotateCcw, Square, Trash2 } from "lucide-react"
 import { useMemo } from "react"
 import type { TranslationFn } from "@renderer/app/types"
-import { activeJobCount, hasTerminalJob, isActiveJob, isTerminalJobStatus } from "@renderer/lib/jobQueue"
+import { activeJobCount, audioProgressForJob, hasTerminalJob, isActiveJob, isTerminalJobStatus } from "@renderer/lib/jobQueue"
 import { cn } from "@renderer/lib/utils"
 import type { TtsJob } from "@renderer/types"
 
@@ -93,6 +93,7 @@ function JobRow({
   const paused = job.status === "paused"
   const terminal = isTerminalJobStatus(job.status)
   const canRetry = job.status === "failed" || job.status === "cancelled"
+  const audioProgressPercent = Math.round(audioProgressForJob(job) * 100)
 
   return (
     <div className="rounded-md border bg-card p-3">
@@ -123,7 +124,7 @@ function JobRow({
         </div>
       </div>
       <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
-        <div className="h-full bg-primary" style={{ width: `${Math.round(job.progress * 100)}%` }} />
+        <div className="h-full bg-primary" style={{ width: `${audioProgressPercent}%` }} />
       </div>
     </div>
   )

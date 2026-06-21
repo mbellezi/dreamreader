@@ -1,0 +1,1 @@
+CREATE INDEX "tts_segments_text_search_idx" ON "tts_segments" USING gin (to_tsvector('simple', coalesce("original_text", '') || ' ' || coalesce("normalized_text", '')));

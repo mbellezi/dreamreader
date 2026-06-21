@@ -573,6 +573,31 @@ export type ClearTerminalTtsJobsRequest = z.infer<
   typeof ClearTerminalTtsJobsRequestSchema
 >;
 
+export const SearchTtsSegmentsRequestSchema = z.object({
+  bookId: IdSchema,
+  query: NonEmptyStringSchema,
+  limit: z.number().int().positive().max(50).default(20),
+});
+export type SearchTtsSegmentsRequest = z.infer<
+  typeof SearchTtsSegmentsRequestSchema
+>;
+
+export const RegenerateTtsSegmentRequestSchema = z.object({
+  segmentId: IdSchema,
+  text: NonEmptyStringSchema,
+  engineId: IdSchema.optional(),
+  voiceProfileId: IdSchema.optional(),
+  voiceBindingId: IdSchema.optional(),
+  quality: z.enum(["draft", "standard", "high"]).default("standard"),
+  generationLanguage: NonEmptyStringSchema.optional(),
+  modelSettings: TtsModelSettingsSchema.optional(),
+  seed: TtsGenerationSeedSchema.optional(),
+  seedFixed: z.boolean().default(false),
+});
+export type RegenerateTtsSegmentRequest = z.infer<
+  typeof RegenerateTtsSegmentRequestSchema
+>;
+
 export const ClearTtsJobsResultSchema = z.object({
   deleted: z.literal(true),
   jobsDeleted: z.number().int().nonnegative(),
@@ -622,6 +647,7 @@ export const TtsJobSchema = z.object({
   id: IdSchema,
   bookId: IdSchema,
   chapterHref: NonEmptyStringSchema,
+  chapterTitle: NonEmptyStringSchema.optional(),
   engineId: IdSchema,
   voiceProfileId: IdSchema.optional(),
   voiceBindingId: IdSchema.optional(),
@@ -677,11 +703,22 @@ export type EnqueueChaptersTtsRequest = z.infer<
   typeof EnqueueChaptersTtsRequestSchema
 >;
 
+export const SegmentChaptersTtsRequestSchema = z.object({
+  bookId: IdSchema,
+  // Omitted means every chapter of the book.
+  chapterHrefs: z.array(NonEmptyStringSchema).optional(),
+});
+export type SegmentChaptersTtsRequest = z.infer<
+  typeof SegmentChaptersTtsRequestSchema
+>;
+
 export const TtsSegmentSummarySchema = z.object({
   id: IdSchema,
   jobId: IdSchema,
+  chapterHref: NonEmptyStringSchema.optional(),
   segmentIndex: z.number().int().min(0),
   status: z.string(),
+  text: z.string(),
   textPreview: z.string(),
   audioAssetId: IdSchema.optional(),
   durationMs: z.number().int().nonnegative().optional(),

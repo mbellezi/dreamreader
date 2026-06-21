@@ -14,6 +14,14 @@ export function isPartialTtsJob(job: TtsJob): boolean {
   return Boolean(job.settings.partial) || typeof job.settings.paragraphLimit === "number"
 }
 
+export function isSegmentOnlyTtsJob(job: TtsJob): boolean {
+  return job.settings.segmentsOnly === true
+}
+
+export function audioProgressForJob(job: TtsJob): number {
+  return isSegmentOnlyTtsJob(job) ? 0 : job.progress
+}
+
 export function activeJobCount(jobs: TtsJob[]): number {
   return jobs.filter(isActiveJob).length
 }

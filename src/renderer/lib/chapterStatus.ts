@@ -11,13 +11,18 @@ function latestJob(jobs: TtsJob[]): TtsJob | undefined {
   return [...jobs].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
 }
 
+function isAudioGenerationJob(job: TtsJob): boolean {
+  return !isPartialTtsJob(job) && job.settings.segmentsOnly !== true
+}
+
 export function getChapterAudioStatus(
   chapterHref: string,
   audiobook: AudiobookExport | null | undefined,
   jobs: TtsJob[]
 ): ChapterAudioStatus {
   const chapterJobs = jobs.filter((job) => job.chapterHref === chapterHref)
-  const activeJob = chapterJobs.find((job) => !isTerminalJobStatus(job.status) && job.status !== "paused")
+  const audioJobs = chapterJobs.filter(isAudioGenerationJob)
+  const activeJob = audioJobs.find((job) => !isTerminalJobStatus(job.status) && job.status !== "paused")
   if (activeJob) {
     return activeJob.status === "queued"
       ? { kind: "queued", progress: activeJob.progress }
@@ -29,7 +34,7 @@ export function getChapterAudioStatus(
     return { kind: "ready", durationMs: chapterAudio.durationMs }
   }
 
-  const last = latestJob(chapterJobs.filter((job) => !isPartialTtsJob(job)))
+  const last = latestJob(audioJobs)
   if (last?.status === "failed") {
     return { kind: "failed" }
   }

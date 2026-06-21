@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest"
-import { activeJobCount, hasTerminalJob, isActiveJob, isPartialTtsJob, isTerminalJobStatus } from "../../src/renderer/lib/jobQueue"
+import {
+  activeJobCount,
+  audioProgressForJob,
+  hasTerminalJob,
+  isActiveJob,
+  isPartialTtsJob,
+  isSegmentOnlyTtsJob,
+  isTerminalJobStatus
+} from "../../src/renderer/lib/jobQueue"
 import type { TtsJob, TtsJobStatus } from "../../src/renderer/types"
 
 function job(status: TtsJobStatus): TtsJob {
@@ -46,5 +54,14 @@ describe("jobQueue helpers", () => {
     expect(isPartialTtsJob({ ...job("completed"), settings: { partial: true } })).toBe(true)
     expect(isPartialTtsJob({ ...job("completed"), settings: { paragraphLimit: 3 } })).toBe(true)
     expect(isPartialTtsJob(job("completed"))).toBe(false)
+  })
+
+  it("uses only audio generation progress for segment-only jobs", () => {
+    const segmentOnly = { ...job("completed"), progress: 1, settings: { segmentsOnly: true } }
+    const audioJob = { ...job("synthesizing"), progress: 0.42 }
+
+    expect(isSegmentOnlyTtsJob(segmentOnly)).toBe(true)
+    expect(audioProgressForJob(segmentOnly)).toBe(0)
+    expect(audioProgressForJob(audioJob)).toBe(0.42)
   })
 })

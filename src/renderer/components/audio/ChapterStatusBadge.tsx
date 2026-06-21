@@ -11,9 +11,9 @@ export function ChapterStatusBadge({ status, t }: { status: ChapterAudioStatus; 
         ? t("studio.chapter.status.generating", { percent: Math.round((status.progress ?? 0) * 100) })
         : status.kind === "queued"
           ? t("studio.chapter.status.queued")
-          : status.kind === "failed"
-            ? t("studio.chapter.status.failed")
-            : t("studio.chapter.status.none")
+        : status.kind === "failed"
+          ? t("studio.chapter.status.failed")
+          : t("studio.chapter.status.none")
 
   return (
     <span

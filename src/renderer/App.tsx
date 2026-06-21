@@ -368,6 +368,23 @@ export function App(): ReactElement {
     }
   }
 
+  const segmentChapters = async (chapterHrefs: string[]) => {
+    if (!audioBook || !chapterHrefs.length) {
+      return
+    }
+
+    setAudioLoading(true)
+    try {
+      await dreamreaderClient.segmentChapters({
+        bookId: audioBook.id,
+        chapterHrefs
+      })
+      await refreshAudioState(audioBook.id)
+    } finally {
+      setAudioLoading(false)
+    }
+  }
+
   const cancelTtsJob = async (jobId: string) => {
     await dreamreaderClient.cancelTtsJob(jobId)
     await refreshActiveAudioView()
@@ -398,6 +415,25 @@ export function App(): ReactElement {
   }
 
   const listTtsSegments = (jobId: string) => dreamreaderClient.listTtsSegments(jobId)
+
+  const searchTtsSegments = (input: { bookId: string; query: string; limit?: number }) => dreamreaderClient.searchTtsSegments(input)
+
+  const regenerateTtsSegment = async (input: {
+    engineId?: string
+    generationLanguage?: string
+    modelSettings?: Record<string, unknown>
+    quality?: "draft" | "standard" | "high"
+    seed?: number
+    seedFixed?: boolean
+    segmentId: string
+    text: string
+    voiceBindingId?: string
+    voiceProfileId?: string
+  }) => {
+    const segment = await dreamreaderClient.regenerateTtsSegment(input)
+    await refreshActiveAudioView()
+    return segment
+  }
 
   const retryTtsJob = async (jobId: string) => {
     await dreamreaderClient.retryTtsJob(jobId)
@@ -850,11 +886,14 @@ export function App(): ReactElement {
                 onGenerateChapters={generateChapters}
                 onListSegments={listTtsSegments}
                 onPauseJob={pauseTtsJob}
+                onRegenerateSegment={regenerateTtsSegment}
                 onRebuildAudiobook={rebuildAudiobook}
                 onDeleteAudiobookExport={deleteAudiobookExport}
                 onSaveAudiobook={saveAudiobook}
                 onResumeJob={resumeTtsJob}
                 onRetryJob={retryTtsJob}
+                onSearchSegments={searchTtsSegments}
+                onSegmentChapters={segmentChapters}
                 onToggleAutoBuild={toggleAudiobookAutoBuild}
                 onUpdateAudioSettings={updateAudioSettings}
               />

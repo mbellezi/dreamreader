@@ -11,6 +11,7 @@ import { createId } from "@main/lib/ids"
 import type { AppPaths } from "@main/lib/paths"
 
 const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "cancelled"])
+const M4B_CHAPTER_GAP_MS = 2_000
 
 export type ChapterAudioReadyInput = {
   audioAssetId: string
@@ -129,6 +130,19 @@ export class AudiobookService {
       .where(eq(audiobookExports.id, current.id))
       .returning()
 
+    return toAudiobookExport(updated)
+  }
+
+  async markStale(bookId: string): Promise<AudiobookExport> {
+    const current = await this.ensureExport(bookId)
+    const [updated] = await this.db
+      .update(audiobookExports)
+      .set({
+        stale: current.chaptersReady > 0,
+        updatedAt: new Date()
+      })
+      .where(eq(audiobookExports.id, current.id))
+      .returning()
     return toAudiobookExport(updated)
   }
 
@@ -289,6 +303,7 @@ export class AudiobookService {
           ...manifest,
           coverPath,
           container: {
+            chapterGapMs: M4B_CHAPTER_GAP_MS,
             encoder: "ffmpeg-static",
             format: "m4b",
             mode: "audio"
@@ -303,6 +318,7 @@ export class AudiobookService {
         await this.updateBuildJob(buildJob.id, { status: "building", progress: 0.55 })
         buildResult = await buildM4bAudiobook({
           chapters: m4bChapters,
+          chapterGapMs: M4B_CHAPTER_GAP_MS,
           coverPath,
           metadata: {
             authors: manifest.authors,
@@ -344,6 +360,7 @@ export class AudiobookService {
             ...jsonObject(refreshed.metadata),
             artifactMode: "m4b",
             audioMode: buildResult.audioMode,
+            chapterGapMs: M4B_CHAPTER_GAP_MS,
             encoder: buildResult.encoder === "copy" ? "copy" : `ffmpeg-static:${buildResult.encoder}`,
             lastBuildReason: reason
           },
@@ -501,9 +518,10 @@ export class AudiobookService {
     })
     let cursor = 0
     const chapters = []
-    for (const row of rows) {
+    for (const [index, row] of rows.entries()) {
       const startMs = cursor
-      const endMs = cursor + row.durationMs
+      const gapAfterMs = index < rows.length - 1 ? M4B_CHAPTER_GAP_MS : 0
+      const endMs = cursor + row.durationMs + gapAfterMs
       cursor = endMs
       if (row.startMs !== startMs || row.endMs !== endMs) {
         await this.db

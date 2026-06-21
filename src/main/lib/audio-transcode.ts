@@ -123,6 +123,7 @@ export async function transcodeAudioToAac(input: {
 
 export async function buildM4bAudiobook(input: {
   chapters: M4bChapterInput[]
+  chapterGapMs?: number
   coverPath?: string
   metadata: M4bMetadataInput
   outputPath: string
@@ -140,10 +141,11 @@ export async function buildM4bAudiobook(input: {
   await mkdir(path.dirname(input.outputPath), { recursive: true })
   const workDir = await mkdtemp(path.join(path.dirname(input.outputPath), ".m4b-build-"))
   const metadataPath = path.join(workDir, "metadata.ffmetadata")
+  const chapterGapMs = Math.max(0, Math.round(input.chapterGapMs ?? 0))
 
   try {
     await writeFile(metadataPath, ffmetadataFor(input.metadata, input.chapters))
-    if (input.chapters.every(isCopyCompatibleAacChapter)) {
+    if ((chapterGapMs === 0 || input.chapters.length <= 1) && input.chapters.every(isCopyCompatibleAacChapter)) {
       const concatListPath = path.join(workDir, "chapters.txt")
       await writeFile(
         concatListPath,
@@ -161,7 +163,7 @@ export async function buildM4bAudiobook(input: {
 
     const encoder = await execWithAacFallback(
       ffmpegPath,
-      (candidate) => m4bEncodeArgs(input, metadataPath, candidate),
+      (candidate) => m4bEncodeArgs(input, metadataPath, candidate, chapterGapMs),
       input.outputPath
     )
     return { audioMode: "encode", encoder }
@@ -269,9 +271,8 @@ function m4bEncodeArgs(input: {
   metadata: M4bMetadataInput
   outputPath: string
   bitrate?: string
-}, metadataPath: string, encoder: "aac" | "aac_at"): string[] {
+}, metadataPath: string, encoder: "aac" | "aac_at", chapterGapMs: number): string[] {
   const metadataInputIndex = input.chapters.length + (input.coverPath ? 1 : 0)
-  const filterInputs = input.chapters.map((_, index) => `[${index}:a:0]`).join("")
   const args = ["-y"]
   for (const chapter of input.chapters) {
     args.push("-i", chapter.filePath)
@@ -284,7 +285,7 @@ function m4bEncodeArgs(input: {
     "-i",
     metadataPath,
     "-filter_complex",
-    `${filterInputs}concat=n=${input.chapters.length}:v=0:a=1[aout]`,
+    m4bConcatFilter(input.chapters.length, chapterGapMs),
     "-map",
     "[aout]",
     "-map_metadata",
@@ -316,9 +317,36 @@ function m4bEncodeArgs(input: {
   return args
 }
 
+function m4bConcatFilter(chapterCount: number, chapterGapMs: number): string {
+  if (chapterGapMs <= 0 || chapterCount <= 1) {
+    const filterInputs = Array.from({ length: chapterCount }, (_, index) => `[${index}:a:0]`).join("")
+    return `${filterInputs}concat=n=${chapterCount}:v=0:a=1[aout]`
+  }
+
+  const gapSeconds = trimDecimal(chapterGapMs / 1000)
+  const chains: string[] = []
+  const concatInputs: string[] = []
+  for (let index = 0; index < chapterCount; index += 1) {
+    chains.push(
+      `[${index}:a:0]aresample=${TARGET_SAMPLE_RATE},aformat=sample_fmts=fltp:sample_rates=${TARGET_SAMPLE_RATE}:channel_layouts=stereo[a${index}]`
+    )
+    concatInputs.push(`[a${index}]`)
+    if (index < chapterCount - 1) {
+      chains.push(`anullsrc=channel_layout=stereo:sample_rate=${TARGET_SAMPLE_RATE}:duration=${gapSeconds}[s${index}]`)
+      concatInputs.push(`[s${index}]`)
+    }
+  }
+  chains.push(`${concatInputs.join("")}concat=n=${concatInputs.length}:v=0:a=1[aout]`)
+  return chains.join(";")
+}
+
 function isCopyCompatibleAacChapter(chapter: M4bChapterInput): boolean {
   const extension = path.extname(chapter.filePath).toLowerCase()
   return chapter.mimeType === "audio/mp4" && [".m4a", ".mp4", ".m4b"].includes(extension)
+}
+
+function trimDecimal(value: number): string {
+  return value.toFixed(3).replace(/0+$/g, "").replace(/\.$/g, "")
 }
 
 function escapeConcatFilePath(filePath: string): string {

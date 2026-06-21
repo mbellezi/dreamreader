@@ -589,6 +589,16 @@ export const dreamreaderClient = {
     return []
   },
 
+  async segmentChapters(input: { bookId: string; chapterHrefs?: string[] }): Promise<TtsJob[]> {
+    const bridgeSegment = window.dreamreader?.tts?.segmentChapters
+
+    if (bridgeSegment) {
+      return (await bridgeSegment(input)).map(toTtsJob)
+    }
+
+    return []
+  },
+
   async cancelTtsJob(id: string): Promise<TtsJob> {
     const bridgeCancel = window.dreamreader?.tts?.cancelJob
 
@@ -647,6 +657,44 @@ export const dreamreaderClient = {
     }
 
     return []
+  },
+
+  async searchTtsSegments(input: { bookId: string; query: string; limit?: number }): Promise<TtsSegment[]> {
+    const bridgeSearch = window.dreamreader?.tts?.searchSegments
+
+    if (bridgeSearch) {
+      return (await bridgeSearch(input)).map(toTtsSegment)
+    }
+
+    return []
+  },
+
+  async regenerateTtsSegment(input: {
+    engineId?: string
+    generationLanguage?: string
+    modelSettings?: Record<string, unknown>
+    quality?: "draft" | "standard" | "high"
+    seed?: number
+    seedFixed?: boolean
+    segmentId: string
+    text: string
+    voiceBindingId?: string
+    voiceProfileId?: string
+  }): Promise<TtsSegment> {
+    const bridgeRegenerate = window.dreamreader?.tts?.regenerateSegment
+
+    if (bridgeRegenerate) {
+      return toTtsSegment(await bridgeRegenerate(input))
+    }
+
+    return {
+      id: input.segmentId,
+      jobId: "fallback-job",
+      segmentIndex: 0,
+      status: "completed",
+      text: input.text,
+      textPreview: input.text.slice(0, 160)
+    }
   },
 
   async clearChapterAudio(input: { bookId: string; chapterHref: string }): Promise<void> {
@@ -1127,6 +1175,7 @@ function fallbackTtsJob(bookId: string, chapterHref: string, status: TtsJob["sta
     id,
     bookId,
     chapterHref,
+    chapterTitle: chapterHref,
     engineId: "dreamreader-local-tts",
     voiceProfileId: "voice_builtin_ptbr_neutral",
     status,
@@ -1146,6 +1195,7 @@ function toTtsJob(input: unknown): TtsJob {
     id: String(job.id ?? ""),
     bookId: String(job.bookId ?? ""),
     chapterHref: String(job.chapterHref ?? ""),
+    chapterTitle: optionalString(job.chapterTitle),
     engineId: String(job.engineId ?? "dreamreader-local-tts"),
     voiceProfileId: optionalString(job.voiceProfileId),
     voiceBindingId: optionalString(job.voiceBindingId),
@@ -1531,8 +1581,10 @@ function toTtsSegment(input: unknown): TtsSegment {
   return {
     id: String(item.id ?? ""),
     jobId: String(item.jobId ?? ""),
+    chapterHref: optionalString(item.chapterHref),
     segmentIndex: Number(item.segmentIndex ?? 0),
     status: String(item.status ?? "queued"),
+    text: String(item.text ?? item.textPreview ?? ""),
     textPreview: String(item.textPreview ?? ""),
     audioAssetId: optionalString(item.audioAssetId),
     durationMs: optionalNumber(item.durationMs),
