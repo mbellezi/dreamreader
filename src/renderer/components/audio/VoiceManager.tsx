@@ -289,14 +289,14 @@ export function VoiceManager({
               onClick={() => setReferenceDialogOpen(true)}
             >
               <Mic2 className="h-4 w-4" aria-hidden="true" />
-              <span>{t("voiceManager.reference")}</span>
+              <span>{t("voiceManager.cloneVoice")}</span>
             </button>
             <button
               className="inline-flex h-9 items-center justify-center gap-2 rounded-md border bg-background px-3 text-sm"
               onClick={() => setDesignDialogOpen(true)}
             >
               <Sparkles className="h-4 w-4" aria-hidden="true" />
-              <span>{t("voiceManager.design")}</span>
+              <span>{t("voiceManager.createVoice")}</span>
             </button>
           </div>
           <button
