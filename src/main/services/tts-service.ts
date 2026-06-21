@@ -821,7 +821,7 @@ export class TtsService {
     const jobs = await this.db.query.ttsJobs.findMany({
       where: eq(ttsJobs.bookId, input.bookId)
     })
-    const terminalJobs = jobs.filter((job) => terminalStatuses.includes(job.status as (typeof terminalStatuses)[number]))
+    const terminalJobs = jobs.filter(isClearableTerminalJobRow)
     const result = await this.deleteTtsJobRows(terminalJobs, { removeAudiobookChapters: "withChapterAudio" })
     return {
       deleted: true as const,
@@ -2245,6 +2245,10 @@ function toTtsJob(row: TtsJobRow, chapterTitle?: string): TtsJob {
     finishedAt: optionalDate(row.finishedAt),
     updatedAt: toIso(row.updatedAt)
   }
+}
+
+function isClearableTerminalJobRow(row: TtsJobRow): boolean {
+  return terminalStatuses.includes(row.status as (typeof terminalStatuses)[number]) && jsonObject(row.settingsJson).segmentsOnly !== true
 }
 
 function chapterTitleKey(bookId: string, chapterHref: string): string {

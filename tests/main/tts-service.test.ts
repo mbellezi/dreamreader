@@ -226,6 +226,30 @@ describe("TtsService", () => {
     }
   })
 
+  it("keeps segment-only jobs when clearing finished audio jobs", async () => {
+    const { audiobook, client, db, paths } = await createTestServices()
+    try {
+      await seedBook(db, paths)
+      const tts = new TtsService(db, paths, audiobook)
+
+      const [segmentJob] = await tts.segmentChapters({
+        bookId: "book-audio",
+        chapterHrefs: ["chapter-1"]
+      })
+      const segments = await tts.listSegments(segmentJob.id)
+      expect(segments.length).toBeGreaterThan(0)
+
+      const result = await tts.clearTerminalJobs({ bookId: "book-audio" })
+      expect(result).toMatchObject({ deleted: true, jobsDeleted: 0, assetsDeleted: 0 })
+
+      const remainingJobs = await tts.listJobs({ bookId: "book-audio" })
+      expect(remainingJobs.map((job) => job.id)).toEqual([segmentJob.id])
+      expect(await tts.listSegments(segmentJob.id)).toHaveLength(segments.length)
+    } finally {
+      await client.close()
+    }
+  })
+
   it("regenerates segment-only audio with the requested synthesis engine", async () => {
     const { audiobook, client, db, paths } = await createTestServices()
     try {

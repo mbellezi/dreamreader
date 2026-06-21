@@ -10,6 +10,7 @@ import { ThoriumReaderPane } from "@renderer/components/thorium/ThoriumReaderPan
 import { translate } from "@renderer/i18n"
 import { dreamreaderClient } from "@renderer/lib/dreamreader"
 import { effectiveInstallBackend } from "@renderer/lib/installBackends"
+import { isClearableTerminalJob } from "@renderer/lib/jobQueue"
 import {
   errorCode,
   libraryImportStatusForError,
@@ -442,7 +443,7 @@ export function App(): ReactElement {
 
   const clearAllTerminalTtsJobs = async () => {
     const terminalBookIds = [...new Set(
-      audioJobs.filter((job) => ["completed", "failed", "cancelled"].includes(job.status)).map((job) => job.bookId)
+      audioJobs.filter(isClearableTerminalJob).map((job) => job.bookId)
     )]
     for (const bookId of terminalBookIds) {
       await dreamreaderClient.clearTerminalTtsJobs(bookId)

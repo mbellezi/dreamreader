@@ -1,7 +1,7 @@
 import { Pause, Play, RotateCcw, Square, Trash2 } from "lucide-react"
 import { useMemo } from "react"
 import type { TranslationFn } from "@renderer/app/types"
-import { activeJobCount, audioProgressForJob, hasTerminalJob, isActiveJob, isTerminalJobStatus } from "@renderer/lib/jobQueue"
+import { activeJobCount, audioProgressForJob, hasClearableTerminalJob, isActiveJob, isTerminalJobStatus } from "@renderer/lib/jobQueue"
 import { cn } from "@renderer/lib/utils"
 import type { TtsJob } from "@renderer/types"
 
@@ -28,7 +28,7 @@ export function JobQueue({
 }) {
   const sortedJobs = useMemo(() => [...jobs].sort((a, b) => b.createdAt.localeCompare(a.createdAt)), [jobs])
   const activeCount = activeJobCount(jobs)
-  const showClearFinished = hasTerminalJob(jobs)
+  const showClearFinished = hasClearableTerminalJob(jobs)
 
   return (
     <section className="space-y-3">

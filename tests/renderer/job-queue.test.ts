@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest"
 import {
   activeJobCount,
   audioProgressForJob,
+  hasClearableTerminalJob,
   hasTerminalJob,
   isActiveJob,
+  isClearableTerminalJob,
   isPartialTtsJob,
   isSegmentOnlyTtsJob,
   isTerminalJobStatus
@@ -48,6 +50,16 @@ describe("jobQueue helpers", () => {
   it("detects presence of terminal jobs", () => {
     expect(hasTerminalJob([job("synthesizing"), job("paused")])).toBe(false)
     expect(hasTerminalJob([job("synthesizing"), job("completed")])).toBe(true)
+  })
+
+  it("does not treat segment-only jobs as clearable terminal audio jobs", () => {
+    const segmentOnly = { ...job("completed"), settings: { segmentsOnly: true } }
+    const completedAudio = job("completed")
+
+    expect(isClearableTerminalJob(segmentOnly)).toBe(false)
+    expect(isClearableTerminalJob(completedAudio)).toBe(true)
+    expect(hasClearableTerminalJob([segmentOnly])).toBe(false)
+    expect(hasClearableTerminalJob([segmentOnly, completedAudio])).toBe(true)
   })
 
   it("detects partial preview jobs", () => {

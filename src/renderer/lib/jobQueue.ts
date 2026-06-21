@@ -22,10 +22,18 @@ export function audioProgressForJob(job: TtsJob): number {
   return isSegmentOnlyTtsJob(job) ? 0 : job.progress
 }
 
+export function isClearableTerminalJob(job: TtsJob): boolean {
+  return isTerminalJobStatus(job.status) && !isSegmentOnlyTtsJob(job)
+}
+
 export function activeJobCount(jobs: TtsJob[]): number {
   return jobs.filter(isActiveJob).length
 }
 
 export function hasTerminalJob(jobs: TtsJob[]): boolean {
   return jobs.some((job) => isTerminalJobStatus(job.status))
+}
+
+export function hasClearableTerminalJob(jobs: TtsJob[]): boolean {
+  return jobs.some(isClearableTerminalJob)
 }
