@@ -31,6 +31,19 @@ class TtsSidecarSeedTest(unittest.TestCase):
         self.assertEqual(self.qwen.language_name("ja"), "Japanese")
         self.assertEqual(self.qwen.language_name("zh-CN"), "Chinese")
 
+    def test_qwen_chunked_decode_patch_is_opt_in(self):
+        self.assertFalse(self.qwen.qwen_chunked_decode_patch_enabled({}))
+        self.assertFalse(
+            self.qwen.qwen_chunked_decode_patch_enabled(
+                {"modelSettings": {"qwenChunkedDecodePatchEnabled": False}}
+            )
+        )
+        self.assertTrue(
+            self.qwen.qwen_chunked_decode_patch_enabled(
+                {"modelSettings": {"qwenChunkedDecodePatchEnabled": True}}
+            )
+        )
+
     def test_chatterbox_uses_fixed_request_seed_for_every_segment(self):
         request = {"seed": 9876}
         seed = self.chatterbox.chatterbox_seed(request, {"seed": 1234})

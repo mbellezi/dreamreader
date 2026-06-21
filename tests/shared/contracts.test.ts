@@ -261,6 +261,7 @@ describe("shared contracts", () => {
       engineId: "qwen3-tts-17b-mlx",
       generationLanguage: "Portuguese",
       modelSettings: {
+        qwenChunkedDecodePatchEnabled: true,
         temperature: 0.9,
         topK: 50,
         topP: 1,
@@ -270,6 +271,7 @@ describe("shared contracts", () => {
     });
 
     expect(parsed.modelSettings.temperature).toBe(0.9);
+    expect(parsed.modelSettings.qwenChunkedDecodePatchEnabled).toBe(true);
     expect(parsed.seed).toBe(1234);
     expect(parsed.seedFixed).toBe(true);
 

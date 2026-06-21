@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import contextlib
 import hashlib
+import importlib
 import json
 import os
 import sys
@@ -49,6 +50,101 @@ def health() -> int:
     return 0 if ok else 1
 
 
+def apply_qwen_chunked_decode_patch(request):
+    if not qwen_chunked_decode_patch_enabled(request):
+        return {"status": "disabled", "targets": []}
+
+    targets = [
+        (
+            "mlx_audio.tts.models.qwen3_tts.speech_tokenizer",
+            "Qwen3TTSSpeechTokenizerDecoder",
+            "mlx",
+        ),
+        (
+            "qwen_tts.core.tokenizer_12hz.modeling_qwen3_tts_tokenizer_v2",
+            "Qwen3TTSTokenizerV2Decoder",
+            "torch",
+        ),
+        (
+            "transformers.models.qwen3_omni_moe.modeling_qwen3_omni_moe",
+            "Qwen3OmniMoeCode2Wav",
+            "torch",
+        ),
+    ]
+    applied = []
+    unavailable = []
+    failures = []
+
+    for module_name, class_name, backend in targets:
+        target_name = f"{module_name}.{class_name}"
+        try:
+            module = importlib.import_module(module_name)
+        except Exception as exc:
+            unavailable.append({"target": target_name, "reason": type(exc).__name__})
+            continue
+
+        decoder_class = getattr(module, class_name, None)
+        if decoder_class is None or not hasattr(decoder_class, "chunked_decode"):
+            unavailable.append({"target": target_name, "reason": "missing_chunked_decode"})
+            continue
+
+        current = getattr(decoder_class, "chunked_decode")
+        if getattr(current, "_dreamreader_qwen_pr259_patch", False):
+            applied.append({"target": target_name, "alreadyPatched": True})
+            continue
+
+        try:
+            patched = patched_mlx_chunked_decode if backend == "mlx" else patched_torch_chunked_decode
+            setattr(patched, "_dreamreader_qwen_pr259_patch", True)
+            decoder_class.chunked_decode = patched
+            applied.append({"target": target_name, "alreadyPatched": False})
+        except Exception as exc:
+            failures.append({"target": target_name, "reason": str(exc)})
+
+    if applied:
+        return {"status": "applied", "targets": applied}
+    if failures:
+        return {"status": "failed", "targets": [], "failures": failures, "unavailable": unavailable}
+    return {"status": "unavailable", "targets": [], "unavailable": unavailable}
+
+
+def patched_mlx_chunked_decode(self, codes, chunk_size=300, left_context_size=25):
+    import mlx.core as mx
+
+    wavs = []
+    start_index = 0
+    while start_index < codes.shape[-1]:
+        end_index = min(start_index + chunk_size, codes.shape[-1])
+        context_size = left_context_size if start_index - left_context_size > 0 else start_index
+        codes_chunk = codes[..., start_index - context_size : end_index]
+        wav_chunk = self(codes_chunk)
+        sample_count = min((end_index - start_index) * int(self.total_upsample), int(wav_chunk.shape[-1]))
+        wavs.append(wav_chunk[..., -sample_count:])
+        start_index = end_index
+    return mx.concatenate(wavs, axis=-1)
+
+
+def patched_torch_chunked_decode(self, codes, chunk_size=300, left_context_size=25):
+    import torch
+
+    wavs = []
+    start_index = 0
+    while start_index < codes.shape[-1]:
+        end_index = min(start_index + chunk_size, codes.shape[-1])
+        context_size = left_context_size if start_index - left_context_size > 0 else start_index
+        codes_chunk = codes[..., start_index - context_size : end_index]
+        wav_chunk = self(codes_chunk)
+        sample_count = min((end_index - start_index) * int(self.total_upsample), int(wav_chunk.shape[-1]))
+        wavs.append(wav_chunk[..., -sample_count:])
+        start_index = end_index
+    return torch.cat(wavs, dim=-1)
+
+
+def qwen_chunked_decode_patch_enabled(request) -> bool:
+    model_settings = request.get("modelSettings") if isinstance(request.get("modelSettings"), dict) else {}
+    return model_settings.get("qwenChunkedDecodePatchEnabled") is True
+
+
 def synthesize(request, emit=lambda event: None):
     from mlx_audio.tts.generate import generate_audio
     from mlx_audio.tts.utils import load_model
@@ -56,6 +152,7 @@ def synthesize(request, emit=lambda event: None):
     output_dir = Path(str(request["outputDirectory"])).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     model_path = str(Path(str(request["modelPath"])).resolve())
+    chunked_decode_patch = apply_qwen_chunked_decode_patch(request)
     loaded_model = load_model(model_path)
     reference = resolve_reference(request)
     voice_binding = request.get("voiceBinding") or {}
@@ -137,6 +234,7 @@ def synthesize(request, emit=lambda event: None):
                     "seed": seed,
                     "speaker": speaker,
                     "temperature": temperature,
+                    "chunkedDecodePatch": chunked_decode_patch,
                     "usedReference": reference is not None,
                 },
             }

@@ -331,6 +331,7 @@ export const TtsModelSettingsSchema = z
     maxNewTokens: z.number().int().positive().max(32_768).optional(),
     nfeStep: z.number().int().min(1).max(128).optional(),
     nonStreamingMode: z.boolean().optional(),
+    qwenChunkedDecodePatchEnabled: z.boolean().optional(),
     removeSilence: z.boolean().optional(),
     repetitionPenalty: z.number().min(0).max(3).optional(),
     speed: z.number().min(0.25).max(2).optional(),

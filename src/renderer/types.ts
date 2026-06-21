@@ -138,6 +138,7 @@ export type TtsModelSettings = {
   maxNewTokens?: number
   nfeStep?: number
   nonStreamingMode?: boolean
+  qwenChunkedDecodePatchEnabled?: boolean
   removeSilence?: boolean
   repetitionPenalty?: number
   speed?: number
