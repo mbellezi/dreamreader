@@ -4,7 +4,7 @@ export type AppearanceTheme = "light" | "dark" | "sepia" | "contrast"
 
 export type ReadingStatus = "unread" | "reading" | "finished"
 
-export type BookFormat = "epub" | "txt" | "markdown" | "html"
+export type BookFormat = "epub" | "txt" | "markdown" | "html" | "pdf"
 
 export type AnnotationKind = "highlight" | "note" | "favorite"
 

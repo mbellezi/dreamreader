@@ -31,7 +31,7 @@ export function registerIpc(services: Services): void {
         await dialog.showOpenDialog({
           properties: ["openFile", "multiSelections"],
           filters: [
-            { name: "Books", extensions: ["epub", "txt", "md", "markdown", "html", "htm"] }
+            { name: "Books", extensions: ["epub", "pdf", "txt", "md", "markdown", "html", "htm"] }
           ]
         })
       ).filePaths

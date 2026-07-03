@@ -28,7 +28,7 @@ export const LocaleSchema = z
   .string()
   .regex(/^[a-z]{2,3}(?:-[A-Z0-9]{2,8})?$/);
 
-export const BookFileTypeSchema = z.enum(["epub", "txt", "markdown", "html"]);
+export const BookFileTypeSchema = z.enum(["epub", "txt", "markdown", "html", "pdf"]);
 export type BookFileType = z.infer<typeof BookFileTypeSchema>;
 
 export const RuntimeSchema = z.enum([

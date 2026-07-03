@@ -24,6 +24,7 @@ import { AppError } from "@main/lib/errors"
 import { SettingsSchema } from "@shared/contracts/settings"
 import { adaptReadiumManifestToReaderManifest } from "./readium-manifest-adapter"
 import { ReadiumCliManifestProvider, type ReadiumManifestProvider } from "./readium-cli"
+import { extractPdfWithPdfJs } from "./pdf-importer"
 
 export type ReaderChapter = {
   id: string
@@ -50,6 +51,16 @@ export type ReaderManifest = {
     href: string
     mediaType: string
     assetId?: string
+  }
+  parser?: {
+    id: string
+  }
+  chapterSegmentation?: {
+    analyzerId: string
+    candidateCount: number
+    fallbackUsed: boolean
+    promptVersion?: string
+    version: string
   }
 }
 
@@ -191,7 +202,7 @@ export class LibraryService {
       } catch (error) {
         skippedItems.push({
           path: filePath,
-          reason: error instanceof AppError && error.code === "invalid_epub" ? "invalid_file" : "failed"
+          reason: error instanceof AppError && (error.code === "invalid_epub" || error.code === "invalid_pdf") ? "invalid_file" : "failed"
         })
       }
     }
@@ -542,6 +553,9 @@ export class LibraryService {
   private async extractManifest(filePath: string, fileType: string, fallbackTitle: string): Promise<ReaderManifest> {
     if (fileType === "epub") {
       return this.extractEpub(filePath, fallbackTitle)
+    }
+    if (fileType === "pdf") {
+      return extractPdfWithPdfJs(filePath, fallbackTitle, this.paths)
     }
     const raw = await readFile(filePath, "utf8")
     const title = fallbackTitle
@@ -1361,7 +1375,7 @@ function slugifyFileName(value: string): string {
   return slug || "dreamreader-notas"
 }
 
-function normalizeFileType(ext: string): "epub" | "txt" | "markdown" | "html" | undefined {
+function normalizeFileType(ext: string): "epub" | "txt" | "markdown" | "html" | "pdf" | undefined {
   const clean = ext.toLowerCase().replace(".", "")
   if (clean === "md" || clean === "markdown") {
     return "markdown"
@@ -1369,7 +1383,7 @@ function normalizeFileType(ext: string): "epub" | "txt" | "markdown" | "html" | 
   if (clean === "htm" || clean === "html") {
     return "html"
   }
-  if (clean === "epub" || clean === "txt") {
+  if (clean === "epub" || clean === "txt" || clean === "pdf") {
     return clean
   }
   return undefined
