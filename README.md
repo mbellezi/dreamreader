@@ -94,6 +94,56 @@ npm run db:migrate
 
 Use `--install-sidecars` quando quiser instalar tambem as dependencias Python dos sidecars. O backend CUDA usa o indice oficial de wheels CUDA do PyTorch por padrao e pode ser alterado com `DREAMREADER_TORCH_CUDA_INDEX_URL`.
 
+## Build de bundles
+
+O empacotamento multiplataforma e orquestrado por `scripts/build-bundle.py`. O script valida dependencias do host, tenta instalar dependencias de sistema quando possivel e para antes do build se algo obrigatorio continuar ausente. Os artefatos finais sao gerados em `dist/` e o script imprime caminho, tamanho, SHA256 e tipo do arquivo quando o comando `file` esta disponivel.
+
+Alvos suportados:
+
+```bash
+python3 scripts/build-bundle.py --target linux-appimage
+python3 scripts/build-bundle.py --target windows-msi
+python3 scripts/build-bundle.py --target mac-dmg
+python3 scripts/build-bundle.py --target all
+```
+
+Matriz de hosts:
+
+- Linux AppImage: nativo em Linux; em Windows/macOS precisa de WSL2 ou Docker.
+- Windows MSI: nativo em Windows; em Linux/macOS precisa de Wine.
+- macOS DMG: exige host macOS. O script nao gera DMG fora do macOS.
+- `--target all`: tenta Linux AppImage e Windows MSI; inclui macOS DMG apenas quando o host e macOS.
+
+Por padrao, cada build executa:
+
+1. verificacao e, se necessario, tentativa de instalacao de dependencias de sistema;
+2. `npm ci`;
+3. `npm run download:readium-cli -- --all`;
+4. `npm run build`;
+5. instalacao de dependencias opcionais da plataforma alvo com `npm --os/--cpu`;
+6. rebuild de `ffmpeg-static` para a plataforma alvo;
+7. `electron-builder`;
+8. verificacao do artefato final.
+
+Opcoes uteis:
+
+```bash
+python3 scripts/build-bundle.py --target windows-msi --check-only
+python3 scripts/build-bundle.py --target windows-msi --no-install-deps
+python3 scripts/build-bundle.py --target windows-msi --keep-intermediate
+python3 scripts/build-bundle.py --target linux-appimage --linux-runner docker
+python3 scripts/build-bundle.py --target linux-appimage --linux-runner wsl
+python3 scripts/build-bundle.py --target mac-dmg --signed-mac
+```
+
+Notas importantes:
+
+- O alvo `windows-msi` usa Wrapped MSI: o artefato publicado e um `.msi`, mas ele embute um instalador NSIS gerado internamente e executado com `/S`. Por padrao, o `.exe` e o `.blockmap` intermediarios sao removidos; use `--keep-intermediate` para diagnostico.
+- O script tenta instalar dependencias automaticamente. Em Linux, isso pode usar `sudo`; se falhar, ele imprime os comandos manuais e nao continua o build. Use `--no-install-deps` para apenas validar e imprimir instrucoes.
+- Builds cruzados podem deixar `node_modules/` preparado para a plataforma alvo, especialmente por causa de `ffmpeg-static` e `node-llama-cpp`. Rode `npm ci` para voltar ao estado de desenvolvimento do host atual.
+- Use `--skip-npm-ci` e `--skip-build` apenas quando tiver certeza de que `node_modules/` e `out/` ja correspondem ao alvo.
+- Para detalhes sobre Wine, Docker, WSL2, Wrapped MSI e limitacoes por host, leia `docs/11-build-bundles.md`.
+
 ## Empacotamento de audio
 
 O backend usa `music-metadata` para checar duracao/sample rate/canais de audio sem depender de `ffprobe` no `PATH`. Para reamostrar audio de referencia de voz, usa o binario de `ffmpeg-static`, tambem sem depender de `ffmpeg` instalado no sistema.
