@@ -98,6 +98,11 @@ RUNTIME_DEPENDENCIES = {
 
 LINUX_IMAGE = "node:25-bookworm"
 
+DOCKER_PLATFORMS = {
+    "x64": "linux/amd64",
+    "arm64": "linux/arm64",
+}
+
 MACOS_INSTALL_COMMANDS = {
     "node": [["brew", "install", "node"]],
     "wine": [["brew", "install", "--cask", "wine-stable"]],
@@ -572,6 +577,7 @@ def run_linux_build_in_wsl(target: Target, arch: str, args: argparse.Namespace) 
 
 
 def run_linux_build_in_docker(target: Target, arch: str, args: argparse.Namespace) -> None:
+    docker_platform = DOCKER_PLATFORMS[arch]
     script_command = [
         "python3",
         "scripts/build-bundle.py",
@@ -593,6 +599,8 @@ def run_linux_build_in_docker(target: Target, arch: str, args: argparse.Namespac
         "run",
         "--rm",
         "-t",
+        "--platform",
+        docker_platform,
         "-v",
         f"{repo}:/workspace",
         "-w",

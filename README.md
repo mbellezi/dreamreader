@@ -114,6 +114,18 @@ Matriz de hosts:
 - macOS DMG: exige host macOS. O script nao gera DMG fora do macOS.
 - `--target all`: tenta Linux AppImage e Windows MSI; inclui macOS DMG apenas quando o host e macOS.
 
+Em macOS Apple Silicon, o build Linux via Docker define a plataforma do container conforme `--arch`: `linux/amd64` para o padrao `x64` e `linux/arm64` para `--arch arm64`. Para gerar AppImage ARM64:
+
+```bash
+python3 scripts/build-bundle.py --target linux-appimage --arch arm64 --linux-runner docker
+```
+
+Para gerar um DMG Apple Silicon em host macOS, use `--arch arm64`. Em um Mac Apple Silicon, esse ja e o padrao quando o alvo for apenas `mac-dmg`:
+
+```bash
+python3 scripts/build-bundle.py --target mac-dmg --arch arm64
+```
+
 Por padrao, cada build executa:
 
 1. verificacao e, se necessario, tentativa de instalacao de dependencias de sistema;
