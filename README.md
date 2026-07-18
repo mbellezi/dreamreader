@@ -2,6 +2,28 @@
 
 DreamReader e um leitor de ebooks desktop, offline-first, feito em Electron, React e Node, com foco forte em leitura em portugues do Brasil e geracao local de audio de capitulos por modelos TTS.
 
+## Download dos bundles
+
+Os bundles prontos da versao `0.1.0` estao versionados neste repositorio com Git LFS:
+
+| Plataforma | Arquitetura | Download |
+| --- | --- | --- |
+| macOS | Apple Silicon (`arm64`) | [DreamReader-0.1.0-mac-arm64.dmg](https://github.com/mbellezi/dreamreader/raw/main/bundles/DreamReader-0.1.0-mac-arm64.dmg) |
+| Linux | Intel/AMD (`x86_64`) | [DreamReader-0.1.0-linux-x86_64.AppImage](https://github.com/mbellezi/dreamreader/raw/main/bundles/DreamReader-0.1.0-linux-x86_64.AppImage) |
+| Windows | Intel/AMD (`x64`) | [DreamReader-0.1.0-win-x64.exe](https://github.com/mbellezi/dreamreader/raw/main/bundles/DreamReader-0.1.0-win-x64.exe) |
+
+Os hashes para verificacao de integridade estao em [`bundles/SHA256SUMS`](bundles/SHA256SUMS). Como o repositorio atualmente e privado, o GitHub exige login e permissao de acesso para baixar esses arquivos.
+
+Estes sao builds locais sem assinatura digital ou notarizacao. O macOS Gatekeeper e o Windows SmartScreen podem exibir um aviso na primeira abertura.
+
+### Instalacao
+
+- macOS: abra o `.dmg` e arraste o DreamReader para **Aplicativos**. Este bundle exige Mac com Apple Silicon. Se o Gatekeeper bloquear a primeira abertura, clique com o botao direito no app e escolha **Abrir**, ou autorize-o em **Ajustes do Sistema > Privacidade e Seguranca**.
+- Linux: torne o AppImage executavel com `chmod +x DreamReader-0.1.0-linux-x86_64.AppImage` e execute-o. O bundle exige Linux x86-64.
+- Windows: execute `DreamReader-0.1.0-win-x64.exe` e siga o instalador NSIS. O payload da aplicacao e x64.
+
+Todos os bundles incluem os pacotes `.zip` presentes na raiz de `voices/`; `voices/old` nao e distribuido.
+
 ## Estado atual
 
 As fases 0, 1, 2 e 3 do roadmap estao implementadas:
@@ -13,16 +35,36 @@ As fases 0, 1, 2 e 3 do roadmap estao implementadas:
 
 Os motores neurais Qwen/Chatterbox/F5 funcionam por instalacao local de Python, sidecars e pesos em `.dreamreader-local/`. O encoder M4B real e o empacotamento final ainda pertencem as proximas fases. Para preparar Qwen3-TTS/Chatterbox/F5-TTS-pt-br locais, rode `npm run setup:python-tts`; isso detecta macOS Apple Silicon, Windows ou Linux, instala um CPython 3.12 standalone, verifica o FFmpeg empacotado e cria pastas de modelos em `.dreamreader-local/`, que nao entra no git.
 
-## Setup de desenvolvimento
+## Desenvolvimento
+
+### Requisitos
+
+- Git;
+- Node.js LTS recente e npm;
+- Python 3 para o orquestrador de bundles;
+- espaco em disco adicional caso os runtimes e modelos TTS locais sejam instalados.
+
+### Executar a versao de desenvolvimento
 
 Existe um agregador para a instalacao inicial de desenvolvimento, mas as etapas continuam disponiveis separadamente para controle fino de plataforma, sidecars e modelos. O agregador mostra no terminal a fase atual, uma descricao curta e o comando que sera executado antes de iniciar cada etapa.
 
-Fluxo recomendado para uma maquina de desenvolvimento:
+Clone o repositorio e execute o setup completo:
 
 ```bash
+git clone https://github.com/mbellezi/dreamreader.git
+cd dreamreader
 npm run setup:dev
 npm run dev
 ```
+
+O clone padrao baixa tambem os bundles versionados pelo Git LFS. Para trabalhar apenas no codigo-fonte sem baixar aproximadamente 2 GB de instaladores, use:
+
+```bash
+GIT_LFS_SKIP_SMUDGE=1 git clone https://github.com/mbellezi/dreamreader.git
+cd dreamreader
+```
+
+No PowerShell, defina a variavel antes do clone com `$env:GIT_LFS_SKIP_SMUDGE = "1"`. Para baixar os bundles posteriormente, instale o Git LFS e execute `git lfs pull`.
 
 Para conferir as fases sem executar downloads/instalacoes:
 
@@ -39,6 +81,22 @@ npm run setup:dev -- --dry-run
 
 Para um setup minimo de leitura/importacao de EPUB em desenvolvimento, `npm install` + `npm run download:readium-cli` ja sao suficientes antes de `npm run dev`. Para preparar builds multiplataforma, rode tambem `npm run download:readium-cli -- --all`.
 
+Para instalar exatamente as versoes registradas em `package-lock.json` e executar apenas o leitor em modo de desenvolvimento:
+
+```bash
+npm ci
+npm run download:readium-cli
+npm run dev
+```
+
+`npm run dev` inicia o Electron com recompilacao automatica durante as alteracoes. Para validar a compilacao de producao sem gerar instaladores, use:
+
+```bash
+npm run lint
+npm test
+npm run build
+```
+
 ## Documentacao
 
 - `docs/00-product-spec.md`: produto, publico, funcionalidades e nao-objetivos.
@@ -50,8 +108,11 @@ Para um setup minimo de leitura/importacao de EPUB em desenvolvimento, `npm inst
 - `docs/06-apple-silicon-performance.md`: estrategia de performance para LLM/TTS em Apple Silicon.
 - `docs/07-tts-prosody-abstractions.md`: contratos de abstracao para prosodia, TTS e modelos locais.
 - `docs/08-audiobook-m4b.md`: montagem incremental de audiobooks M4B por livro.
+- `docs/09-readium-poc.md`: POC e integracao do Readium CLI.
+- `docs/10-thorium-reader-troubleshooting.md`: diagnostico do leitor Thorium/Readium.
+- `docs/11-build-bundles.md`: build e cross-compilacao dos bundles multiplataforma.
 
- ## Backend de TTS
+## Backend de TTS
 
 No macOS Apple Silicon, `setup:python-tts` usa MLX/MPS por padrao. Em Windows e Linux, escolha o backend de instalacao com `--backend=cuda` ou `--backend=vulkan`:
 
@@ -63,14 +124,14 @@ npm run download:tts-models -- --backend=cuda
 
 ## Importacao de vozes
 
-Os pacotes de vozes ficam em `voices/` como arquivos `.zip` compatíveis com o formato `DreamReader Voice`, por exemplo `voices/Lucas_PT-BR_curto_.zip` e `voices/Tiago_PT-BR_longo_.zip`.
+Os pacotes de vozes ficam em `voices/` como arquivos `.zip` compativeis com o formato `DreamReader Voice`. Os pacotes da raiz dessa pasta ja acompanham os bundles e sao importados automaticamente na primeira abertura. A pasta `voices/old` e excluida.
 
 Para importar pela interface:
 
 1. Abra o app com `npm run dev`.
 2. Entre em **Estúdio** e abra a aba **Vozes**.
 3. Na seção **Vozes cadastradas**, clique em **Importar vozes**.
-4. No seletor de arquivos, abra a pasta `voices/` do projeto e selecione um ou mais arquivos `.zip`.
+4. No seletor de arquivos, escolha um ou mais pacotes `.zip` no formato `DreamReader Voice`.
 5. Confirme a importação. As vozes importadas aparecem em **Vozes cadastradas** e ficam disponíveis nos motores compatíveis instalados.
 
 Para ouvir prévias ou usar essas vozes na geração de áudio, instale antes o modelo e o sidecar do motor desejado em **Estúdio > Motores**. Pacotes com áudio de referência criam bindings para motores com clonagem de voz instalados; pacotes com prompt de voz ficam disponíveis para o Qwen VoiceDesign quando esse motor estiver instalado.

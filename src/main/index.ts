@@ -45,11 +45,18 @@ async function createWindow() {
   const audiobook = new AudiobookService(db, paths)
   const tts = new TtsService(db, paths, audiobook)
   await tts.resumePendingJobs()
+  const voices = new VoiceService(db, paths)
+  if (app.isPackaged) {
+    await voices.initializeBundledVoices()
+  }
+  const runtime = new RuntimeService(db, paths, {
+    onTtsEngineInstalled: (engineId) => voices.reconcileInstalledEngine(engineId)
+  })
   registerIpc({
     library: new LibraryService(db, paths),
-    runtime: new RuntimeService(db, paths),
+    runtime,
     tts,
-    voices: new VoiceService(db, paths),
+    voices,
     audiobook,
     pronunciation: new PronunciationService(db)
   })

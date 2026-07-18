@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises"
+import { copyFile, mkdir, readFile, readdir, rename, rm, stat, unlink, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { and, asc, eq, inArray } from "drizzle-orm"
 import JSZip from "jszip"
@@ -100,6 +100,10 @@ type VoiceDesignPreviewRecord = VoiceDesignPreview & {
   sampleAssetId: string
   samplePath: string
   quality: Record<string, unknown>
+}
+type LoadedVoicePackage = {
+  manifest: VoicePackageManifest
+  zip: JSZip
 }
 
 export class VoiceService {
@@ -841,13 +845,119 @@ export class VoiceService {
     return imported
   }
 
-  private async importVoiceArchive(archivePath: string): Promise<VoiceProfile> {
-    const zip = await JSZip.loadAsync(await readFile(archivePath))
-    const manifestFile = zip.file(VOICE_PACKAGE_MANIFEST_PATH)
-    if (!manifestFile) {
-      throw new AppError("voice_import_invalid", "Voice package is missing voice.json")
+  async initializeBundledVoices(): Promise<void> {
+    await this.ensureReady()
+    const bundledVoicesDir = path.join(this.paths.resourcesDir, "voices")
+    const entries = await readdir(bundledVoicesDir, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return []
+      throw error
+    })
+
+    for (const entry of entries.filter((item) => item.isFile() && path.extname(item.name).toLowerCase() === ".zip")) {
+      const archivePath = path.join(bundledVoicesDir, entry.name)
+      try {
+        const loaded = await this.readVoicePackage(archivePath)
+        const existing = await this.findBundledVoice(loaded.manifest, entry.name)
+        if (existing) {
+          await this.reconcileImportedBindings(existing.id, loaded.manifest)
+          continue
+        }
+        await this.importVoiceArchive(archivePath, {
+          bundledPackageFile: entry.name,
+          loaded
+        })
+      } catch (error) {
+        console.warn(`[voices] Could not import bundled voice package ${entry.name}`, error)
+      }
     }
-    const manifest = VoicePackageManifestSchema.parse(JSON.parse(await manifestFile.async("string")))
+  }
+
+  async reconcileInstalledEngine(engineId: string): Promise<void> {
+    await this.ensureReady()
+    const engine = await this.db.query.ttsEngines.findFirst({ where: eq(ttsEngines.id, engineId) })
+    if (!engine?.installed) return
+
+    const now = new Date()
+    if (jsonObject(engine.capabilitiesJson).supportsVoiceClone === true) {
+      const samples = await this.db.query.voiceSamples.findMany()
+      const profiles = await this.db.query.voiceProfiles.findMany()
+      const profilesById = new Map(profiles.map((profile) => [profile.id, profile]))
+
+      for (const sample of samples) {
+        const profile = profilesById.get(sample.voiceProfileId)
+        if (!profile) continue
+        const values = {
+          adapterId: engine.adapterId,
+          status: "ready",
+          bindingKind: "reference_audio",
+          bindingAssetId: sample.assetId,
+          settingsJson: {
+            transcript: sample.transcript ?? "",
+            source: "engine-install-reconciliation"
+          },
+          compatibilityJson: {
+            language: sample.language ?? profile.language,
+            engineVersion: engine.version
+          },
+          updatedAt: now
+        }
+        await this.db
+          .insert(voiceEngineBindings)
+          .values({
+            id: createId("voice_binding"),
+            voiceProfileId: profile.id,
+            engineId: engine.id,
+            ...values
+          })
+          .onConflictDoUpdate({
+            target: [voiceEngineBindings.voiceProfileId, voiceEngineBindings.engineId],
+            set: values
+          })
+      }
+    }
+
+    if (engine.id === QWEN_VOICE_DESIGN_ENGINE_ID) {
+      const profiles = await this.db.query.voiceProfiles.findMany()
+      for (const profile of profiles) {
+        const settings = jsonObject(profile.settingsJson)
+        const prompt = typeof settings.voiceDesignPrompt === "string" ? settings.voiceDesignPrompt : undefined
+        if (!prompt || settings.importedFromPackage !== true) continue
+        const values = {
+          adapterId: engine.adapterId,
+          status: "ready",
+          bindingKind: "voice_design_prompt",
+          settingsJson: {
+            voiceDesignPrompt: prompt,
+            source: "engine-install-reconciliation"
+          },
+          compatibilityJson: {
+            language: profile.language,
+            engineVersion: engine.version,
+            importedFromPackage: true
+          },
+          updatedAt: now
+        }
+        await this.db
+          .insert(voiceEngineBindings)
+          .values({
+            id: createId("voice_binding"),
+            voiceProfileId: profile.id,
+            engineId: engine.id,
+            ...values
+          })
+          .onConflictDoUpdate({
+            target: [voiceEngineBindings.voiceProfileId, voiceEngineBindings.engineId],
+            set: values
+          })
+      }
+    }
+  }
+
+  private async importVoiceArchive(
+    archivePath: string,
+    options: { bundledPackageFile?: string; loaded?: LoadedVoicePackage } = {}
+  ): Promise<VoiceProfile> {
+    const { manifest, zip } = options.loaded ?? (await this.readVoicePackage(archivePath))
     const now = new Date()
     const profileId = createId("voice")
     const engines = await this.db.query.ttsEngines.findMany()
@@ -903,7 +1013,8 @@ export class VoiceService {
           type: "imported_voice_package",
           importedAt: now.toISOString(),
           originalKind: manifest.voice.kind ?? "imported",
-          originalSource: manifest.voice.source
+          originalSource: manifest.voice.source,
+          ...(options.bundledPackageFile ? { bundledPackageFile: options.bundledPackageFile } : {})
         }),
         tags: unique([...manifest.voice.tags, manifest.voice.language, "importada"]),
         settingsJson: {
@@ -920,7 +1031,6 @@ export class VoiceService {
       })
       .returning()
 
-    let sampleAssetId: string | undefined
     if (manifest.reference && importedReference) {
       const targetDir = path.join(this.paths.voicesDir, profileId)
       await mkdir(targetDir, { recursive: true })
@@ -940,7 +1050,6 @@ export class VoiceService {
           createdAt: now
         })
         .returning()
-      sampleAssetId = asset.id
       await this.db.insert(voiceSamples).values({
         id: createId("voice_sample"),
         voiceProfileId: profileId,
@@ -957,18 +1066,69 @@ export class VoiceService {
       })
     }
 
-    if (sampleAssetId && manifest.reference) {
-      for (const engine of cloneEngines) {
-        await this.db.insert(voiceEngineBindings).values({
+    await this.reconcileImportedBindings(profileId, manifest)
+
+    return toVoiceProfile(voice, await this.bindingsForVoice(profileId))
+  }
+
+  private async readVoicePackage(archivePath: string): Promise<LoadedVoicePackage> {
+    const zip = await JSZip.loadAsync(await readFile(archivePath))
+    const manifestFile = zip.file(VOICE_PACKAGE_MANIFEST_PATH)
+    if (!manifestFile) {
+      throw new AppError("voice_import_invalid", "Voice package is missing voice.json")
+    }
+    const manifest = VoicePackageManifestSchema.parse(JSON.parse(await manifestFile.async("string")))
+    return { manifest, zip }
+  }
+
+  private async findBundledVoice(
+    manifest: VoicePackageManifest,
+    bundledPackageFile: string
+  ): Promise<typeof voiceProfiles.$inferSelect | undefined> {
+    const profiles = await this.db.query.voiceProfiles.findMany()
+    const taggedProfile = profiles.find(
+      (profile) => parseJsonObject(profile.source).bundledPackageFile === bundledPackageFile
+    )
+    if (taggedProfile) return taggedProfile
+
+    const contentHash = manifest.reference?.contentHash
+    if (!contentHash) return undefined
+    const matchingAssets = await this.db.query.assets.findMany({ where: eq(assets.contentHash, contentHash) })
+    if (!matchingAssets.length) return undefined
+    const samples = await this.db.query.voiceSamples.findMany({
+      where: inArray(
+        voiceSamples.assetId,
+        matchingAssets.map((asset) => asset.id)
+      )
+    })
+    const profileIds = new Set(samples.map((sample) => sample.voiceProfileId))
+    return profiles.find(
+      (profile) =>
+        profileIds.has(profile.id) && profile.name === manifest.voice.name && profile.language === manifest.voice.language
+    )
+  }
+
+  private async reconcileImportedBindings(profileId: string, manifest: VoicePackageManifest): Promise<void> {
+    const now = new Date()
+    const engines = await this.db.query.ttsEngines.findMany()
+    const sample = await this.db.query.voiceSamples.findFirst({ where: eq(voiceSamples.voiceProfileId, profileId) })
+    const cloneEngines = sample
+      ? engines.filter((engine) => engine.installed && jsonObject(engine.capabilitiesJson).supportsVoiceClone === true)
+      : []
+
+    for (const engine of cloneEngines) {
+      await this.db
+        .insert(voiceEngineBindings)
+        .values({
           id: createId("voice_binding"),
           voiceProfileId: profileId,
           engineId: engine.id,
           adapterId: engine.adapterId,
           status: "ready",
           bindingKind: "reference_audio",
-          bindingAssetId: sampleAssetId,
+          bindingAssetId: sample?.assetId,
           settingsJson: {
-            transcript: manifest.reference.transcript ?? "",
+            transcript: manifest.reference?.transcript ?? "",
             source: "imported-voice-package"
           },
           compatibilityJson: {
@@ -978,31 +1138,70 @@ export class VoiceService {
           },
           updatedAt: now
         })
-      }
+        .onConflictDoUpdate({
+          target: [voiceEngineBindings.voiceProfileId, voiceEngineBindings.engineId],
+          set: {
+            adapterId: engine.adapterId,
+            status: "ready",
+            bindingKind: "reference_audio",
+            bindingAssetId: sample?.assetId,
+            settingsJson: {
+              transcript: manifest.reference?.transcript ?? "",
+              source: "imported-voice-package"
+            },
+            compatibilityJson: {
+              language: manifest.voice.language,
+              engineVersion: engine.version,
+              importedFromPackage: true
+            },
+            updatedAt: now
+          }
+        })
     }
 
+    const designEngine = manifest.designPrompt
+      ? engines.find((engine) => engine.id === QWEN_VOICE_DESIGN_ENGINE_ID && engine.installed)
+      : undefined
     if (designEngine && manifest.designPrompt) {
-      await this.db.insert(voiceEngineBindings).values({
-        id: createId("voice_binding"),
-        voiceProfileId: profileId,
-        engineId: designEngine.id,
-        adapterId: designEngine.adapterId,
-        status: "ready",
-        bindingKind: "voice_design_prompt",
-        settingsJson: {
-          voiceDesignPrompt: manifest.designPrompt,
-          source: "imported-voice-package"
-        },
-        compatibilityJson: {
-          language: manifest.voice.language,
-          engineVersion: designEngine.version,
-          importedFromPackage: true
-        },
-        updatedAt: now
-      })
+      await this.db
+        .insert(voiceEngineBindings)
+        .values({
+          id: createId("voice_binding"),
+          voiceProfileId: profileId,
+          engineId: designEngine.id,
+          adapterId: designEngine.adapterId,
+          status: "ready",
+          bindingKind: "voice_design_prompt",
+          settingsJson: {
+            voiceDesignPrompt: manifest.designPrompt,
+            source: "imported-voice-package"
+          },
+          compatibilityJson: {
+            language: manifest.voice.language,
+            engineVersion: designEngine.version,
+            importedFromPackage: true
+          },
+          updatedAt: now
+        })
+        .onConflictDoUpdate({
+          target: [voiceEngineBindings.voiceProfileId, voiceEngineBindings.engineId],
+          set: {
+            adapterId: designEngine.adapterId,
+            status: "ready",
+            bindingKind: "voice_design_prompt",
+            settingsJson: {
+              voiceDesignPrompt: manifest.designPrompt,
+              source: "imported-voice-package"
+            },
+            compatibilityJson: {
+              language: manifest.voice.language,
+              engineVersion: designEngine.version,
+              importedFromPackage: true
+            },
+            updatedAt: now
+          }
+        })
     }
-
-    return toVoiceProfile(voice, await this.bindingsForVoice(profileId))
   }
 
   async delete(input: { voiceProfileId: string }) {

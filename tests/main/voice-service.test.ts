@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from "vitest"
 import * as schema from "../../src/main/db/schema"
 import { assets, runtimeManifests, ttsEngines, voiceEngineBindings } from "../../src/main/db/schema"
 import { AudiobookService } from "../../src/main/services/audiobook-service"
+import { RuntimeService } from "../../src/main/services/runtime-service"
 import { TtsService } from "../../src/main/services/tts-service"
 import { VoiceService } from "../../src/main/services/voice-service"
 
@@ -21,6 +22,48 @@ afterEach(async () => {
 })
 
 describe("VoiceService", () => {
+  it("imports bundled voices once and binds them immediately when a compatible engine is installed", async () => {
+    const { client, db, paths } = await createTestServices()
+    try {
+      const tts = new TtsService(db, paths, new AudiobookService(db, paths))
+      await tts.listJobs()
+      paths.resourcesDir = path.resolve(".")
+      const voices = new VoiceService(db, paths)
+
+      await voices.initializeBundledVoices()
+      await voices.initializeBundledVoices()
+
+      const imported = (await db.query.voiceProfiles.findMany()).filter((voice) => voice.kind === "imported")
+      expect(imported.map((voice) => voice.name).sort()).toEqual(
+        ["Alice", "Barbara", "Ed", "Julia", "Junior", "Lucy", "Mark", "Mike", "Paulo", "Robert"].sort()
+      )
+      expect(imported.map((voice) => voice.name)).not.toEqual(expect.arrayContaining(["Lucas", "Pietro", "Tiago"]))
+      expect(imported.every((voice) => JSON.parse(voice.source).bundledPackageFile)).toBe(true)
+      expect(
+        await db.query.voiceEngineBindings.findMany({
+          where: eq(voiceEngineBindings.engineId, "qwen3-tts-17b-base-mlx")
+        })
+      ).toHaveLength(0)
+
+      const runtime = new RuntimeService(db, paths, {
+        onTtsEngineInstalled: (engineId) => voices.reconcileInstalledEngine(engineId)
+      })
+      const modelPath = path.join(paths.modelsDir, "Qwen3-TTS-12Hz-1.7B-Base-4bit")
+      await mkdir(modelPath, { recursive: true })
+      await runtime.installFromPath(modelPath)
+
+      const bindings = await db.query.voiceEngineBindings.findMany({
+        where: eq(voiceEngineBindings.engineId, "qwen3-tts-17b-base-mlx")
+      })
+      expect(bindings).toHaveLength(10)
+      expect(bindings.every((binding) => binding.status === "ready" && binding.bindingKind === "reference_audio")).toBe(
+        true
+      )
+    } finally {
+      await client.close()
+    }
+  })
+
   it("persists compatible voice profiles, samples, and engine bindings", async () => {
     const { client, db, paths } = await createTestServices()
     try {
