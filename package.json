@@ -82,6 +82,13 @@
           "tts/*.py",
           "tts/requirements-*.txt"
         ]
+      },
+      {
+        "from": "voices",
+        "to": "voices",
+        "filter": [
+          "*.zip"
+        ]
       }
     ],
     "asarUnpack": [

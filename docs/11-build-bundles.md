@@ -33,6 +33,13 @@ Por padrao, o script executa:
 6. `electron-builder`;
 7. verificacao de artefatos e SHA256.
 
+Os pacotes `voices/*.zip` sao incluidos em `resources/voices` em todos os alvos. A pasta
+`voices/old` nao entra no bundle. Na primeira abertura do aplicativo empacotado, cada
+pacote ausente e importado silenciosamente; nas aberturas seguintes, o bootstrap apenas
+reconcilia os vinculos com motores TTS que tenham sido instalados desde a ultima execucao.
+Quando um motor compativel e instalado com o aplicativo aberto, seus vinculos com todas
+as vozes que possuem amostra tambem sao criados imediatamente, sem exigir reinicializacao.
+
 Use `--skip-npm-ci` ou `--skip-build` apenas quando tiver certeza de que `node_modules/` e `out/` ja correspondem ao alvo.
 
 Depois de um build cruzado, `node_modules/` pode ficar preparado para a plataforma alvo porque dependencias opcionais como `ffmpeg-static` e `node-llama-cpp` sao reinstaladas com `npm --os/--cpu`. Para voltar ao estado de desenvolvimento da maquina atual, rode `npm ci`.

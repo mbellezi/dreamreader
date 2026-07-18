@@ -60,6 +60,10 @@ type RecommendedModel = {
   id: string
 }
 
+type RuntimeServiceOptions = {
+  onTtsEngineInstalled?: (engineId: string) => Promise<void>
+}
+
 const recommendedModels: RecommendedModel[] = [
   {
     id: QWEN_PROSODY_MODEL_ID,
@@ -232,7 +236,8 @@ export class RuntimeService {
 
   constructor(
     private readonly db: AppDatabase,
-    private readonly paths: AppPaths
+    private readonly paths: AppPaths,
+    private readonly options: RuntimeServiceOptions = {}
   ) {}
 
   async listModels(): Promise<ModelAsset[]> {
@@ -937,6 +942,7 @@ export class RuntimeService {
           updatedAt: now
         }
       })
+    await this.options.onTtsEngineInstalled?.(model.engineId)
   }
 
   private async markTtsEngineUninstalled(engineId: string | undefined): Promise<void> {
