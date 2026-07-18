@@ -146,7 +146,7 @@ Version `0.1.0` bundles are stored in this repository with Git LFS:
 
 Integrity hashes are available in [`bundles/SHA256SUMS`](bundles/SHA256SUMS).
 
-The repository is currently private, so GitHub authentication and repository access are required to download these files. These local builds are not code-signed or notarized; macOS Gatekeeper and Windows SmartScreen may display a warning on first launch.
+These local builds are not code-signed or notarized; macOS Gatekeeper and Windows SmartScreen may display a warning on first launch.
 
 ### Install
 
