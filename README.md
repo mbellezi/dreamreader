@@ -98,39 +98,35 @@ Books, annotations, generated audio, voices, and model settings stay on the user
 <table>
   <tr>
     <td width="50%" align="center">
-      <img src="screenshots/screenshot-01.png" alt="Example EPUB cover extracted by DreamReader" />
-      <br /><strong>Extracted EPUB cover</strong>
-    </td>
-    <td width="50%" align="center">
       <img src="screenshots/screenshot-03.png" alt="DreamReader paginated EPUB reader" />
       <br /><strong>Paginated EPUB reader</strong>
     </td>
-  </tr>
-  <tr>
     <td width="50%" align="center">
       <img src="screenshots/screenshot-04.png" alt="Two-column reading with a highlighted passage" />
       <br /><strong>Two-column reading and highlights</strong>
     </td>
+  </tr>
+  <tr>
     <td width="50%" align="center">
       <img src="screenshots/screenshot-05.png" alt="DreamReader Audio Center overview" />
       <br /><strong>Audio Center overview</strong>
     </td>
-  </tr>
-  <tr>
     <td width="50%" align="center">
       <img src="screenshots/screenshot-06.png" alt="Per-book chapter audio generation" />
       <br /><strong>Chapter audio generation</strong>
     </td>
+  </tr>
+  <tr>
     <td width="50%" align="center">
       <img src="screenshots/screenshot-07.png" alt="Local voice manager" />
       <br /><strong>Voice manager</strong>
     </td>
-  </tr>
-  <tr>
     <td width="50%" align="center">
       <img src="screenshots/screenshot-08.png" alt="Local TTS engine and model management" />
       <br /><strong>Engine and model management</strong>
     </td>
+  </tr>
+  <tr>
     <td width="50%" align="center">
       <img src="screenshots/screenshot-09.png" alt="M4B controls and completed generation queue" />
       <br /><strong>M4B export and generation queue</strong>
