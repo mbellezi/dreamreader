@@ -1,10 +1,10 @@
-# Build de bundles multiplataforma
+# Cross-platform Bundle Builds
 
-O script `scripts/build-bundle.py` orquestra bundles Electron do DreamReader para Linux, Windows e macOS.
+The `scripts/build-bundle.py` script orchestrates DreamReader Electron bundles for Linux, Windows, and macOS.
 
-Ele valida dependencias antes do build, tenta instalar dependencias de sistema quando possivel e para a execucao se algo obrigatorio continuar ausente. Em Linux, ele tenta usar `sudo` para instalar pacotes; se a instalacao automatica falhar, imprime os comandos manuais e nao continua o empacotamento.
+It validates dependencies before building, attempts to install system dependencies when possible, and stops if a required dependency remains missing. On Linux, it tries to use `sudo` to install packages; if automatic installation fails, it prints the manual commands and does not continue packaging.
 
-## Uso rapido
+## Quick Start
 
 ```bash
 python3 scripts/build-bundle.py --target linux-appimage
@@ -13,7 +13,7 @@ python3 scripts/build-bundle.py --target mac-dmg
 python3 scripts/build-bundle.py --target all
 ```
 
-Opcoes uteis:
+Useful options:
 
 ```bash
 python3 scripts/build-bundle.py --target windows-msi --check-only
@@ -23,44 +23,44 @@ python3 scripts/build-bundle.py --target linux-appimage --linux-runner docker
 python3 scripts/build-bundle.py --target linux-appimage --linux-runner wsl
 ```
 
-Por padrao, o script executa:
+By default, the script runs:
 
-1. verificacao/instalacao de dependencias de sistema;
+1. system dependency checks/installation;
 2. `npm ci`;
 3. `npm run download:readium-cli -- --all`;
 4. `npm run build`;
-5. instalacao de dependencias opcionais da plataforma alvo com `npm --os/--cpu`;
+5. installation of optional dependencies for the target platform with `npm --os/--cpu`;
 6. `electron-builder`;
-7. verificacao de artefatos e SHA256.
+7. artifact and SHA256 verification.
 
-Os pacotes `voices/*.zip` sao incluidos em `resources/voices` em todos os alvos. A pasta
-`voices/old` nao entra no bundle. Na primeira abertura do aplicativo empacotado, cada
-pacote ausente e importado silenciosamente; nas aberturas seguintes, o bootstrap apenas
-reconcilia os vinculos com motores TTS que tenham sido instalados desde a ultima execucao.
-Quando um motor compativel e instalado com o aplicativo aberto, seus vinculos com todas
-as vozes que possuem amostra tambem sao criados imediatamente, sem exigir reinicializacao.
+The `voices/*.zip` packages are included in `resources/voices` for every target. The
+`voices/old` directory is not included in the bundle. On first launch of a packaged
+application, each missing package is imported silently; on later launches, bootstrap
+only reconciles bindings with TTS engines installed since the previous run. When a
+compatible engine is installed while the app is open, bindings to every voice with a
+sample are also created immediately, without requiring a restart.
 
-Use `--skip-npm-ci` ou `--skip-build` apenas quando tiver certeza de que `node_modules/` e `out/` ja correspondem ao alvo.
+Use `--skip-npm-ci` or `--skip-build` only when you are certain that `node_modules/` and `out/` already correspond to the target.
 
-Depois de um build cruzado, `node_modules/` pode ficar preparado para a plataforma alvo porque dependencias opcionais como `ffmpeg-static` e `node-llama-cpp` sao reinstaladas com `npm --os/--cpu`. Para voltar ao estado de desenvolvimento da maquina atual, rode `npm ci`.
+After a cross-build, `node_modules/` may be prepared for the target platform because optional dependencies such as `ffmpeg-static` and `node-llama-cpp` are reinstalled with `npm --os/--cpu`. To return to the development state for the current machine, run `npm ci`.
 
-## Alvos
+## Targets
 
 ### Linux AppImage
 
-Comando nativo em Linux:
+Native Linux command:
 
 ```bash
 python3 scripts/build-bundle.py --target linux-appimage
 ```
 
-Em Windows ou macOS, o build Linux precisa rodar dentro de Linux. O script suporta:
+On Windows or macOS, a Linux build must run inside Linux. The script supports:
 
-- WSL2 no Windows, com `--linux-runner wsl`;
-- Docker no Windows/macOS/Linux, com `--linux-runner docker`;
-- `--linux-runner auto`, que tenta WSL2 no Windows e depois Docker.
+- WSL2 on Windows, with `--linux-runner wsl`;
+- Docker on Windows/macOS/Linux, with `--linux-runner docker`;
+- `--linux-runner auto`, which tries WSL2 on Windows and then Docker.
 
-O runner Docker usa a imagem `node:25-bookworm`, monta o repositorio em `/workspace` e executa o mesmo script dentro do container. O script define a plataforma do container conforme `--arch`: `linux/amd64` para `--arch x64` e `linux/arm64` para `--arch arm64`. Em macOS Apple Silicon, o alvo padrao continua sendo `x64`; nesse caso, Docker usa emulacao amd64. Para gerar um AppImage ARM64, rode:
+The Docker runner uses the `node:25-bookworm` image, mounts the repository at `/workspace`, and executes the same script inside the container. It sets the container platform according to `--arch`: `linux/amd64` for `--arch x64` and `linux/arm64` for `--arch arm64`. On Apple Silicon macOS, the default target remains `x64`; Docker then uses amd64 emulation. To generate an ARM64 AppImage, run:
 
 ```bash
 python3 scripts/build-bundle.py --target linux-appimage --arch arm64 --linux-runner docker
@@ -68,22 +68,22 @@ python3 scripts/build-bundle.py --target linux-appimage --arch arm64 --linux-run
 
 ### Windows MSI
 
-Comando:
+Command:
 
 ```bash
 python3 scripts/build-bundle.py --target windows-msi
 ```
 
-O alvo `windows-msi` usa Wrapped MSI. Isso significa:
+The `windows-msi` target uses Wrapped MSI. This means:
 
-- o artefato publicado e `dist/DreamReader-<versao>-win-x64.msi`;
-- o MSI contem um instalador NSIS gerado internamente;
-- o instalador interno roda em modo silencioso com `/S`;
-- por padrao, o script remove o `.exe` e o `.blockmap` intermediarios depois que o MSI e validado.
+- the published artifact is `dist/DreamReader-<version>-win-x64.msi`;
+- the MSI contains an internally generated NSIS installer;
+- the internal installer runs silently with `/S`;
+- by default, the script removes the intermediate `.exe` and `.blockmap` after the MSI is validated.
 
-Use `--keep-intermediate` para manter esses arquivos de diagnostico.
+Use `--keep-intermediate` to retain these diagnostic files.
 
-Em Linux/macOS, `electron-builder` precisa de Wine para criar o instalador Windows. O script procura `wine` no `PATH` e tambem em caminhos comuns como `/opt/wine-devel/bin/wine`. Em Linux com `apt`, se Wine estiver ausente, o script tenta:
+On Linux/macOS, `electron-builder` needs Wine to create the Windows installer. The script looks for `wine` on `PATH` and in common locations such as `/opt/wine-devel/bin/wine`. On Linux with `apt`, if Wine is missing, the script tries:
 
 ```bash
 sudo dpkg --add-architecture i386
@@ -93,28 +93,28 @@ sudo apt-get install -y wine wine64 wine32
 
 ### macOS DMG
 
-Comando:
+Command:
 
 ```bash
 python3 scripts/build-bundle.py --target mac-dmg
 ```
 
-Bundles macOS exigem host macOS. Em Mac Apple Silicon, o alvo padrao para `mac-dmg` e `arm64`. Para pedir explicitamente um DMG Apple Silicon:
+macOS bundles require a macOS host. On Apple Silicon, the default `mac-dmg` target is `arm64`. To explicitly request an Apple Silicon DMG:
 
 ```bash
 python3 scripts/build-bundle.py --target mac-dmg --arch arm64
 ```
 
-Por padrao, o script desativa assinatura/notarizacao para builds locais (`-c.mac.identity=-`, `-c.mac.notarize=false`). Use `--signed-mac` para deixar a configuracao de assinatura do `electron-builder` ativa.
+By default, the script disables signing/notarization for local builds (`-c.mac.identity=-`, `-c.mac.notarize=false`). Use `--signed-mac` to leave the `electron-builder` signing configuration active.
 
-ZIP de macOS nao e exposto por este script. Ele costuma ser util para distribuicao por arquivo simples ou auto-update do Electron, mas nao faz parte do fluxo solicitado.
+macOS ZIP is not exposed by this script. It can be useful for file-based distribution or Electron auto-update, but is not part of the requested workflow.
 
-## Limitacoes conhecidas
+## Known Limitations
 
-- macOS DMG nao e gerado fora do macOS.
-- Em Mac Apple Silicon, `mac-dmg` usa `arm64` por padrao; em outros hosts macOS, use `--arch arm64` para pedir DMG Apple Silicon.
-- Linux AppImage fora do Linux exige WSL2 ou Docker.
-- Em macOS Apple Silicon, Linux AppImage x64 via Docker depende de emulacao `linux/amd64`; use `--arch arm64` para build ARM64.
-- Windows MSI fora do Windows exige Wine.
-- O MSI e Wrapped MSI, nao um MSI com todos os arquivos da aplicacao declarados diretamente em tabelas WiX.
-- Build Docker pode criar/alterar arquivos em `node_modules/`, `out/` e `dist/` dentro do volume montado. Em Linux/macOS, confira permissoes se o Docker rodar como root.
+- macOS DMG is not generated outside macOS.
+- On Apple Silicon macOS, `mac-dmg` uses `arm64` by default; on other macOS hosts, use `--arch arm64` to request an Apple Silicon DMG.
+- Linux AppImage outside Linux requires WSL2 or Docker.
+- On Apple Silicon macOS, x64 Linux AppImage through Docker depends on `linux/amd64` emulation; use `--arch arm64` for an ARM64 build.
+- Windows MSI outside Windows requires Wine.
+- The MSI is a Wrapped MSI, not an MSI with every application file declared directly in WiX tables.
+- Docker builds may create or alter `node_modules/`, `out/`, and `dist/` inside the mounted volume. On Linux/macOS, check permissions if Docker runs as root.

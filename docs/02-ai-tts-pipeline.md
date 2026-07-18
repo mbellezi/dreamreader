@@ -1,66 +1,66 @@
-# Pipeline de IA e TTS
+# AI and TTS Pipeline
 
-## Principios
+## Principles
 
-- Geracao de audio deve ser uma fila retomavel, nao uma acao bloqueante.
-- O texto original do livro deve ser preservado; normalizacoes para TTS ficam versionadas separadamente.
-- Instrucoes de emocao/prosodia devem ser estruturadas, pequenas e auditaveis.
-- Cada engine TTS declara suas capacidades, e o pipeline se adapta a elas.
-- Para PT-BR, a qualidade da normalizacao do texto e tao importante quanto o modelo.
-- A UI e o pipeline nao devem conhecer tags proprietarias de cada modelo. Eles produzem um plano canonico; adapters traduzem esse plano para Qwen, F5 ou outro motor.
-- Em Apple Silicon, a geracao deve usar processos long-lived e modelos pre-aquecidos, preferindo MLX/Metal quando disponivel.
+- Audio generation must be a resumable queue, not a blocking action.
+- The original book text must be preserved; TTS normalizations are versioned separately.
+- Emotion/prosody instructions must be structured, small, and auditable.
+- Every TTS engine declares its capabilities, and the pipeline adapts to them.
+- For PT-BR, text normalization quality is as important as the model.
+- The UI and pipeline must not know model-specific proprietary tags. They produce a canonical plan; adapters translate that plan for Qwen, F5, or another engine.
+- On Apple Silicon, generation must use long-lived processes and warmed-up models, preferring MLX/Metal when available.
 
-## Etapas
+## Stages
 
-### 1. Extracao
+### 1. Extraction
 
-Entrada:
+Input:
 
 - `bookId`
-- `chapterHref` ou identificador equivalente
-- texto bruto extraido do motor de leitura
-- metadados de idioma
+- `chapterHref` or an equivalent identifier
+- raw text extracted by the reading engine
+- language metadata
 
-Saida:
+Output:
 
-- paragrafos e blocos com IDs estaveis
-- texto limpo, mas ainda proximo ao original
-- mapa entre texto original, texto normalizado e locator
+- paragraphs and blocks with stable IDs
+- clean text that remains close to the original
+- mapping between original text, normalized text, and locator
 
-### 2. Segmentacao
+### 2. Segmentation
 
-Objetivo: criar segmentos que sejam bons para TTS e bons para retomada.
+Goal: create segments that work well for both TTS and resumption.
 
-Regras iniciais:
+Initial rules:
 
-- Preferir quebras por paragrafo e frase.
-- Evitar segmentos longos demais.
-- Nao separar abreviacoes comuns de PT-BR.
-- Preservar dialogos com travessao.
-- Atribuir `segmentId` deterministico com base em livro, capitulo, indice e hash do texto.
+- Prefer paragraph and sentence boundaries.
+- Avoid segments that are too long.
+- Do not split common PT-BR abbreviations.
+- Preserve dialogue introduced by em dashes.
+- Assign a deterministic `segmentId` based on book, chapter, index, and text hash.
 
-### 3. Normalizacao PT-BR
+### 3. PT-BR Normalization
 
-Transformacoes candidatas:
+Candidate transformations:
 
-- Numeros: `1984` pode virar "mil novecentos e oitenta e quatro" ou permanecer como titulo conforme contexto.
-- Datas: `06/06/2026` vira "seis de junho de dois mil e vinte e seis".
-- Horas: `14h30` vira "quatorze horas e trinta minutos".
-- Moedas: `R$ 25,90` vira "vinte e cinco reais e noventa centavos".
-- Porcentagens: `12%` vira "doze por cento".
-- Ordinais: `1o`, `1º`, `primeiro`.
-- Siglas: manter, soletrar ou expandir via dicionario.
-- Abreviacoes: `Sr.` para "senhor", `Dra.` para "doutora", quando apropriado.
+- Numbers: `1984` may become “one thousand nine hundred eighty-four” or remain a title, depending on context.
+- Dates: `06/06/2026` becomes “sixth of June, two thousand twenty-six” in the target spoken language.
+- Times: `14h30` becomes “fourteen hours and thirty minutes.”
+- Currencies: `R$ 25,90` becomes “twenty-five reais and ninety centavos.”
+- Percentages: `12%` becomes “twelve percent.”
+- Ordinals: `1o`, `1º`, `primeiro`.
+- Acronyms: preserve, spell, or expand through the dictionary.
+- Abbreviations: `Sr.` to “senhor,” `Dra.` to “doutora,” when appropriate.
 
-As regras devem ser configuraveis e versionadas. Mudancas de normalizacao invalidam apenas o cache de audio afetado.
+Rules must be configurable and versioned. Normalization changes invalidate only the affected audio cache.
 
-### 4. Analise de Prosodia por LLM
+### 4. LLM Prosody Analysis
 
-O LLM recebe pequenos lotes de segmentos e retorna JSON validado.
+The LLM receives small batches of segments and returns validated JSON.
 
-Estado atual da fase 3: o app usa `ProsodyService` com o analisador local estruturado `llm-prosody-local` para exercitar o mesmo contrato, cache e fallback sem depender ainda de um modelo GGUF/MLX real. A troca para runtime de LLM deve preservar este formato canonico.
+Current Phase 3 state: the app uses `ProsodyService` with the structured local analyzer `llm-prosody-local` to exercise the same contract, cache, and fallback without depending on a real GGUF/MLX model yet. Switching to an LLM runtime must preserve this canonical format.
 
-Schema conceitual:
+Conceptual schema:
 
 ```json
 {
@@ -72,25 +72,25 @@ Schema conceitual:
       "pace": "normal",
       "pitch": "neutral",
       "pauseAfterMs": 350,
-      "instruction": "Tom calmo, narracao clara, sem exagero."
+      "instruction": "Calm tone, clear narration, without exaggeration."
     }
   ]
 }
 ```
 
-Valores iniciais:
+Initial values:
 
 - `emotion`: `neutral`, `warm`, `tense`, `sad`, `joyful`, `angry`, `suspense`, `formal`.
 - `pace`: `slow`, `normal`, `fast`.
 - `pitch`: `low`, `neutral`, `high`.
-- `intensity`: numero entre `0` e `1`.
-- `pauseAfterMs`: numero entre `0` e `1500`.
+- `intensity`: number between `0` and `1`.
+- `pauseAfterMs`: number between `0` and `1500`.
 
-Fallback: se o LLM falhar, usar `neutral`, `normal`, `neutral`, `0.2` e pausas baseadas em pontuacao.
+Fallback: if the LLM fails, use `neutral`, `normal`, `neutral`, `0.2`, and punctuation-based pauses.
 
-### 4.1 Plano Canonico de Narracao
+### 4.1 Canonical Narration Plan
 
-O resultado da normalizacao e da analise de prosodia vira um `NarrationPlan`. Este e o formato interno estavel do app, independente do modelo:
+The normalization and prosody analysis result becomes a `NarrationPlan`. This is the app's stable internal format, independent of the model:
 
 ```ts
 type NarrationPlan = {
@@ -119,16 +119,16 @@ type NarrationSegment = {
 }
 ```
 
-Regras:
+Rules:
 
-- `NarrationPlan` e validado com Zod antes de chegar ao TTS.
-- O LLM so pode preencher campos de prosodia e papel de voz; ele nao altera `normalizedText`.
-- O texto normalizado vem de regras deterministicas e dicionario de pronuncia.
-- O cache de audio depende da versao do plano, do adapter e do modelo.
+- `NarrationPlan` is validated with Zod before reaching TTS.
+- The LLM may fill only prosody and voice-role fields; it must not change `normalizedText`.
+- Normalized text comes from deterministic rules and the pronunciation dictionary.
+- The audio cache depends on the plan, adapter, and model versions.
 
-### 5. Adapter de Engine TTS
+### 5. TTS Engine Adapter
 
-Interface conceitual:
+Conceptual interface:
 
 ```ts
 type TtsEngineCapabilities = {
@@ -149,114 +149,114 @@ type TtsEngineCapabilities = {
 }
 ```
 
-Cada adapter recebe:
+Every adapter receives:
 
-- `NarrationPlan` ou lote de `NarrationSegment`
-- idioma
-- perfil de voz
-- instrucoes de prosodia
-- caminho de saida
-- parametros de qualidade/performance
+- a `NarrationPlan` or batch of `NarrationSegment`
+- language
+- voice profile
+- prosody instructions
+- output path
+- quality/performance parameters
 
-E retorna:
+And returns:
 
-- audio por segmento
-- duracao
+- per-segment audio
+- duration
 - logs
-- erro recuperavel ou fatal
+- recoverable or fatal error
 
-O adapter e responsavel por mapear o plano canonico para o formato do modelo:
+The adapter is responsible for mapping the canonical plan to the model format:
 
-- Qwen3-TTS VoiceDesign: converter `instructionPtBr` para instrucao natural curta no idioma esperado/suportado.
-- Qwen3-TTS CustomVoice: mapear emocao/ritmo para presets, quando houver.
-- Qwen3-TTS Base: usar voz/referencia e ignorar campos nao suportados sem falhar.
-- Chatterbox Multilingual MLX: mapear emocao/intensidade para `exaggeration`, ritmo para `cfgWeight`, idioma PT-BR para `lang_code=pt`, e usar pausas do plano na montagem do capitulo.
-- F5-TTS-pt-br: aplicar normalizacao recomendada, lower case quando necessario, referencias de voz/emocao e marcadores discretos se disponiveis.
+- Qwen3-TTS VoiceDesign: convert `instructionPtBr` into a short natural-language instruction in the expected/supported language.
+- Qwen3-TTS CustomVoice: map emotion/pacing to presets when available.
+- Qwen3-TTS Base: use a voice/reference and ignore unsupported fields without failing.
+- Chatterbox Multilingual MLX: map emotion/intensity to `exaggeration`, pacing to `cfgWeight`, PT-BR to `lang_code=pt`, and use plan pauses during chapter assembly.
+- F5-TTS-pt-br: apply the recommended normalization, lowercase when necessary, voice/emotion references, and discrete markers when available.
 
-Campos nao suportados nunca devem quebrar a geracao. Eles viram no-op com log estruturado.
+Unsupported fields must never break generation. They become no-ops with a structured log.
 
-### 5.1. Modelos e Downloads Locais
+### 5.1 Local Models and Downloads
 
-O main process registra modelos recomendados em `model_assets` e controla downloads por `model_download_jobs`.
+The main process registers recommended models in `model_assets` and controls downloads through `model_download_jobs`.
 
-Implementado:
+Implemented:
 
-- `Qwen3-4B-Instruct-2507 GGUF Q4_K_M` para analise de prosodia via `node-llama-cpp`.
-- Qwen3-TTS 0.6B, Qwen3-TTS 1.7B, Chatterbox Multilingual MLX e F5-TTS-pt-br como modelos TTS reais registraveis por pasta local.
-- Sidecars de sintese neural para Qwen3-TTS, Chatterbox Multilingual MLX e F5-TTS-pt-br por protocolo supervisionado pelo main process.
-- Downloads de snapshots multi-arquivo para modelos TTS instalados em `.dreamreader-local/models`.
-- Progresso de download salvo no banco e exibido visualmente na UI.
-- Fallback local de prosodia quando o modelo GGUF ou runtime opcional nao existem.
+- `Qwen3-4B-Instruct-2507 GGUF Q4_K_M` for prosody analysis through `node-llama-cpp`.
+- Qwen3-TTS 0.6B, Qwen3-TTS 1.7B, Chatterbox Multilingual MLX, and F5-TTS-pt-br as real TTS models that can be registered from local folders.
+- Neural synthesis sidecars for Qwen3-TTS, Chatterbox Multilingual MLX, and F5-TTS-pt-br through a protocol supervised by the main process.
+- Multi-file snapshot downloads for TTS models installed under `.dreamreader-local/models`.
+- Download progress saved in the database and displayed visually in the UI.
+- Local prosody fallback when the GGUF model or optional runtime is unavailable.
 
-Ainda pendente:
+Still pending:
 
-- Execucao ativa de healthcheck antes de habilitar sintese neural.
+- Active health-check execution before enabling neural synthesis.
 
-### 6. Gerenciador de Vozes
+### 6. Voice Manager
 
-O gerenciador de vozes fica acima dos adapters. Ele cria perfis canonicos e bindings especificos por engine.
+The voice manager sits above the adapters. It creates canonical profiles and engine-specific bindings.
 
-Fluxo de criacao:
+Creation flow:
 
-- Usuario escolhe motor alvo e informa nome da voz.
-- Usuario adiciona audio de referencia autorizado.
-- Usuario informa ou revisa a transcricao do trecho.
-- O app valida idioma, ruido, duracao, formato e permissao de uso.
-- O adapter cria um binding de voz: embedding, speaker reference, preset ou arquivos processados.
-- O app gera um preview curto e salva o perfil como voz disponivel.
+- The user selects a target engine and provides a voice name.
+- The user adds authorized reference audio.
+- The user provides or reviews the passage transcript.
+- The app validates language, noise, duration, format, and usage permission.
+- The adapter creates a voice binding: embedding, speaker reference, preset, or processed files.
+- The app generates a short preview and saves the profile as an available voice.
 
-Regras:
+Rules:
 
-- Voz clonada so aparece no seletor se existir binding compativel com o adapter ativo.
-- Uma voz pode ter multiplos bindings para motores diferentes.
-- A UI deve deixar claro quando uma voz e embutida, clonada, importada ou indisponivel para o motor atual.
-- Excluir uma voz deve remover bindings, previews e referencias, salvo se o usuario optar por manter arquivos originais fora da biblioteca.
-- Consentimento e origem do audio devem ser metadados obrigatorios para voice cloning.
+- A cloned voice appears in the selector only when a compatible binding exists for the active adapter.
+- A voice may have multiple bindings for different engines.
+- The UI must clearly indicate whether a voice is built-in, cloned, imported, or unavailable for the current engine.
+- Deleting a voice must remove bindings, previews, and references unless the user chooses to retain original files outside the library.
+- Consent and audio origin are required metadata for voice cloning.
 
-### 7. Cache, Capitulos e M4B
+### 7. Cache, Chapters, and M4B
 
-Chave de cache por segmento:
+Per-segment cache key:
 
-- hash do conteudo do livro
-- capitulo
+- book content hash
+- chapter
 - `segmentId`
-- motor TTS
-- versao do modelo
-- perfil de voz
-- versao da normalizacao
-- versao do prompt/schema de prosodia
+- TTS engine
+- model version
+- voice profile
+- normalization version
+- prosody prompt/schema version
 
-O capitulo final pode ser montado como:
+The final chapter may be assembled as:
 
-- arquivos por segmento para alinhamento fino
-- arquivo unico por capitulo para playback simples
-- manifesto de duracoes para sincronizar texto e audio
-- entrada de capitulo no manifesto M4B do livro
+- per-segment files for fine-grained alignment
+- one file per chapter for simple playback
+- duration manifest for text/audio synchronization
+- chapter entry in the book's M4B manifest
 
-Formato de saida inicial:
+Initial output format:
 
-- Gerar WAV intermediario.
-- Exportar M4A/AAC por capitulo quando o empacotamento do encoder estiver resolvido.
-- Gerar M4B parcial do livro a partir dos capitulos M4A/AAC prontos.
-- Manter WAV opcional para debug, com limpeza automatica.
+- Generate intermediate WAV.
+- Export M4A/AAC per chapter when encoder packaging is resolved.
+- Generate the book's partial M4B from ready M4A/AAC chapters.
+- Optionally retain WAV for debugging, with automatic cleanup.
 
-### 8. Montagem Incremental de M4B
+### 8. Incremental M4B Assembly
 
-Quando um capitulo termina:
+When a chapter finishes:
 
-- registrar duracao, codec, voz, engine, hash e ordem no manifesto do livro;
-- marcar o M4B como `stale`;
-- enfileirar job de montagem com prioridade baixa;
-- gerar um novo M4B temporario a partir dos capitulos prontos;
-- incluir capa, metadados e marcadores de capitulo;
-- validar duracao e numero de capitulos;
-- substituir atomicamente o M4B parcial anterior.
+- record duration, codec, voice, engine, hash, and order in the book manifest;
+- mark the M4B as `stale`;
+- enqueue a low-priority assembly job;
+- generate a new temporary M4B from ready chapters;
+- include cover, metadata, and chapter markers;
+- validate duration and chapter count;
+- atomically replace the previous partial M4B.
 
-O M4B parcial representa "capitulos disponiveis ate agora". Ele nao precisa conter capitulos ainda nao gerados. Quando novos capitulos chegam, o assembler remonta o arquivo. Isso e mais seguro do que tentar append in-place em um container MP4.
+The partial M4B represents “chapters available so far.” It does not need to contain chapters that have not been generated. As new chapters arrive, the assembler rebuilds the file. This is safer than attempting an in-place append to an MP4 container.
 
-## Fila de Jobs
+## Job Queue
 
-Estados:
+States:
 
 - `queued`
 - `preparing`
@@ -268,46 +268,46 @@ Estados:
 - `failed`
 - `cancelled`
 
-Requisitos:
+Requirements:
 
-- Retomar job interrompido.
-- Cancelar sem corromper cache ja gerado.
-- Reexecutar segmentos falhos.
-- Limitar concorrencia por engine.
-- Expor progresso por capitulo e por segmento.
-- Respeitar o governador de recursos para Apple Silicon: TTS e LLM pesados sao exclusivos por padrao.
-- Manter modelo carregado enquanto houver jobs proximos, com timeout de desalocacao configuravel.
-- Disparar atualizacao M4B apos capitulo concluido, se o livro estiver com auto-build habilitado.
-- Separar falha de M4B de falha de TTS: audio do capitulo continua valido mesmo se a montagem M4B falhar.
+- Resume an interrupted job.
+- Cancel without corrupting generated cache.
+- Rerun failed segments.
+- Limit concurrency per engine.
+- Expose progress per chapter and segment.
+- Respect the Apple Silicon resource governor: heavy TTS and LLM work is exclusive by default.
+- Keep the model loaded while nearby jobs exist, with a configurable unload timeout.
+- Trigger an M4B update after a chapter completes when auto-build is enabled for the book.
+- Separate M4B failure from TTS failure: chapter audio remains valid even when M4B assembly fails.
 
-## UI Esperada
+## Expected UI
 
-- Acao "Gerar audio do capitulo".
-- Escolha de motor, voz, qualidade e uso de instrucoes expressivas.
-- Gerenciador de vozes com criacao por voice cloning, previews, compatibilidade e exclusao.
-- Fila global de audio.
-- Indicador de audio ja disponivel por capitulo.
-- Indicador de M4B parcial/final por livro.
-- Player com retomar de posicao.
-- Opcao de excluir audio gerado por livro/capitulo.
-- Opcao de reconstruir ou desativar M4B automatico.
-- Dicionario de pronuncia global e por livro.
+- “Generate chapter audio” action.
+- Engine, voice, quality, and expressive-instruction selection.
+- Voice manager with voice-cloning creation, previews, compatibility, and deletion.
+- Global audio queue.
+- Indicator for chapters with available audio.
+- Partial/final M4B indicator per book.
+- Player with position resumption.
+- Option to delete generated audio per book/chapter.
+- Option to rebuild or disable automatic M4B.
+- Global and per-book pronunciation dictionary.
 
-## Riscos Tecnicos
+## Technical Risks
 
-- Empacotamento de Python/PyTorch por plataforma.
-- Tempo de inferencia em CPU.
-- Contencao de memoria unificada/GPU entre LLM e TTS em Apple Silicon.
-- Qualidade e uso autorizado de vozes clonadas.
-- Rebuild de M4B pode ser caro em livros longos.
-- Qualidade de PT-BR em textos com ortografia antiga, poesia, dialogos e nomes proprios.
-- Instrucoes de prosodia podem piorar o audio se forem exageradas.
-- Licenca de modelos pode limitar distribuicao comercial.
+- Platform-specific Python/PyTorch packaging.
+- CPU inference time.
+- Unified memory/GPU contention between LLM and TTS on Apple Silicon.
+- Quality and authorized use of cloned voices.
+- M4B rebuild cost for long books.
+- PT-BR quality in old spelling, poetry, dialogue, and proper names.
+- Prosody instructions may make audio worse when exaggerated.
+- Model licenses may restrict commercial distribution.
 
-Mitigacao:
+Mitigation:
 
-- Prototipar um capitulo curto com cada engine antes de fechar empacotamento.
-- Comecar com instrucoes discretas e conservadoras.
-- Salvar exemplos de regressao para PT-BR: dialogo, numeros, nomes, abreviacoes, poesia e texto academico.
-- Medir RTF, memoria de pico, tempo de cold start e consumo termico percebido em Apple Silicon.
-- Usar manifestos e substituicao atomica para M4B, mantendo capitulos individuais como fonte reconstruivel.
+- Prototype a short chapter with each engine before finalizing packaging.
+- Start with subtle, conservative instructions.
+- Save PT-BR regression samples: dialogue, numbers, names, abbreviations, poetry, and academic text.
+- Measure RTF, peak memory, cold-start time, and perceived thermal usage on Apple Silicon.
+- Use manifests and atomic replacement for M4B, keeping individual chapters as the reconstructable source.

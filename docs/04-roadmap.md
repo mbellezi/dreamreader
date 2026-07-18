@@ -1,143 +1,143 @@
 # Roadmap
 
-Este roadmap descreve o estado atual do repositorio e o escopo planejado. As fases 0, 1, 2 e 3 estao implementadas no codigo atual; as fases seguintes continuam planejadas.
+This roadmap describes the current repository state and planned scope. Phases 0, 1, 2, 3, and 4 are implemented in the current codebase; the remaining phases are still planned.
 
-## Fase 0: Fundacao Tecnica - Implementada
+## Phase 0: Technical Foundation — Implemented
 
-Objetivo: reduzir riscos de arquitetura antes de construir funcionalidades de produto.
+Goal: reduce architectural risk before building product features.
 
-Implementado:
+Implemented:
 
-- Scaffold Electron com `electron-vite`, React 19, TypeScript, Tailwind CSS 4 e `lucide-react`.
-- Janela Electron com `sandbox`, `contextIsolation` e `nodeIntegration: false`.
-- Preload seguro via `contextBridge`, expondo a API `window.dreamreader`.
-- IPC registrado no main process com requests validados por schemas Zod compartilhados.
-- Contratos Zod em `src/shared/contracts/` para biblioteca, leitor, anotacoes, configuracoes, TTS, vozes, modelos e audiobook.
-- Banco PGlite persistente em `app.getPath("userData")/db/pglite`.
-- Drizzle ORM com migration inicial em `drizzle/0000_fearless_swordsman.sql`.
-- Estrutura local de arquivos em `userData`: biblioteca, capas, extraidos, cache de audio, audiobooks, vozes, modelos, logs e backups.
-- Protocolo local `dreamreader://asset/:assetId` para servir assets registrados sem expor `file://`.
-- Servicos do main process para biblioteca, runtime/modelos, TTS, vozes e audiobook.
-- Testes de contratos, locator preload, importacao EPUB, paginacao, anotacoes e helpers de estado do renderer.
+- Electron scaffold with `electron-vite`, React 19, TypeScript, Tailwind CSS 4, and `lucide-react`.
+- Electron window with `sandbox`, `contextIsolation`, and `nodeIntegration: false`.
+- Secure preload through `contextBridge`, exposing the `window.dreamreader` API.
+- IPC registered in the main process with requests validated by shared Zod schemas.
+- Zod contracts in `src/shared/contracts/` for the library, reader, annotations, settings, TTS, voices, models, and audiobook features.
+- Persistent PGlite database at `app.getPath("userData")/db/pglite`.
+- Drizzle ORM with the initial migration at `drizzle/0000_fearless_swordsman.sql`.
+- Local file structure in `userData`: library, covers, extracted content, audio cache, audiobooks, voices, models, logs, and backups.
+- Local `dreamreader://asset/:assetId` protocol for serving registered assets without exposing `file://`.
+- Main-process services for the library, runtimes/models, TTS, voices, and audiobooks.
+- Contract tests, preload locator tests, EPUB import tests, pagination tests, annotation tests, and renderer state-helper tests.
 
-Escopo preparado, mas sem execucao real ainda:
+Prepared scope, but not yet executed at this stage:
 
-- Contratos de `NarrationPlan`, adapters TTS, voice cloning, jobs TTS, diagnosticos de runtime e M4B.
-- Stubs de TTS, vozes, modelos e audiobook para validar fronteiras IPC e UI futura.
-- A inferencia real de TTS neural, processamento de voz e montagem M4B ficam nas fases 4 e 5.
+- `NarrationPlan` contracts, TTS adapters, voice cloning, TTS jobs, runtime diagnostics, and M4B.
+- TTS, voice, model, and audiobook stubs for validating future IPC and UI boundaries.
+- Real neural TTS inference, voice processing, and M4B assembly were reserved for phases 4 and 5.
 
-## Fase 1: MVP Leitor - Implementada
+## Phase 1: Reader MVP — Implemented
 
-Implementado:
+Implemented:
 
-- Biblioteca local com importacao de EPUB, TXT, Markdown e HTML.
-- Copia de livros importados para a biblioteca interna por hash de conteudo.
-- Deteccao de duplicatas por `content_hash`.
-- Extracao de metadados basicos de EPUB: titulo, autores, idioma, sumario e capa quando disponivel.
-- Suporte a EPUBs com NCX/anchors, incluindo divisao de capitulos em um mesmo arquivo HTML.
-- Lista/grid de livros com busca simples.
-- Tela de leitura com sumario, capitulo anterior/proximo e retorno para posicao anterior.
-- Preferencias do leitor: tema, fonte, tamanho, largura de coluna, numero de colunas, entrelinha, espacamento, margens, fluxo continuo/paginado, alinhamento e hifenizacao.
-- Modo de leitura paginado com geometria testada e ancoragem de pagina para reflow.
-- Retomada de posicao por locator persistente e progressao 0..1.
-- Marcacoes coloridas, notas e favoritos baseados em selecao de texto.
-- Resolucao de marcacoes por paragrafo/offset para evitar destacar ocorrencias repetidas erradas.
-- Exportacao basica de anotacoes em Markdown ou JSON pelo main; a UI expoe Markdown.
-- Configuracoes iniciais de idioma, aparencia e preferencias do leitor.
-- Fallback renderer com dados de exemplo em `localStorage` quando a bridge Electron nao esta disponivel.
-- Renderer modularizado: `App.tsx` orquestra alto nivel; panes, controles, helpers DOM e regras puras vivem em arquivos dedicados.
-- i18n inicial em `pt-BR` e `en`.
+- Local library with EPUB, TXT, Markdown, and HTML import.
+- Copy of imported books into the internal library by content hash.
+- Duplicate detection by `content_hash`.
+- Basic EPUB metadata extraction: title, authors, language, table of contents, and cover when available.
+- Support for EPUBs with NCX/anchors, including splitting chapters contained in the same HTML file.
+- Book list/grid with simple search.
+- Reading screen with table of contents, previous/next chapter, and return to the previous position.
+- Reader preferences: theme, font, size, column width, column count, line height, spacing, margins, continuous/paginated flow, alignment, and hyphenation.
+- Paginated reading mode with tested geometry and page anchoring across reflow.
+- Position restoration through a persistent locator and 0..1 progress.
+- Color highlights, notes, and favorites based on text selection.
+- Paragraph/offset-based highlight resolution to avoid highlighting the wrong repeated occurrence.
+- Basic annotation export as Markdown or JSON from the main process; the UI exposes Markdown.
+- Initial language, appearance, and reader-preference settings.
+- Fallback renderer with sample data in `localStorage` when the Electron bridge is unavailable.
+- Modular renderer: `App.tsx` handles high-level orchestration; panes, controls, DOM helpers, and pure rules live in dedicated files.
+- Initial `pt-BR` and `en` i18n support.
 
-Limites conhecidos do MVP leitor:
+Known reader MVP limits:
 
-- Busca atual cobre metadados na biblioteca; busca no texto completo fica para fase beta.
-- Colecoes/tags existem no modelo planejado, mas nao tem UI completa no MVP atual.
-- O leitor usa extracao/renderizacao propria de HTML/texto; Readium/epub.js nao foram adotados no MVP atual.
-- Conteudo EPUB/HTML e convertido para texto no renderer atual; isolamento de iframe/sandbox para conteudo rico permanece como endurecimento futuro.
+- Current search covers library metadata; full-text search is planned for beta.
+- Collections/tags exist in the planned model but do not have a complete MVP UI.
+- The reader uses its own HTML/text extraction and rendering; Readium/epub.js were not adopted in the current MVP.
+- EPUB/HTML content is converted to text in the current renderer; iframe isolation/sandboxing for rich content remains future hardening work.
 
-## Fase 2: Audio Local Basico - Implementada
+## Phase 2: Basic Local Audio — Implemented
 
-Implementado:
+Implemented:
 
-- Jobs de TTS persistidos no banco em `tts_jobs`.
-- Segmentos de TTS persistidos em `tts_segments`.
-- Fila serial de jobs por capitulo, retomando jobs interrompidos ao abrir o app.
-- Adapter inicial `dreamreader-local-wav` usando `NarrationPlan` canonico.
-- Segmentacao por bloco/frase e normalizacao PT-BR basica: abreviacoes, datas, horas, moeda e porcentagem.
-- Player de audio por capitulo na aba de audio do inspetor.
-- Cache de audio por capitulo em `audio-cache/`, com metadata em `assets` e `audiobook_chapters`.
-- Cancelamento, retry e reutilizacao de cache para jobs repetidos.
-- Diagnostico de modelos/runtimes exibindo o adapter local disponivel e engines futuras nao configuradas.
-- Ciclo long-lived do adapter local com warmup e timeout de desalocacao.
-- Manifesto parcial de audiobook por livro em `audiobook_exports` e `audiobook_chapters`; rebuild gera asset M4B real com AAC via `ffmpeg-static`.
+- Persistent TTS jobs in `tts_jobs`.
+- Persistent TTS segments in `tts_segments`.
+- Serial chapter job queue, resuming interrupted jobs when the app opens.
+- Initial `dreamreader-local-wav` adapter using the canonical `NarrationPlan`.
+- Block/sentence segmentation and basic PT-BR normalization: abbreviations, dates, times, currency, and percentages.
+- Chapter audio player in the inspector audio tab.
+- Per-chapter audio cache in `audio-cache/`, with metadata in `assets` and `audiobook_chapters`.
+- Cancellation, retry, and cache reuse for repeated jobs.
+- Model/runtime diagnostics showing the available local adapter and unconfigured future engines.
+- Long-lived local adapter lifecycle with warmup and unload timeout.
+- Partial audiobook manifest per book in `audiobook_exports` and `audiobook_chapters`; rebuild creates a real AAC M4B with `ffmpeg-static`.
 
-Limites conhecidos da fase 2:
+Known Phase 2 limits:
 
-- O adapter atual gera WAV local deterministico para validar fila/cache/player; nao e uma engine neural Qwen/F5 nem sintetiza voz natural.
-- O export M4B usa encoder AAC/M4B real via `ffmpeg-static`; empacotamento avancado, capas e ajustes finos continuam para fases futuras.
+- The current adapter generates deterministic local WAV to validate queue/cache/player behavior; it is not a neural Qwen/F5 engine and does not synthesize natural speech.
+- M4B export uses a real AAC/M4B encoder through `ffmpeg-static`; advanced packaging, covers, and fine tuning remain future work.
 
-## Fase 3: Prosodia com LLM - Implementada
+## Phase 3: LLM Prosody — Implemented
 
-Implementado:
+Implemented:
 
-- `ProsodyService` no main process para aplicar prosodia neutra ou expressiva sobre `NarrationPlan`.
-- Analisador local estruturado `llm-prosody-local`, validado por Zod, para gerar instrucoes de emocao, ritmo, pitch, intensidade, pausas e papel de voz por segmento.
-- Cache persistente de analise em `prosody_analyses`, com chave por hash de segmento, analyzer, versao e prompt/schema.
-- Fallback neutro por segmento quando a analise falha, retorna JSON invalido ou nao cobre todos os segmentos.
-- UI para ligar/desligar narracao expressiva no painel de audio.
-- Comparacao entre audio neutro e audio expressivo quando ambos existem para o capitulo.
-- Metadados de job com modo de prosodia, cache hits, analises geradas e fallbacks.
-- Adapter WAV local usando a prosodia do plano para produzir diferenca audivel deterministica entre neutro e expressivo.
+- `ProsodyService` in the main process for applying neutral or expressive prosody to a `NarrationPlan`.
+- Structured local analyzer `llm-prosody-local`, Zod-validated, generating emotion, pace, pitch, intensity, pauses, and voice-role instructions per segment.
+- Persistent analysis cache in `prosody_analyses`, keyed by segment hash, analyzer, version, and prompt/schema.
+- Neutral per-segment fallback when analysis fails, returns invalid JSON, or does not cover every segment.
+- UI toggle for expressive narration in the audio panel.
+- Comparison between neutral and expressive audio when both exist for a chapter.
+- Job metadata with prosody mode, cache hits, generated analyses, and fallbacks.
+- Local WAV adapter that uses the plan's prosody to produce a deterministic audible difference between neutral and expressive modes.
 
-Limites conhecidos da fase 3:
+Known Phase 3 limits:
 
-- O analisador deterministico continua disponivel como fallback quando o runtime real nao esta instalado.
-- A qualidade expressiva ainda e conservadora e serve para validar fluxo, persistencia e comparacao na UI.
+- The deterministic analyzer remains available as a fallback when the real runtime is not installed.
+- Expressive quality is still conservative and is intended to validate flow, persistence, and UI comparison.
 
-## Fase 4: Multi-engine TTS e Vozes - Implementada
+## Phase 4: Multi-engine TTS and Voices — Implemented
 
-- Catalogo persistente de modelos em `model_assets`.
-- Jobs persistentes de download em `model_download_jobs`, com progresso salvo e exibido no painel de audio.
-- UI de modelos locais com estado visual `na fila`, `baixando`, `disponivel` e `falhou`.
-- Download direto do `Qwen3-4B-Instruct-2507 GGUF Q4_K_M` recomendado para prosodia.
-- Provider real de prosodia GGUF via `node-llama-cpp`, ativado quando o arquivo local e o runtime opcional estao disponiveis.
-- Fallback automatico para o analisador local estruturado quando o Qwen GGUF ou `node-llama-cpp` nao estao instalados.
-- Registro dos motores `qwen3-tts-06b-mlx`, `qwen3-tts-17b-mlx`, `qwen3-tts-17b-base-mlx`, `chatterbox-multilingual-mlx` e `f5-tts-pt-br` em `tts_engines`.
-- Registro de manifests de runtime em `runtime_manifests` para futuros sidecars Python/Swift/MLX/PyTorch.
-- Adapters sidecar `qwen3-tts-mlx`, `chatterbox-mlx` e `f5-tts-pt-br` por protocolo supervisionado pelo main process.
-- Sintese neural habilitada quando o modelo TTS esta instalado e o `runtime_manifest` aponta para um executavel local compativel.
-- Runtime Python local standalone em `.dreamreader-local/`, ignorada pelo git, para sidecars Qwen3-TTS/Chatterbox/F5-TTS-pt-br e pesos de modelo por pasta local.
-- Validacao de caminhos de saida do sidecar dentro do diretorio do job antes de importar assets.
-- Seletor de motor, voz, qualidade e narracao expressiva no painel de audio por capitulo.
-- Persistencia de perfis de voz, amostras autorizadas e bindings por engine em `voice_profiles`, `voice_samples` e `voice_engine_bindings`.
-- Qwen3-TTS Base (`0.6B` e `1.7B Base`) exige voz clonada com audio de referencia e transcricao; presets por prompt ficam restritos ao `1.7B VoiceDesign`.
-- Chatterbox Multilingual MLX suporta portugues via `lang_code=pt`, voz padrao ou clonagem por referencia opcional, e prosodia parametrica por `exaggeration`/`cfgWeight`.
-- Gerenciador local de vozes clonadas no main process, com consentimento obrigatorio, copia da amostra para `voices/`, binding compativel e preview WAV local.
-- Dicionario de pronuncia global e por livro em `pronunciation_entries`, aplicado ao `NarrationPlan` e versionado na chave de cache.
-- Exclusao de audio/cache por capitulo, removendo jobs, segmentos, assets de audio e entrada de audiobook.
-- Rebuild/invalidacao de manifesto M4B quando audio de capitulo e regenerado, removido, ou muda voz/motor/prosodia/dicionario.
-- Falha de rebuild M4B nao invalida o audio de capitulo ja gerado.
+- Persistent model catalog in `model_assets`.
+- Persistent download jobs in `model_download_jobs`, with progress saved and shown in the audio panel.
+- Local model UI with visual states `queued`, `downloading`, `available`, and `failed`.
+- Direct download of the recommended `Qwen3-4B-Instruct-2507 GGUF Q4_K_M` for prosody.
+- Real GGUF prosody provider through `node-llama-cpp`, enabled when the local file and optional runtime are available.
+- Automatic fallback to the structured local analyzer when Qwen GGUF or `node-llama-cpp` is not installed.
+- Registration of `qwen3-tts-06b-mlx`, `qwen3-tts-17b-mlx`, `qwen3-tts-17b-base-mlx`, `chatterbox-multilingual-mlx`, and `f5-tts-pt-br` in `tts_engines`.
+- Runtime manifest registration in `runtime_manifests` for future Python/Swift/MLX/PyTorch sidecars.
+- Sidecar adapters `qwen3-tts-mlx`, `chatterbox-mlx`, and `f5-tts-pt-br` using a protocol supervised by the main process.
+- Neural synthesis enabled when the TTS model is installed and `runtime_manifest` points to a compatible local executable.
+- Standalone local Python runtime in `.dreamreader-local/`, ignored by git, for Qwen3-TTS/Chatterbox/F5-TTS-pt-br sidecars and local model weights.
+- Validation that sidecar output paths stay inside the job directory before importing assets.
+- Per-chapter engine, voice, quality, and expressive-narration selectors in the audio panel.
+- Persistent voice profiles, authorized samples, and per-engine bindings in `voice_profiles`, `voice_samples`, and `voice_engine_bindings`.
+- Qwen3-TTS Base (`0.6B` and `1.7B Base`) requires a cloned voice with reference audio and a transcript; prompt presets are restricted to `1.7B VoiceDesign`.
+- Chatterbox Multilingual MLX supports Portuguese through `lang_code=pt`, a default voice or optional reference cloning, and parametric prosody through `exaggeration`/`cfgWeight`.
+- Local cloned-voice manager in the main process, with mandatory consent, sample copy into `voices/`, compatible binding, and local WAV preview.
+- Global and per-book pronunciation dictionary in `pronunciation_entries`, applied to the `NarrationPlan` and versioned in the cache key.
+- Per-chapter audio/cache deletion, removing jobs, segments, audio assets, and the audiobook entry.
+- M4B manifest rebuild/invalidation when chapter audio is regenerated, removed, or changes voice/engine/prosody/dictionary.
+- M4B rebuild failure does not invalidate already generated chapter audio.
 
-Limites conhecidos da fase 4:
+Known Phase 4 limits:
 
-- Os sidecars Qwen3-TTS/Chatterbox/F5-TTS sao executaveis locais configuraveis; o repositorio nao empacota Python/MLX/PyTorch nem pesos de modelo.
-- Downloads multi-arquivo de snapshots TTS continuam como instalacao por pasta local.
-- O export M4B gera arquivo `.m4b` real a partir dos capitulos prontos; capas, tuning de qualidade e empacotamento avancado continuam pendentes.
+- Qwen3-TTS/Chatterbox/F5-TTS sidecars are configurable local executables; the repository does not package Python/MLX/PyTorch or model weights.
+- Multi-file TTS snapshot downloads remain a local-folder installation process.
+- M4B export creates a real `.m4b` from ready chapters; covers, quality tuning, and advanced packaging remain pending.
 
-## Fase 5: Empacotamento Alpha
+## Phase 5: Alpha Packaging
 
-- Instalador macOS primeiro, depois Windows/Linux.
-- Estrategia para Python e dependencias nativas.
-- Gerenciador local de modelos por pasta.
-- Logs e pacote de diagnostico.
-- Backup/exportacao de biblioteca sem copiar livros, opcionalmente com livros.
-- Testes de regressao para importacao, posicao, anotacoes e TTS.
+- macOS installer first, followed by Windows/Linux.
+- Strategy for Python and native dependencies.
+- Local folder-based model manager.
+- Logs and diagnostic package.
+- Library backup/export without copying books, with books as an optional choice.
+- Regression tests for import, position, annotations, and TTS.
 
-## Fase 6: Beta
+## Phase 6: Beta
 
-- Busca no texto completo.
-- PDF como fluxo separado.
-- Melhorias de acessibilidade.
-- Monitoramento opcional de pastas.
-- Importacao/exportacao de marcacoes em formatos externos.
-- Polimento de UI e performance.
+- Full-text search.
+- PDF as a separate workflow.
+- Accessibility improvements.
+- Optional folder monitoring.
+- Import/export of annotations in external formats.
+- UI and performance polish.

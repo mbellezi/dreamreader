@@ -1,175 +1,174 @@
-# DreamReader - Regras de Implementacao
+# DreamReader - Implementation Rules
 
-Este arquivo deve ser seguido por qualquer agente ou subagente que implemente codigo neste projeto.
+This file must be followed by every agent or subagent that implements code in this project.
 
-Se houver conflito entre este arquivo e uma etapa de algum comando dado ao agente ou etapa de implementacao, pare e registre a divergencia antes de implementar.
+If this file conflicts with a step in any command given to the agent or with an implementation step, stop and report the conflict before implementing.
 
-## Principios Gerais
+## General Principles
 
-- O projeto e local-first, TypeScript-first e orientado por contratos.
-- Implemente uma etapa por vez, conforme `docs/04-roadmap.md`.
-- Nao implemente escopo futuro dentro do MVP sem pedido explicito.
-- Preserve as ideias documentadas, mesmo quando estiverem fora da etapa atual.
-- Evite refactors amplos que nao sejam necessarios para a etapa.
-- Nao reverta alteracoes do usuario ou de outros agentes sem pedido explicito.
-- Ao concluir uma etapa, informe arquivos alterados, testes executados, migrations aplicadas e pendencias.
-- Consulte os documentos em `docs/` antes de implementar uma decisao de produto, arquitetura, TTS, LLM, banco, voz ou M4B.
-- Quando houver duvida entre uma implementacao rapida e uma que preserve os contratos documentados, preserve os contratos.
+- The project is local-first, TypeScript-first, and contract-oriented.
+- Implement one stage at a time, following `docs/04-roadmap.md`.
+- Do not implement future scope within the MVP without an explicit request.
+- Preserve documented ideas even when they fall outside the current stage.
+- Avoid broad refactors that are not required for the current stage.
+- Do not revert changes made by the user or other agents without an explicit request.
+- When completing a stage, report changed files, tests run, migrations applied, and pending items.
+- Consult the documents under `docs/` before implementing a product, architecture, TTS, LLM, database, voice, or M4B decision.
+- When choosing between a quick implementation and one that preserves the documented contracts, preserve the contracts.
 
-## Stack Obrigatoria
+## Required Stack
 
-- Desktop: Electron com `electron-vite`.
+- Desktop: Electron with `electron-vite`.
 - Renderer: React 19.
-- CSS/UI: Tailwind CSS 4 e `shadcn/ui`.
-- Icones: preferir `lucide-react`.
-- Backend local: Node.js no main process do Electron.
-- Banco: PGlite.
+- CSS/UI: Tailwind CSS 4 and `shadcn/ui`.
+- Icons: prefer `lucide-react`.
+- Local backend: Node.js in the Electron main process.
+- Database: PGlite.
 - ORM/migrations: Drizzle ORM.
-- Contratos: Zod.
+- Contracts: Zod.
 - Workers: `worker_threads`.
-- Runtime local GGUF: `node-llama-cpp`, por padrao apenas no main process. Worker controlado pelo main process so depois de POC validada no Electron.
-- Runtime local em Apple Silicon: preferir MLX/Metal quando houver adapter estavel e benchmark favoravel; usar `node-llama-cpp` + Metal como baseline GGUF; usar PyTorch MPS quando MLX nao existir; CPU apenas como fallback.
-- TTS local: sempre atraves de adapters e sidecars/processos supervisionados pelo main process. Renderer nunca chama Python, Swift, MLX, PyTorch, ffmpeg ou modelos diretamente.
+- Local GGUF runtime: `node-llama-cpp`, by default only in the main process. A worker controlled by the main process may be used only after a proof of concept has been validated in Electron.
+- Local runtime on Apple Silicon: prefer MLX/Metal when a stable adapter exists and benchmarks are favorable; use `node-llama-cpp` with Metal as the GGUF baseline; use PyTorch MPS when MLX is unavailable; use CPU only as a fallback.
+- Local TTS: always use adapters and sidecars/processes supervised by the main process. The renderer must never call Python, Swift, MLX, PyTorch, FFmpeg, or models directly.
 
-## Fronteiras de Arquitetura
+## Architecture Boundaries
 
-- Renderer nunca acessa banco, filesystem privilegiado, segredos, `node-llama-cpp` ou APIs nativas diretamente.
-- Renderer fala com o backend local apenas via preload seguro e IPC validado por Zod.
-- Main process concentra acesso a banco, filesystem, segredos, runtime local, workers, sidecars de IA, gerenciador de vozes e montagem de audiobooks.
-- Conteudo EPUB/HTML deve ser tratado como nao confiavel. Nao exponha `file://` direto, nao exponha APIs do preload para iframes de conteudo, e bloqueie scripts/navegacao externa por padrao.
-- Excecao do leitor: o navegador Thorium/Readium exige iframes same-origin (via `blob:`) com `allow-scripts` e nao e compativel com React StrictMode. Antes de mexer no leitor de EPUB, leia `docs/10-thorium-reader-troubleshooting.md`. Nao re-sandbox os iframes do Readium para tirar `allow-scripts` nem reintroduza `<StrictMode>` em `src/renderer/main.tsx` sem ler o doc.
-- O renderer deve consumir apenas clientes/contratos de IPC. Nao importe services do main process no renderer.
-- Use `NarrationPlan` como contrato canonico entre normalizacao/prosodia e TTS. Nao espalhe tags proprietarias de Qwen, F5 ou outro motor pela UI ou por services genericos.
-- Vozes clonadas devem ser tratadas como `VoiceProfile` + bindings por engine/adapter. Uma voz so aparece como disponivel quando houver binding compativel e consentimento confirmado.
-- M4B e artefato derivado. Capitulos de audio, manifestos e metadados sao a fonte canonica. Atualize M4B por rebuild atomico a partir de manifesto, nao por append in-place.
+- The renderer must never directly access the database, privileged filesystem, secrets, `node-llama-cpp`, or native APIs.
+- The renderer communicates with the local backend only through a secure preload and IPC validated by Zod.
+- The main process centralizes access to the database, filesystem, secrets, local runtime, workers, AI sidecars, voice manager, and audiobook assembly.
+- EPUB/HTML content must be treated as untrusted. Do not expose direct `file://` access, do not expose preload APIs to content iframes, and block scripts and external navigation by default.
+- Reader exception: the Thorium/Readium reader requires same-origin iframes through `blob:` with `allow-scripts`, and it is not compatible with React StrictMode. Before modifying the EPUB reader, read `docs/10-thorium-reader-troubleshooting.md`. Do not re-sandbox Readium iframes to remove `allow-scripts`, and do not reintroduce `<StrictMode>` in `src/renderer/main.tsx` without reading that document.
+- The renderer must consume only IPC clients/contracts. Do not import main-process services into the renderer.
+- Use `NarrationPlan` as the canonical contract between normalization/prosody and TTS. Do not spread proprietary Qwen, F5, or other engine tags throughout the UI or generic services.
+- Cloned voices must be represented as `VoiceProfile` plus engine/adapter bindings. A voice is available only when it has a compatible binding and confirmed consent.
+- M4B is a derived artifact. Audio chapters, manifests, and metadata are the canonical source. Update M4B through an atomic rebuild from the manifest, not through in-place appends.
 
-## Isolamento, Modularidade e Testabilidade
+## Isolation, Modularity, and Testability
 
-- Mantenha arquivos de entrada/orquestracao pequenos. No renderer, `src/renderer/App.tsx` deve coordenar estado, dados, navegacao e callbacks de alto nivel; nao deve acumular panes, controles reutilizaveis, helpers DOM ou regras puras de negocio/UI.
-- Ao adicionar ou alterar uma tela, separe responsabilidades por modulo:
-  - componentes de UI em `src/renderer/components/`;
-  - tipos e contratos internos da camada em `src/renderer/app/` quando forem compartilhados pela UI;
-  - regras puras e helpers sem React/DOM em `src/renderer/lib/`;
-  - helpers DOM especificos de um componente perto do componente que os usa.
-- Componentes grandes devem ser quebrados por responsabilidade visivel do usuario ou por fronteira tecnica clara. Exemplo: biblioteca, leitor, inspetor, dialogos, toolbars e controles comuns devem viver em arquivos proprios quando crescerem.
-- Nao misture JSX extenso com regras puras testaveis. Extraia calculos, decisoes de status, selecao de item inicial, normalizacao, mapeamento de estado e geometria sem DOM para funcoes puras.
-- Regras extraidas devem receber dados por parametros e retornar dados simples sempre que possivel. Evite depender de estado global, `window`, `document` ou IPC quando a decisao puder ser pura.
-- Ao refatorar para reduzir complexidade, preserve comportamento publicamente observavel e cubra a extracao com testes de regressao proporcionais ao risco.
-- Toda nova regra pura relevante deve ter teste unitario em `tests/`. Para componentes, prefira testes de composicao ou fluxos sem GUI manual quando houver comportamento alem de renderizacao estatica.
-- Antes de concluir um refactor de modularidade, rode ao menos `npm test` e `npm run lint` quando aplicavel; para mudancas no renderer, rode tambem `npm run build` quando a alteracao mexer em imports, bundling ou fronteiras entre arquivos.
+- Keep entry-point and orchestration files small. In the renderer, `src/renderer/App.tsx` should coordinate high-level state, data, navigation, and callbacks; it must not accumulate panes, reusable controls, DOM helpers, or pure business/UI rules.
+- When adding or changing a screen, separate responsibilities by module:
+  - UI components under `src/renderer/components/`;
+  - internal layer types and contracts under `src/renderer/app/` when shared by the UI;
+  - pure rules and helpers without React/DOM under `src/renderer/lib/`;
+  - component-specific DOM helpers close to the component that uses them.
+- Break down large components according to user-visible responsibilities or clear technical boundaries. For example, the library, reader, inspector, dialogs, toolbars, and shared controls should live in separate files as they grow.
+- Do not mix extensive JSX with testable pure rules. Extract calculations, status decisions, initial item selection, normalization, state mapping, and DOM-independent geometry into pure functions.
+- Extracted rules should receive data through parameters and return simple data whenever possible. Avoid global state, `window`, `document`, or IPC dependencies when a decision can be pure.
+- When refactoring to reduce complexity, preserve publicly observable behavior and cover the extraction with regression tests proportional to the risk.
+- Every relevant new pure rule must have a unit test under `tests/`. For components, prefer composition or non-GUI flow tests when behavior extends beyond static rendering.
+- Before completing a modularity refactor, run at least `npm test` and `npm run lint` when applicable. For renderer changes, also run `npm run build` when the change affects imports, bundling, or file boundaries.
 
 ## i18n
 
-- Nunca escreva textos de produto diretamente no codigo.
-- Todo texto visivel ao usuario deve passar por i18n:
+- Never write product text directly in the code.
+- Every user-visible string must go through i18n:
   - labels;
-  - botoes;
+  - buttons;
   - menus;
   - placeholders;
   - tooltips;
-  - mensagens de erro;
-  - mensagens de sucesso;
-  - status de jobs;
-  - comandos;
-  - estados vazios;
+  - error messages;
+  - success messages;
+  - job statuses;
+  - commands;
+  - empty states;
   - dialogs;
-  - notificacoes.
-- Idioma padrao: `pt-BR`.
-- Idiomas iniciais: `en`, `pt-BR`.
-- Mensagens do backend que aparecem na UI tambem devem usar i18n.
-- Strings tecnicas podem ficar no codigo quando forem ids, enums, nomes de tabelas, rotas internas, event names ou constantes de protocolo.
+  - notifications.
+- Default language: `pt-BR`.
+- Initial languages: `en`, `pt-BR`.
+- Backend messages displayed in the UI must also use i18n.
+- Technical strings may remain in code when they are IDs, enums, table names, internal routes, event names, or protocol constants.
 
-## UX e Frontend
+## UX and Frontend
 
-- Construa a experiencia real, nao landing pages.
-- Use componentes `shadcn/ui` e Tailwind CSS 4.
-- Use icons em botoes de ferramentas quando fizer sentido.
-- Use controles adequados:
-  - toggles/checkboxes para booleanos;
-  - selects/menus para opcoes;
-  - tabs para views;
-  - inputs/sliders/steppers para numeros;
-  - tooltips para icones nao obvios.
-- Nao coloque texto de produto hardcoded dentro de componentes.
-- Evite UI dominada por uma unica familia de cor.
-- Garanta que texto nao sobreponha outros elementos.
-- Garanta dimensoes estaveis para toolbars, listas, grids, boards, botoes e tiles.
-- Prefira telas densas, claras e utilitarias. Este e um app de conhecimento, nao uma pagina de marketing.
-- Teste componentes importantes em estados vazios, carregando, erro e sucesso.
+- Build the real product experience, not landing pages.
+- Use `shadcn/ui` components and Tailwind CSS 4.
+- Use icons in tool buttons when appropriate.
+- Use appropriate controls:
+  - toggles/checkboxes for boolean values;
+  - selects/menus for options;
+  - tabs for views;
+  - inputs/sliders/steppers for numbers;
+  - tooltips for non-obvious icons.
+- Do not hardcode product text inside components.
+- Avoid a UI dominated by a single color family.
+- Ensure text does not overlap other elements.
+- Ensure stable dimensions for toolbars, lists, grids, boards, buttons, and tiles.
+- Prefer dense, clear, utilitarian screens. This is a knowledge application, not a marketing page.
+- Test important components in empty, loading, error, and success states.
 
-## Banco, Drizzle e Migrations
+## Database, Drizzle, and Migrations
 
-- Toda mudanca de schema Drizzle exige nova migration via:
+- Every Drizzle schema change requires a new migration generated with:
 
 ```bash
 npm run db:generate
 ```
 
-- Apos gerar migration, aplique pelo fluxo padrao do projeto.
-- Nao considere a task concluida apenas porque `db:migrate` terminou sem erro.
-- Verifique explicitamente no banco real:
-  - historico em `drizzle.__drizzle_migrations`;
-  - estrutura alterada em `information_schema` ou consulta direta na tabela afetada;
-  - indices, constraints, tipos e extensoes quando aplicavel.
-- Inclua no resumo final quais verificacoes foram feitas.
-- Use repositorios do modulo de banco do projeto; nao espalhe SQL ad hoc pela UI ou services.
-- Dimensoes de embeddings diferentes devem ficar separadas por configuracao/indice.
-- PGlite/Drizzle e fonte canonica local no MVP. Arquivos derivados, como audio, voz processada e M4B, ficam no filesystem com metadados no banco.
+- After generating a migration, apply it through the project's standard flow.
+- Do not consider a task complete merely because `db:migrate` finished without an error.
+- Explicitly verify the real database:
+  - migration history in `drizzle.__drizzle_migrations`;
+  - the changed structure in `information_schema` or through a direct query against the affected table;
+  - indexes, constraints, types, and extensions when applicable.
+- Include the performed verification steps in the final summary.
+- Use repositories from the database module; do not spread ad hoc SQL throughout the UI or services.
+- Keep embeddings with different dimensions separated by configuration/index.
+- PGlite/Drizzle is the canonical local source for the MVP. Derived files such as audio, processed voices, and M4B remain on the filesystem with metadata stored in the database.
 
-## Jobs e Workers
+## Jobs and Workers
 
-- Processamento pesado deve rodar em `worker_threads`.
-- Inferencia de TTS/LLM e processos de audio podem rodar em sidecars supervisionados pelo main process quando isso for exigido pelo runtime ou pela performance.
-- Jobs devem ser persistidos no banco.
-- Jobs devem suportar:
+- Heavy processing must run in `worker_threads`.
+- TTS/LLM inference and audio processing may run in sidecars supervised by the main process when required by the runtime or performance characteristics.
+- Jobs must be persisted in the database.
+- Jobs must support:
   - status;
-  - progresso;
-  - erro;
-  - cancelamento quando possivel;
-  - retry simples quando fizer sentido.
-- UI deve acompanhar jobs sem bloquear.
-- Workers nao devem acessar UI.
-- Payloads de workers devem ser validados por Zod quando cruzarem fronteiras.
-- Jobs pesados de LLM/TTS devem respeitar o governador de recursos, especialmente em Apple Silicon. Nao rode inferencias pesadas em paralelo sem justificativa e benchmark.
-- Falha de montagem M4B nao deve invalidar o audio de capitulo ja gerado.
+  - progress;
+  - errors;
+  - cancellation when possible;
+  - simple retry when appropriate.
+- The UI must track jobs without blocking.
+- Workers must not access the UI.
+- Worker payloads must be validated with Zod when they cross boundaries.
+- Heavy LLM/TTS jobs must respect the resource governor, especially on Apple Silicon. Do not run heavy inference tasks in parallel without justification and benchmarks.
+- An M4B assembly failure must not invalidate already generated chapter audio.
 
+## Tests
 
-## Testes
-
-- Criar testes de regressao sempre que pertinente.
-- Preferir testes de:
-  - dominio;
-  - contratos Zod;
-  - repositorios;
+- Create regression tests whenever relevant.
+- Prefer tests for:
+  - domain logic;
+  - Zod contracts;
+  - repositories;
   - services;
   - workers;
   - adapters;
-  - composicao de componentes;
-  - fluxos sem GUI manual.
-- Testes baseados em GUI so quando a natureza do problema exigir.
-- Para adapters, sidecars e motores locais, testar contratos com mocks quando possivel.
-- Para migrations, sempre testar aplicacao e verificacao real no banco.
+  - component composition;
+  - flows that do not require a manual GUI.
+- Use GUI-based tests only when required by the nature of the problem.
+- For adapters, sidecars, and local engines, test contracts with mocks whenever possible.
+- For migrations, always test real application and verification against the database.
 
-## Seguranca e Privacidade
+## Security and Privacy
 
-- Nao logar segredos.
-- Nao armazenar API keys em texto puro no banco.
-- Validar todos os payloads externos.
-- Canais IPC, sidecars e qualquer interface local devem autenticar/autorizar ou limitar clientes quando aplicavel.
-- Rejeitar paths inseguros.
-- Respeitar politicas de privacidade local/remoto do perfil ativo.
-- Nao enviar conteudo a provedor remoto se o perfil/tarefa exigir offline.
-- Livros, marcacoes, audios, vozes clonadas, samples de referencia e manifests de M4B devem permanecer locais por padrao.
-- Nao incluir livros, audios, samples de voz, embeddings de voz ou vozes clonadas em logs, diagnosticos ou exports tecnicos sem confirmacao explicita do usuario.
-- Voice cloning exige consentimento explicito registrado antes da voz ficar disponivel para geracao.
+- Do not log secrets.
+- Do not store API keys as plain text in the database.
+- Validate all external payloads.
+- IPC channels, sidecars, and every local interface must authenticate/authorize or restrict clients when applicable.
+- Reject unsafe paths.
+- Respect the active profile's local/remote privacy policies.
+- Do not send content to a remote provider when the profile or task requires offline operation.
+- Books, annotations, audio, cloned voices, reference samples, and M4B manifests must remain local by default.
+- Do not include books, audio, voice samples, voice embeddings, or cloned voices in logs, diagnostics, or technical exports without explicit user confirmation.
+- Voice cloning requires explicitly recorded consent before a voice becomes available for generation.
 
-## Entrega de Cada Etapa
+## Delivery for Each Stage
 
-Ao terminar uma etapa, informe:
+When completing a stage, report:
 
-- arquivos criados/alterados;
-- comandos executados;
-- testes executados;
-- migrations geradas;
-- verificacao pos-migration feita;
-- pendencias;
+- files created or changed;
+- commands run;
+- tests run;
+- migrations generated;
+- post-migration verification performed;
+- pending items.

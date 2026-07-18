@@ -1,38 +1,39 @@
-# DreamReader - Mapa do Projeto
+# DreamReader — Project Map
 
-Este mapa orienta agentes e subagentes sobre onde procurar contexto antes de alterar o projeto.
+This map guides agents and subagents to the right context before changing the project.
 
-## Documentacao
+## Documentation
 
-- `README.md`: visao geral do produto, stack e comandos principais.
-- `docs/00-product-spec.md`: especificacao de produto.
-- `docs/01-architecture.md`: arquitetura Electron, renderer, main, workers e sidecars.
-- `docs/02-ai-tts-pipeline.md`: pipeline planejado de IA/TTS, normalizacao, prosodia e cache de audio.
-- `docs/03-data-model.md`: modelo de dados local, PGlite e Drizzle.
-- `docs/04-roadmap.md`: fases de implementacao.
-- `docs/05-research-notes.md`: notas de pesquisa e verificacoes tecnicas iniciais.
-- `docs/06-apple-silicon-performance.md`: estrategia para LLM/TTS local em Apple Silicon.
-- `docs/07-tts-prosody-abstractions.md`: contratos de prosodia, TTS e modelos locais.
-- `docs/08-audiobook-m4b.md`: montagem incremental de M4B.
-- `docs/09-readium-poc.md`: POC do Readium Web (CLI, manifesto, ts-toolkit).
-- `docs/10-thorium-reader-troubleshooting.md`: armadilhas do leitor Thorium/Readium (iframe same-origin + allow-scripts, StrictMode, fragilidade do PGlite de dev).
+- `README.md`: product overview, stack, and main commands.
+- `docs/00-product-spec.md`: product specification.
+- `docs/01-architecture.md`: Electron, renderer, main process, worker, and sidecar architecture.
+- `docs/02-ai-tts-pipeline.md`: planned AI/TTS pipeline, normalization, prosody, and audio cache.
+- `docs/03-data-model.md`: local data model, PGlite, and Drizzle.
+- `docs/04-roadmap.md`: implementation phases.
+- `docs/05-research-notes.md`: research notes and initial technical verification.
+- `docs/06-apple-silicon-performance.md`: local LLM/TTS strategy for Apple Silicon.
+- `docs/07-tts-prosody-abstractions.md`: prosody, TTS, and local-model contracts.
+- `docs/08-audiobook-m4b.md`: incremental M4B assembly.
+- `docs/09-readium-poc.md`: Readium Web POC (CLI, manifest, and ts-toolkit).
+- `docs/10-thorium-reader-troubleshooting.md`: Thorium/Readium reader pitfalls (same-origin iframe + allow-scripts, StrictMode, and fragile dev PGlite).
+- `docs/11-build-bundles.md`: cross-platform bundle build instructions.
 
-## Codigo
+## Code
 
-- `src/shared/contracts/`: contratos Zod canonicos compartilhados.
-- `src/main/`: main process do Electron, banco, IPC e services locais.
-- `src/preload/`: ponte segura entre renderer e main.
-- `src/renderer/App.tsx`: orquestracao de alto nivel da UI.
-- `src/renderer/components/`: panes, controles e componentes React modulares.
-- `src/renderer/app/`: tipos internos compartilhados pela UI.
-- `src/renderer/lib/`: cliente do preload, helpers puros, paginacao, anotacoes e fallback renderer.
-- `src/main/db/schema.ts`: schema Drizzle canonico.
-- `drizzle/`: migrations geradas.
-- `tests/`: testes de contratos e regressao.
+- `src/shared/contracts/`: canonical shared Zod contracts.
+- `src/main/`: Electron main process, database, IPC, and local services.
+- `src/preload/`: secure bridge between renderer and main process.
+- `src/renderer/App.tsx`: high-level UI orchestration.
+- `src/renderer/components/`: modular panes, controls, and React components.
+- `src/renderer/app/`: shared internal UI types.
+- `src/renderer/lib/`: preload client, pure helpers, pagination, annotations, and fallback renderer.
+- `src/main/db/schema.ts`: canonical Drizzle schema.
+- `drizzle/`: generated migrations.
+- `tests/`: contract and regression tests.
 
-## Regras de Trabalho
+## Working Rules
 
-- Leia `RULES.md` e `GUIDELINES_GTP.md` antes de editar.
-- Preserve os contratos em `src/shared/contracts/` como fonte da verdade.
-- Renderer nunca acessa banco, filesystem privilegiado, modelos ou sidecars diretamente.
-- Fases futuras devem seguir `docs/04-roadmap.md`; nao antecipe escopo pesado sem pedido explicito.
+- Read `RULES.md` and `GUIDELINES_GTP.md` before editing.
+- Preserve the contracts in `src/shared/contracts/` as the source of truth.
+- The renderer never accesses the database, privileged filesystem, models, or sidecars directly.
+- Future phases must follow `docs/04-roadmap.md`; do not anticipate heavy scope without an explicit request.

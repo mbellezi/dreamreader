@@ -1,9 +1,9 @@
-# Instruções de código do GPT
+# GPT Coding Instructions
 
-Antes de realizar qualquer ação neste repositório, leia e siga:
+Before taking any action in this repository, read and follow:
 
-1. `RULES.md` ou @RULES.md — instruções compartilhadas do projeto para agentes de codificação de IA.
+1. `RULES.md` or @RULES.md — shared project instructions for AI coding agents.
 
-2. `GUIDELINES_GTP.md` ou @GUIDELINES_GTP.md — instruções específicas do projeto para agentes de codificação de IA.
+2. `GUIDELINES_GTP.md` or @GUIDELINES_GTP.md — project-specific instructions for AI coding agents.
 
-3. `MAPA.md` ou @MAPA.md — mapa do projeto para agentes de codificação de IA.
+3. `MAPA.md` or @MAPA.md — project map for AI coding agents.

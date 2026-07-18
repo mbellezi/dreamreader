@@ -1,97 +1,58 @@
-# Leitor Thorium/Readium - Armadilhas e Diagnostico
+# Thorium/Readium Reader — Pitfalls and Troubleshooting
 
-Este documento registra descobertas nao obvias sobre o leitor de EPUB
-(`@edrlab/thorium-web` + `@readium/navigator`) que ja causaram o bug
-"leitor preso na capa, sem paginacao e sem navegacao pelo Sumario".
+This document records non-obvious findings about the EPUB reader
+(`@edrlab/thorium-web` + `@readium/navigator`) that have already caused the bug
+“reader stuck on the cover, with no pagination or table-of-contents navigation.”
 
-Leia antes de mexer em:
+Read this before changing:
 
 - `src/renderer/components/thorium/ThoriumReaderPane.tsx`
-- `src/renderer/main.tsx` (montagem do React)
-- `src/main/protocol/asset-protocol.ts` (protocolo `dreamreader://` + manifesto/positions)
-- CSP em `src/renderer/index.html`
+- `src/renderer/main.tsx` (React mount)
+- `src/main/protocol/asset-protocol.ts` (`dreamreader://` protocol + manifest/positions)
+- CSP in `src/renderer/index.html`
 
-## Como o leitor funciona (modelo mental)
+## How the Reader Works (Mental Model)
 
-- Cada recurso do spine e renderizado num `<iframe>` cujo conteudo e uma URL
-  `blob:` montada por `FrameBlobBuilder` (NAO carrega `dreamreader://` direto no
-  iframe). O blob herda a origem do renderer, entao o iframe fica **same-origin**
-  com o app.
-- O Readium dirige esse iframe a partir do realm do pai (renderer) via acesso
-  direto ao DOM (`contentWindow.addEventListener`, `contentDocument`). Por isso o
-  iframe precisa ser same-origin e manter `sandbox="allow-same-origin allow-scripts"`.
-- A paginacao em colunas e os comandos `go_next`/`go_prev`/`go()` sao
-  implementados pelos *injectables* (`ColumnSnapper` etc.). Se eles nao montam,
-  a navegacao silenciosamente para de funcionar.
-- Os dados de navegacao (`readingOrder`, `toc`, `positions`) vem do manifesto
-  Readium reescrito em `asset-protocol.ts`, todos como
-  `dreamreader://publication/<id>/resource/<path>`. O casamento de href e
-  comparacao exata de string (`Link.findWithHref`), e ja foi verificado correto.
+- Each spine resource is rendered in an `<iframe>` whose content is a `blob:` URL assembled by `FrameBlobBuilder` (it does **not** load `dreamreader://` directly in the iframe). The blob inherits the renderer origin, so the iframe is **same-origin** with the app.
+- Readium drives this iframe from the parent realm (renderer) through direct DOM access (`contentWindow.addEventListener`, `contentDocument`). The iframe therefore needs to be same-origin and keep `sandbox="allow-same-origin allow-scripts"`.
+- Column pagination and the `go_next`/`go_prev`/`go()` commands are implemented by injectables (`ColumnSnapper`, etc.). If they fail to mount, navigation silently stops working.
+- Navigation data (`readingOrder`, `toc`, `positions`) comes from the Readium manifest rewritten in `asset-protocol.ts`, all as `dreamreader://publication/<id>/resource/<path>`. Href matching uses exact string comparison (`Link.findWithHref`), and has been verified as correct.
 
-## Bug 1 - sandbox sem `allow-scripts`
+## Bug 1 — Sandbox Without `allow-scripts`
 
-Um patch (`installReadiumIframeSandboxPatch`) forcava
-`sandbox="allow-same-origin"` nos iframes `.readium-navigator-iframe`, removendo
-`allow-scripts`. Sem scripts, os injectables nao montam -> paginacao morta,
-clique no Sumario nao sai da capa. A capa ainda aparece porque imagem e
-renderizacao nativa do iframe, que nao depende de script.
+A patch (`installReadiumIframeSandboxPatch`) forced
+`sandbox="allow-same-origin"` on `.readium-navigator-iframe` iframes, removing
+`allow-scripts`. Without scripts, injectables do not mount: pagination dies and
+clicking the table of contents does not leave the cover. The cover still appears
+because image/native iframe rendering does not depend on scripts.
 
-**Regra:** nunca re-sandbox os iframes de conteudo do Readium para tirar
-`allow-scripts`. Isso conflita com "EPUB e nao confiavel" do `RULES.md`, mas o
-Readium exige scripts no conteudo; e um trade-off inerente ao leitor escolhido.
-O proprio Readium injeta uma CSP restritiva dentro do blob.
+**Rule:** never re-sandbox Readium content iframes to remove `allow-scripts`. This conflicts with the “EPUB is untrusted” rule in `RULES.md`, but Readium requires scripts in the content; it is an inherent trade-off of the selected reader. Readium itself injects a restrictive CSP inside the blob.
 
-## Bug 2 - React StrictMode duplica o navigator (o que realmente prendia na capa)
+## Bug 2 — React StrictMode Duplicates the Navigator (What Actually Kept the Cover Visible)
 
-Com `<StrictMode>` em `main.tsx`, em **desenvolvimento** o React monta o leitor
-duas vezes. Resultado: `EpubNavigator.load()` roda 2x e **dois navigators**
-acrescentam iframes no **mesmo container**. O navigator orfao deixa o iframe da
-capa `visibility:visible` por cima, escondendo o navigator que funciona embaixo.
-A navegacao funciona internamente (`currentLocator` muda), mas a tela nunca muda.
+With `<StrictMode>` in `main.tsx`, React mounts the reader twice in **development**. As a result, `EpubNavigator.load()` runs twice and **two navigators** append iframes to the **same container**. The orphan navigator leaves the cover iframe `visibility:visible` on top, hiding the working navigator underneath. Navigation works internally (`currentLocator` changes), but the screen never changes.
 
-So acontece em dev (StrictMode nao re-invoca efeitos em build de producao). O
-teardown do `StatefulReaderWrapper` nao e nosso para corrigir.
+This happens only in dev (StrictMode does not re-invoke effects in a production build). Teardown of `StatefulReaderWrapper` is not ours to fix.
 
-**Correcao aplicada:** remover `<StrictMode>` em `src/renderer/main.tsx`
-(ver comentario no arquivo). Nao readicionar sem antes garantir que o leitor
-sobrevive a montagem dupla.
+**Applied fix:** remove `<StrictMode>` from `src/renderer/main.tsx` (see the comment in that file). Do not add it back without first ensuring that the reader survives double mounting.
 
-## Como diagnosticar problemas de navegacao
+## How to Troubleshoot Navigation Problems
 
-1. **`ColumnSnapper Mounted` no console do renderer** - se nao aparece, os
-   injectables nao montaram (suspeite de sandbox/scripts/origem).
-2. **Conte `EpubNavigator.load()`** - tem que ser 1 por livro aberto. 2 = montagem
-   dupla (StrictMode/remontagem).
-3. **Conte iframes visiveis** - `document.querySelectorAll('iframe.readium-navigator-iframe')`
-   com `visibility:visible` deve ser exatamente 1.
-4. **Verifique o iframe VISIVEL, nao so o `currentLocator`** - chamar
-   `navigator.goForward()` e olhar `currentLocator` engana: ele avanca
-   internamente mesmo com a capa orfa cobrindo a tela. Confira o conteudo
-   (`contentDocument.body.textContent`) do iframe visivel.
-5. Para reproduzir sem tela, da para abrir o leitor por codigo (default view +
-   `selectedBook`) e instrumentar `EpubNavigator.prototype`. Sempre **remova a
-   instrumentacao** ao terminar.
+1. **`ColumnSnapper Mounted` in the renderer console** — if it does not appear, injectables did not mount (suspect sandbox/scripts/origin).
+2. **Count `EpubNavigator.load()`** — it must be 1 per opened book. 2 means double mounting (StrictMode/remount).
+3. **Count visible iframes** — `document.querySelectorAll('iframe.readium-navigator-iframe')` with `visibility:visible` must return exactly 1.
+4. **Check the VISIBLE iframe, not only `currentLocator`** — calling `navigator.goForward()` and inspecting `currentLocator` can mislead: it advances internally even while an orphan cover hides the screen. Inspect the visible iframe content (`contentDocument.body.textContent`).
+5. To reproduce without the screen, open the reader by code (default view + `selectedBook`) and instrument `EpubNavigator.prototype`. Always **remove the instrumentation** when finished.
 
-## Banco PGlite de desenvolvimento e fragil
+## Development PGlite Database Is Fragile
 
-- O DB de dev fica em `.dreamreader-dev/db/pglite`.
-- Ele corrompe (`Aborted(). Build with -sASSERTIONS`) se o Electron for morto
-  (SIGKILL/SIGTERM) no meio de uma escrita, ou se outro processo Node abrir o
-  mesmo diretorio enquanto o app roda. Hoje o app **nao fecha o PGlite no quit**
-  (`src/main/index.ts` nao tem `before-quit`) - melhoria recomendada.
-- Escritas de posicao de leitura acontecem a cada virada de pagina; testes que
-  navegam por codigo geram essas escritas. Para testar com seguranca, evite
-  matar o app logo apos navegar.
-- **Recuperacao** (perde so o DB; os EPUBs ficam em
-  `~/Library/Application Support/DreamReader/library/books/<sha256>.epub`):
-  mova o diretorio corrompido para o lado, rode `npm run db:migrate` e reinsira
-  as linhas de `books`. O nome do arquivo (hex) E o `content_hash`. O leitor
-  serve o conteudo direto do zip via `library_path`, entao so a linha de `books`
-  e necessaria para ler (nao precisa de `assets`). O `manifest_json` armazenado
-  (campo `readiumManifest`) usa hrefs relativos, independente do id do livro.
+- The dev database is at `.dreamreader-dev/db/pglite`.
+- It can become corrupt (`Aborted(). Build with -sASSERTIONS`) if Electron is killed (SIGKILL/SIGTERM) during a write, or if another Node process opens the same directory while the app is running. The app currently **does not close PGlite on quit** (`src/main/index.ts` has no `before-quit`) — this is a recommended improvement.
+- Reading-position writes happen on every page turn; tests that navigate by code generate these writes. For safe testing, avoid killing the app immediately after navigating.
+- **Recovery** (only the DB is lost; EPUBs remain at
+  `~/Library/Application Support/DreamReader/library/books/<sha256>.epub`): move the corrupt directory aside, run `npm run db:migrate`, and reinsert the `books` rows. The filename (hex) **is** the `content_hash`. The reader serves content directly from the zip through `library_path`, so only the `books` row is needed to read (no `assets` row is required). The stored `manifest_json` (`readiumManifest` field) uses relative hrefs, independent of the book ID.
 
-## Pendencias conhecidas (fora do escopo do bug original)
+## Known Follow-ups (Outside the Original Bug Scope)
 
-- Fechar o PGlite no `before-quit` para evitar corrupcao em saidas abruptas.
-- Fontes do Google (`fonts.googleapis.com`) sao bloqueadas pela CSP do leitor;
-  cai em fonte do sistema. Preferir fontes empacotadas (alinhado ao local-first).
+- Close PGlite in `before-quit` to avoid corruption on abrupt exits.
+- Google Fonts (`fonts.googleapis.com`) are blocked by the reader CSP and fall back to a system font. Prefer bundled fonts, aligned with the local-first design.

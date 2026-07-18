@@ -1,24 +1,20 @@
-# POC Readium Web
+# Readium Web POC
 
-## Objetivo
+## Objective
 
-Avaliar se a stack Readium Web pode substituir ou reduzir o parser EPUB proprio do
-DreamReader, principalmente nos casos em que NCX, spine, anchors e subnavegacao
-geram capitulos incorretos.
+Evaluate whether the Readium Web stack can replace or reduce DreamReader's custom EPUB parser, especially where NCX, spine, anchors, and sub-navigation produce incorrect chapters.
 
-Referencia oficial:
+Official references:
 
 - https://readium.org/web/
 - https://github.com/readium/cli
 - https://github.com/readium/ts-toolkit
 
-## Escopo testado
+## Tested Scope
 
-Esta POC usa o Readium CLI v0.8.0 como fronteira inicial, porque o comando
-`readium manifest` gera um Readium Web Publication Manifest a partir de um EPUB.
-Esse manifesto e a API estrutural que o `ts-toolkit`/navegador consome.
+This POC uses Readium CLI v0.8.0 as the initial boundary because the `readium manifest` command generates a Readium Web Publication Manifest from an EPUB. This manifest is the structural API consumed by `ts-toolkit`/the browser.
 
-O binario nao foi adicionado ao repositorio. Para repetir localmente:
+The binary was not added to the repository. To repeat locally:
 
 ```bash
 curl -L https://github.com/readium/cli/releases/download/v0.8.0/readium_darwin_arm64.tar.gz -o /tmp/readium_darwin_arm64.tar.gz
@@ -27,64 +23,57 @@ tar -xf /tmp/readium_darwin_arm64.tar.gz -C /tmp
 READIUM_BIN=/tmp/readium npm run poc:readium
 ```
 
-Checksum observado para o arquivo macOS arm64:
+Checksum observed for the macOS arm64 file:
 
 ```text
 640174ce14c81c66ae3122cd72fcf6ffcdd8aa2d97bc86a4643a5e8ad6b3ff0c
 ```
 
-## Resultados
+## Results
 
-EPUBs locais testados:
+Local EPUBs tested:
 
-| Arquivo | Reading order | TOC top-level | TOC total | Profundidade | Hrefs invalidos |
+| File | Reading order | Top-level TOC | Total TOC | Depth | Invalid hrefs |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | `Os astros sempre nos acompanham.epub` | 72 | 16 | 225 | 3 | 0 |
 | `Seth Fala - Jane Roberts.epub` | 5 | 23 | 23 | 1 | 0 |
 | `Corpus hermeticum graecum.epub` | 40 | 39 | 39 | 1 | 0 |
 | `The Sacred Mushroom.epub` | 35 | 11 | 29 | 2 | 0 |
 
-Observacoes:
+Observations:
 
-- Readium preserva a hierarquia real do TOC. No livro dos astros, isso evita a
-  falsa escolha entre "achatar tudo" e "usar so nivel 1".
-- Readium mantem `readingOrder` separado do `toc`. Essa separacao e importante:
-  o `readingOrder` representa a ordem de leitura do pacote; o `toc` representa a
-  navegacao editorial.
-- EPUBs Calibre-style com varios anchors no mesmo arquivo continuam bem
-  representados: `Seth Fala` tem 5 itens no `readingOrder` e 23 entradas de TOC.
-- A POC nao resolve sozinha a regra de "o que e capitulo de audio/leitura" no
-  DreamReader. Ela fornece uma fonte estrutural melhor; ainda precisamos de uma
-  politica nossa para transformar RWPM em capitulos do app.
+- Readium preserves the real table-of-contents hierarchy. In the stars book, this avoids the false choice between flattening everything and using only level 1.
+- Readium keeps `readingOrder` separate from `toc`. This distinction matters: `readingOrder` represents package reading order; `toc` represents editorial navigation.
+- Calibre-style EPUBs with multiple anchors in one file remain well represented: `Seth Fala` has 5 `readingOrder` items and 23 TOC entries.
+- The POC does not by itself resolve DreamReader's rule for what counts as a reading/audio chapter. It provides a better structural source; the app still needs its own policy for converting RWPM into chapters.
 
-## Leitura tecnica
+## Technical Reading
 
-Readium parece vantajoso como fonte canonica de estrutura EPUB:
+Readium appears advantageous as the canonical EPUB structure source:
 
-- reduz heuristicas proprias de OPF/NCX/nav/spine;
-- preserva hierarquia e anchors sem flattening destrutivo;
-- gera um contrato padrao, o Readium Web Publication Manifest;
-- abre caminho para usar `ts-toolkit`/navigator no renderer futuramente.
+- reduces custom OPF/NCX/nav/spine heuristics;
+- preserves hierarchy and anchors without destructive flattening;
+- generates a standard contract, the Readium Web Publication Manifest;
+- opens a path to using `ts-toolkit`/navigator in the renderer later.
 
-O custo de adocao nao e zero:
+Adoption cost is not zero:
 
-- o app atual persiste `ReaderManifest`, nao RWPM;
-- TTS, anotacoes, progresso e recursos esperam `chapter.href` e conteudo HTML;
-- para usar o navigator Readium no Electron, ainda sera necessario servir
-  recursos locais com uma fronteira segura, sem `file://`.
+- the current app persists `ReaderManifest`, not RWPM;
+- TTS, annotations, progress, and resources expect `chapter.href` and HTML content;
+- using the Readium navigator in Electron still requires serving local resources through a secure boundary, without `file://`.
 
-## Proxima etapa recomendada
+## Recommended Next Step
 
-Criar um adapter experimental:
+Create an experimental adapter:
 
 ```text
-EPUB local -> Readium manifest -> DreamReader ReaderManifest experimental
+Local EPUB -> Readium manifest -> experimental DreamReader ReaderManifest
 ```
 
-O adapter deve:
+The adapter should:
 
-- preservar `readingOrder` e `toc` originais no `manifestJson`;
-- mapear `readingOrder` para recursos navegaveis;
-- derivar capitulos DreamReader a partir do TOC com politica explicita;
-- manter fallback para o parser atual enquanto a POC amadurece;
-- rodar testes com os quatro EPUBs reais e os EPUBs sinteticos existentes.
+- preserve the original `readingOrder` and `toc` in `manifestJson`;
+- map `readingOrder` to navigable resources;
+- derive DreamReader chapters from the TOC using an explicit policy;
+- keep a fallback to the current parser while the POC matures;
+- run tests with the four real EPUBs and existing synthetic EPUBs.

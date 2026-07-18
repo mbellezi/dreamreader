@@ -1,145 +1,145 @@
-# Performance em Apple Silicon
+# Apple Silicon Performance
 
-## Objetivo
+## Objective
 
-O app deve extrair a melhor performance possivel de Apple Silicon sem amarrar a arquitetura a um unico runtime. A politica e:
+The app should extract the best possible performance from Apple Silicon without tying the architecture to a single runtime. The policy is:
 
-1. Preferir runtime nativo/otimizado para Apple Silicon quando estiver maduro.
-2. Manter fallback estavel e simples.
-3. Medir tudo no dispositivo do usuario/desenvolvimento antes de declarar um caminho como padrao.
+1. Prefer a native/optimized Apple Silicon runtime when it is mature.
+2. Keep a stable, simple fallback.
+3. Measure everything on the user's/developer's device before declaring a path the default.
 
-## Ordem de Preferencia por Tipo de Modelo
+## Preference Order by Model Type
 
-### LLM de Prosodia
+### Prosody LLM
 
-1. MLX com modelo pequeno quantizado, se houver modelo equivalente estavel e adapter pronto.
-2. `node-llama-cpp` com GGUF + Metal.
-3. CPU somente para diagnostico ou fallback.
+1. MLX with a small quantized model, when a stable equivalent model and adapter are available.
+2. `node-llama-cpp` with GGUF + Metal.
+3. CPU only for diagnostics or fallback.
 
-Observacoes:
+Notes:
 
-- O LLM de prosodia deve ser pequeno. Ele gera JSON curto, nao precisa de raciocinio longo.
-- Usar batches de segmentos para reduzir overhead, mas manter contexto curto.
-- Ativar prompt/schema caching quando o runtime permitir.
-- Temperatura baixa e output estruturado reduzem repeticoes e retries.
+- The prosody LLM should be small. It generates short JSON and does not need long reasoning.
+- Batch segments to reduce overhead while keeping context short.
+- Enable prompt/schema caching when the runtime supports it.
+- Low temperature and structured output reduce repetitions and retries.
 
 ### Qwen3-TTS
 
-1. MLX, preferencialmente em processo long-lived.
-2. Swift/MLX como alternativa futura se eliminar overhead de Python trouxer ganho claro.
-3. PyTorch MPS/CUDA/CPU como fallback por plataforma.
+1. MLX, preferably in a long-lived process.
+2. Swift/MLX as a future alternative if eliminating Python overhead provides a clear gain.
+3. PyTorch MPS/CUDA/CPU as a platform fallback.
 
-Observacoes:
+Notes:
 
-- Qwen3-TTS tem variantes 0.6B e 1.7B; o app deve tratar tamanho como configuracao de qualidade/performance.
-- Benchmarks devem comparar 0.6B vs 1.7B, fp32/bf16/quantizado quando houver conversoes confiaveis.
-- Nao assumir que menor dtype sempre e mais rapido em Apple Silicon; medir RTF e qualidade.
+- Qwen3-TTS has 0.6B and 1.7B variants; the app should treat size as a quality/performance setting.
+- Benchmarks should compare 0.6B versus 1.7B and fp32/bf16/quantized variants when reliable conversions exist.
+- Do not assume a smaller dtype is always faster on Apple Silicon; measure RTF and quality.
 
 ### F5-TTS-pt-br
 
-1. PyTorch MPS se o grafo/opset rodar corretamente.
-2. CPU fallback com aviso de performance.
-3. MLX somente se surgir port/conversao confiavel e validada.
+1. PyTorch MPS when the graph/opset runs correctly.
+2. CPU fallback with a performance warning.
+3. MLX only if a reliable, validated port/conversion appears.
 
-Observacoes:
+Notes:
 
-- F5-TTS-pt-br e forte para PT-BR, mas pode ser o caminho mais dificil de acelerar.
-- O adapter deve isolar dependencias e permitir substituir a implementacao sem mudar o pipeline.
+- F5-TTS-pt-br is strong for Brazilian Portuguese, but it may be the hardest path to accelerate.
+- The adapter should isolate dependencies and allow the implementation to be replaced without changing the pipeline.
 
 ### Chatterbox Multilingual
 
-1. MLX via `mlx-audio`, preferencialmente em processo sidecar supervisionado.
-2. PyTorch apenas como fallback/POC fora do caminho principal.
+1. MLX through `mlx-audio`, preferably in a supervised sidecar process.
+2. PyTorch only as a fallback/POC outside the main path.
 
-Observacoes:
+Notes:
 
-- O modelo MLX `mlx-community/chatterbox-fp16` suporta portugues via `lang_code=pt`.
-- A prosodia deve usar controles expostos pelo modelo (`exaggeration` e CFG), preservando o plano canonico do app.
-- Voz de referencia e opcional; quando usada, a amostra deve combinar com o idioma selecionado para evitar transferencia indesejada de sotaque.
+- The `mlx-community/chatterbox-fp16` model supports Portuguese through `lang_code=pt`.
+- Prosody should use the model's exposed controls (`exaggeration` and CFG), preserving the app's canonical plan.
+- A reference voice is optional; when used, the sample should match the selected language to avoid unwanted accent transfer.
 
-## Processos Long-lived
+## Long-lived Processes
 
-Nao iniciar Python ou carregar modelo por segmento. Cada runtime pesado deve funcionar como sidecar:
+Do not start Python or load a model per segment. Each heavy runtime should run as a sidecar:
 
-- `start`: carrega runtime e modelo.
-- `warmup`: roda uma inferencia curta descartavel.
-- `synthesize` ou `analyze`: processa lote.
-- `cancel`: interrompe job sem matar o processo quando possivel.
-- `health`: retorna estado, memoria estimada e acelerador.
-- `shutdown`: libera modelo apos timeout configuravel.
+- `start`: load the runtime and model.
+- `warmup`: run a short disposable inference.
+- `synthesize` or `analyze`: process a batch.
+- `cancel`: interrupt a job without killing the process when possible.
+- `health`: return state, estimated memory, and accelerator.
+- `shutdown`: release the model after a configurable timeout.
 
-Timeout inicial sugerido:
+Suggested initial timeouts:
 
-- LLM: desalocar apos 2 a 5 minutos ocioso.
-- TTS: desalocar apos 5 a 15 minutos ocioso, porque o custo de carregar modelo tende a ser maior.
+- LLM: unload after 2 to 5 idle minutes.
+- TTS: unload after 5 to 15 idle minutes because model loading tends to cost more.
 
-## Governador de Recursos
+## Resource Governor
 
-Apple Silicon usa memoria unificada. Isso ajuda, mas tambem significa que UI, Electron, banco, LLM e TTS competem pelo mesmo orcamento fisico.
+Apple Silicon uses unified memory. This helps, but it also means that the UI, Electron, database, LLM, and TTS compete for the same physical budget.
 
-Politica inicial:
+Initial policy:
 
-- Um job pesado por vez usando acelerador.
-- TTS tem prioridade sobre LLM quando o usuario pediu audio explicitamente.
-- Player, leitura e UI tem prioridade sobre qualquer job de background.
-- Indexacao e normalizacao rodam em CPU com baixa prioridade.
-- Ao detectar memoria baixa, pausar fila de TTS antes de degradar a UI.
+- One heavy accelerator job at a time.
+- TTS takes priority over the LLM when the user explicitly requests audio.
+- Player, reading, and UI take priority over any background job.
+- Indexing and normalization run on CPU at low priority.
+- When memory is low, pause the TTS queue before degrading the UI.
 
-Perfis:
+Profiles:
 
-- `quiet`: baixa concorrencia, pausas maiores, bom para bateria/fanless.
-- `balanced`: padrao.
-- `maximum`: usa o maximo aceitavel, com aviso de aquecimento/consumo.
+- `quiet`: low concurrency and longer pauses, suitable for battery/fanless systems.
+- `balanced`: default.
+- `maximum`: uses the highest acceptable level, with a heat/power warning.
 
-## Metricas Obrigatorias
+## Required Metrics
 
-Registrar por runtime/modelo:
+Record for each runtime/model:
 
-- `coldStartMs`: tempo ate o modelo responder.
-- `warmStartMs`: tempo com modelo carregado.
-- `peakMemoryMb`: memoria de pico.
-- `rtf`: real-time factor para TTS.
-- `tokensPerSecond`: LLM.
-- `timeToFirstTokenMs`: LLM.
-- `segmentsPerMinute`: pipeline completo.
-- `failures`: erros por tipo.
-- `accelerator`: `mlx`, `metal`, `mps` ou `cpu`.
-- `deviceProfile`: chip, memoria, macOS e versoes de runtime.
+- `coldStartMs`: time until the model responds.
+- `warmStartMs`: time with the model already loaded.
+- `peakMemoryMb`: peak memory.
+- `rtf`: real-time factor for TTS.
+- `tokensPerSecond`: LLM throughput.
+- `timeToFirstTokenMs`: LLM latency.
+- `segmentsPerMinute`: complete pipeline throughput.
+- `failures`: errors by type.
+- `accelerator`: `mlx`, `metal`, `mps`, or `cpu`.
+- `deviceProfile`: chip, memory, macOS, and runtime versions.
 
-Essas metricas devem alimentar `performance_profile_json` e a tela de diagnostico.
+These metrics should feed `performance_profile_json` and the diagnostics screen.
 
-## Cache Para Performance
+## Performance Cache
 
-Cachear:
+Cache:
 
-- Texto extraido por capitulo.
-- Segmentacao.
-- Normalizacao PT-BR.
-- Analise de prosodia.
-- Audio por segmento.
-- Manifesto de duracoes.
+- Extracted chapter text.
+- Segmentation.
+- PT-BR normalization.
+- Prosody analysis.
+- Audio per segment.
+- Duration manifest.
 
-Invalidar somente o que mudou:
+Invalidate only what changed:
 
-- Mudou dicionario de pronuncia: normalizacao/prosodia/audio dos segmentos afetados.
-- Mudou prompt/schema do LLM: prosodia/audio.
-- Mudou motor/modelo/voz: audio.
-- Mudou texto original: tudo do capitulo afetado.
+- Pronunciation dictionary changed: normalization/prosody/audio for affected segments.
+- LLM prompt/schema changed: prosody/audio.
+- Engine/model/voice changed: audio.
+- Original text changed: everything for the affected chapter.
 
-## Empacotamento no macOS
+## macOS Packaging
 
-- Modelos e runtimes ficam fora do ASAR.
-- `node-llama-cpp` deve permanecer external no bundling.
-- MLX/Python deve ser instalado por ambiente controlado ou runtime empacotado por plataforma.
-- O gerenciador de modelos deve aceitar pastas locais ja baixadas.
-- O app deve mostrar claramente qual runtime esta ativo: MLX, Metal/GGUF, MPS ou CPU.
+- Models and runtimes stay outside ASAR.
+- `node-llama-cpp` must remain external during bundling.
+- MLX/Python should be installed through a controlled environment or a platform-packaged runtime.
+- The model manager should accept already-downloaded local folders.
+- The app should clearly show which runtime is active: MLX, Metal/GGUF, MPS, or CPU.
 
-## Provas de Conceito
+## Proofs of Concept
 
-Antes do MVP de audio:
+Before the audio MVP:
 
-- Benchmark LLM GGUF/Metal vs LLM MLX para gerar `NarrationPlan`.
-- Benchmark Qwen3-TTS MLX 0.6B vs 1.7B em um trecho PT-BR.
-- Benchmark F5-TTS-pt-br em PyTorch MPS e CPU.
-- Testar um capitulo com dialogo, numeros, abreviacoes e acentos.
-- Medir se rodar prosodia + TTS em paralelo piora o tempo total; a hipotese inicial e que serializar sera melhor para estabilidade.
+- Benchmark GGUF/Metal LLM versus MLX LLM for generating a `NarrationPlan`.
+- Benchmark Qwen3-TTS MLX 0.6B versus 1.7B on a Brazilian Portuguese excerpt.
+- Benchmark F5-TTS-pt-br on PyTorch MPS and CPU.
+- Test a chapter containing dialogue, numbers, abbreviations, and accents.
+- Measure whether running prosody + TTS in parallel worsens total time; the initial hypothesis is that serialization will be more stable.

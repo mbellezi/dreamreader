@@ -1,54 +1,176 @@
 # DreamReader
 
-DreamReader e um leitor de ebooks desktop, offline-first, feito em Electron, React e Node, com foco forte em leitura em portugues do Brasil e geracao local de audio de capitulos por modelos TTS.
+DreamReader is a local-first desktop ebook reader for macOS, Linux, and Windows. It combines a full reading experience with offline text-to-speech, expressive narration, local voice management, and incremental M4B audiobook creation.
 
-## Download dos bundles
+Books, annotations, generated audio, voices, and model settings stay on the user's computer by default.
 
-Os bundles prontos da versao `0.1.0` estao versionados neste repositorio com Git LFS:
+![DreamReader local library](screenshots/screenshot-02.png)
 
-| Plataforma | Arquitetura | Download |
+## Features
+
+### Local library and imports
+
+- Imports EPUB, PDF, TXT, Markdown, and HTML files through the native file picker.
+- Stores imported books in an internal local library and detects duplicates by content hash.
+- Extracts EPUB metadata, authors, language, table of contents, reading order, and cover artwork.
+- Supports EPUB navigation based on NCX, anchors, nested navigation, and multiple chapters stored in one HTML resource.
+- Uses Readium CLI metadata when available and falls back to the built-in importer.
+- Extracts readable PDF text with PDF.js and detects chapter boundaries with heuristics or the optional local Qwen prosody model.
+- Provides grid and list library views, metadata search, reading status, progress indicators, and book removal.
+- Removes associated annotations, generated audio, and audiobook data when a book is deleted.
+
+### Reading experience
+
+- Integrated Thorium/Readium publication reader for EPUB content.
+- Continuous and paginated reading, including one- or two-column layouts.
+- Persistent Readium locators and automatic resume from the last saved position.
+- Table-of-contents navigation, previous/next chapter controls, page navigation, overall progress, and chapter progress.
+- Reader themes, font family and size, column width, line height, paragraph spacing, margins, alignment, and hyphenation controls.
+- Clean reading mode, collapsible/resizable inspector, and return-to-previous-position navigation.
+- Inline footnote popups and support for publication images and rich EPUB resources.
+- Colored highlights, notes, and favorite passages anchored by paragraph and character offset.
+- Annotation filtering, editing, deletion, direct navigation, and Markdown/JSON export.
+- English and Brazilian Portuguese interface localization.
+
+### Offline audio and TTS Studio
+
+- Dedicated Audio Center with per-book audio status and a persistent generation queue.
+- Generates audio for an entire book, selected chapters, one chapter, or individual text segments.
+- Chapter and segment search, selection, regeneration, deletion, retry, pause, resume, and cancellation controls.
+- Persistent TTS jobs and segments that recover after the application restarts.
+- Local audio cache with reuse when the same chapter and settings are requested again.
+- Built-in chapter playback and generation progress at book, chapter, job, and segment levels.
+- Engine, voice, model language, quality, seed, and expressive-narration settings.
+- Locked or randomized seeds for reproducible voice generation.
+- Automatic cache and M4B invalidation when the engine, voice, prosody, pronunciation dictionary, or generated chapter changes.
+
+### Local engines and model management
+
+- Qwen3-TTS 0.6B, Qwen3-TTS 1.7B Base, Qwen3-TTS 1.7B VoiceDesign, Chatterbox Multilingual, and F5-TTS PT-BR engine definitions.
+- Supervised local sidecars for Qwen3-TTS MLX, Chatterbox MLX, and F5-TTS PT-BR.
+- Standalone local Python runtime setup for sidecars without modifying the system Python installation.
+- MLX/MPS support on Apple Silicon and CUDA or Vulkan setup paths on Windows and Linux.
+- Local model catalog, readiness diagnostics, storage usage, download/install progress, retries, folder-based installation, and removal.
+- Optional Qwen3 4B GGUF prosody model through `node-llama-cpp`, with a deterministic local fallback.
+- Sidecar output validation and Electron main-process supervision.
+
+### Expressive narration
+
+- Canonical `NarrationPlan` pipeline shared by every TTS adapter.
+- Brazilian Portuguese normalization for abbreviations, dates, times, currency, percentages, and sentence segmentation.
+- Structured prosody instructions for emotion, pace, pitch, intensity, pauses, and voice role.
+- Persistent segment-level prosody cache.
+- Neutral fallback for missing, invalid, or incomplete model output.
+- Neutral-versus-expressive audio comparison when both versions are available.
+- Per-job metadata for prosody mode, cache hits, generated analyses, and fallbacks.
+
+### Voices and pronunciation
+
+- Local voice profiles with engine-specific compatibility bindings.
+- Voice cloning from authorized reference audio and transcript, with explicit consent required.
+- Qwen VoiceDesign prompt-based voice creation with preview before saving.
+- Voice preview, rename, export, import, and deletion.
+- Imports one or more `DreamReader Voice` ZIP packages.
+- Bundled voice packages are imported automatically on first launch and reconciled when compatible engines are installed.
+- Global and per-book pronunciation dictionaries included in the TTS cache key.
+- Chatterbox multilingual language selection and optional reference-voice cloning.
+
+### Audiobooks
+
+- Real AAC/M4B generation through the bundled `ffmpeg-static` binary.
+- Incremental partial M4B output as chapters become available.
+- Automatic or manual M4B rebuild.
+- Save/export and removal controls for generated audiobook files.
+- Persistent audiobook manifest and chapter metadata.
+- A failed M4B rebuild never invalidates already generated chapter audio.
+
+### Local-first architecture and safety
+
+- Electron sandbox, context isolation, disabled renderer Node integration, and a narrow preload bridge.
+- Shared Zod contracts validate IPC requests across renderer/main boundaries.
+- PGlite and Drizzle provide the persistent local database.
+- Registered assets are exposed through controlled `dreamreader://` protocols instead of unrestricted `file://` URLs.
+- Models, Python runtimes, generated audio, cloned voices, and books remain local unless the user explicitly exports a file.
+- No cloud synchronization, online bookstore, social layer, or DRM removal.
+
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="screenshots/screenshot-01.png" alt="Example EPUB cover extracted by DreamReader" />
+      <br /><strong>Extracted EPUB cover</strong>
+    </td>
+    <td width="50%" align="center">
+      <img src="screenshots/screenshot-03.png" alt="DreamReader paginated EPUB reader" />
+      <br /><strong>Paginated EPUB reader</strong>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="screenshots/screenshot-04.png" alt="Two-column reading with a highlighted passage" />
+      <br /><strong>Two-column reading and highlights</strong>
+    </td>
+    <td width="50%" align="center">
+      <img src="screenshots/screenshot-05.png" alt="DreamReader Audio Center overview" />
+      <br /><strong>Audio Center overview</strong>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="screenshots/screenshot-06.png" alt="Per-book chapter audio generation" />
+      <br /><strong>Chapter audio generation</strong>
+    </td>
+    <td width="50%" align="center">
+      <img src="screenshots/screenshot-07.png" alt="Local voice manager" />
+      <br /><strong>Voice manager</strong>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="screenshots/screenshot-08.png" alt="Local TTS engine and model management" />
+      <br /><strong>Engine and model management</strong>
+    </td>
+    <td width="50%" align="center">
+      <img src="screenshots/screenshot-09.png" alt="M4B controls and completed generation queue" />
+      <br /><strong>M4B export and generation queue</strong>
+    </td>
+  </tr>
+</table>
+
+## Download
+
+Version `0.1.0` bundles are stored in this repository with Git LFS:
+
+| Platform | Architecture | Download |
 | --- | --- | --- |
 | macOS | Apple Silicon (`arm64`) | [DreamReader-0.1.0-mac-arm64.dmg](https://github.com/mbellezi/dreamreader/raw/main/bundles/DreamReader-0.1.0-mac-arm64.dmg) |
 | Linux | Intel/AMD (`x86_64`) | [DreamReader-0.1.0-linux-x86_64.AppImage](https://github.com/mbellezi/dreamreader/raw/main/bundles/DreamReader-0.1.0-linux-x86_64.AppImage) |
 | Windows | Intel/AMD (`x64`) | [DreamReader-0.1.0-win-x64.exe](https://github.com/mbellezi/dreamreader/raw/main/bundles/DreamReader-0.1.0-win-x64.exe) |
 
-Os hashes para verificacao de integridade estao em [`bundles/SHA256SUMS`](bundles/SHA256SUMS). Como o repositorio atualmente e privado, o GitHub exige login e permissao de acesso para baixar esses arquivos.
+Integrity hashes are available in [`bundles/SHA256SUMS`](bundles/SHA256SUMS).
 
-Estes sao builds locais sem assinatura digital ou notarizacao. O macOS Gatekeeper e o Windows SmartScreen podem exibir um aviso na primeira abertura.
+The repository is currently private, so GitHub authentication and repository access are required to download these files. These local builds are not code-signed or notarized; macOS Gatekeeper and Windows SmartScreen may display a warning on first launch.
 
-### Instalacao
+### Install
 
-- macOS: abra o `.dmg` e arraste o DreamReader para **Aplicativos**. Este bundle exige Mac com Apple Silicon. Se o Gatekeeper bloquear a primeira abertura, clique com o botao direito no app e escolha **Abrir**, ou autorize-o em **Ajustes do Sistema > Privacidade e Seguranca**.
-- Linux: torne o AppImage executavel com `chmod +x DreamReader-0.1.0-linux-x86_64.AppImage` e execute-o. O bundle exige Linux x86-64.
-- Windows: execute `DreamReader-0.1.0-win-x64.exe` e siga o instalador NSIS. O payload da aplicacao e x64.
+- **macOS:** Open the DMG and drag DreamReader into **Applications**. This build requires Apple Silicon. If Gatekeeper blocks the first launch, right-click the app and choose **Open**, or authorize it under **System Settings > Privacy & Security**.
+- **Linux:** Run `chmod +x DreamReader-0.1.0-linux-x86_64.AppImage`, then launch the AppImage.
+- **Windows:** Run `DreamReader-0.1.0-win-x64.exe` and follow the NSIS installer.
 
-Todos os bundles incluem os pacotes `.zip` presentes na raiz de `voices/`; `voices/old` nao e distribuido.
+Every bundle includes the ZIP packages at the root of `voices/`.
 
-## Estado atual
+## Development
 
-As fases 0, 1, 2 e 3 do roadmap estao implementadas:
+### Requirements
 
-- Fase 0: scaffold Electron/React/Tailwind, IPC validado por Zod, preload seguro, PGlite/Drizzle com migration inicial, protocolo local `dreamreader://asset/...`, contratos compartilhados e testes de base.
-- Fase 1: MVP leitor com biblioteca local, importacao de EPUB/TXT/Markdown/HTML, lista/grid com busca, leitura com sumario e preferencias, retomada de posicao, marcacoes/notas/favoritos, exportacao de notas em Markdown e configuracoes iniciais.
-- Fase 2: audio local basico com jobs TTS persistidos em PGlite, fila por capitulo, segmentacao/normalizacao PT-BR, adapter local WAV, cache de audio por capitulo, player no leitor, cancelamento/retry/retomada, diagnostico de modelos e manifesto parcial de audiobook.
-- Fase 3: prosodia expressiva com analisador local estruturado, cache por segmento em PGlite, fallback neutro validado por Zod e comparacao entre audio neutro e expressivo na UI.
+- Git
+- A recent Node.js LTS release and npm
+- Python 3 for the bundle orchestrator
+- Git LFS if you want the prebuilt bundles
+- Additional disk space for optional local TTS runtimes and models
 
-Os motores neurais Qwen/Chatterbox/F5 funcionam por instalacao local de Python, sidecars e pesos em `.dreamreader-local/`. O encoder M4B real e o empacotamento final ainda pertencem as proximas fases. Para preparar Qwen3-TTS/Chatterbox/F5-TTS-pt-br locais, rode `npm run setup:python-tts`; isso detecta macOS Apple Silicon, Windows ou Linux, instala um CPython 3.12 standalone, verifica o FFmpeg empacotado e cria pastas de modelos em `.dreamreader-local/`, que nao entra no git.
-
-## Desenvolvimento
-
-### Requisitos
-
-- Git;
-- Node.js LTS recente e npm;
-- Python 3 para o orquestrador de bundles;
-- espaco em disco adicional caso os runtimes e modelos TTS locais sejam instalados.
-
-### Executar a versao de desenvolvimento
-
-Existe um agregador para a instalacao inicial de desenvolvimento, mas as etapas continuam disponiveis separadamente para controle fino de plataforma, sidecars e modelos. O agregador mostra no terminal a fase atual, uma descricao curta e o comando que sera executado antes de iniciar cada etapa.
-
-Clone o repositorio e execute o setup completo:
+### Full local setup
 
 ```bash
 git clone https://github.com/mbellezi/dreamreader.git
@@ -57,31 +179,15 @@ npm run setup:dev
 npm run dev
 ```
 
-O clone padrao baixa tambem os bundles versionados pelo Git LFS. Para trabalhar apenas no codigo-fonte sem baixar aproximadamente 2 GB de instaladores, use:
+`npm run setup:dev` installs Node dependencies, downloads the Readium CLI for the current platform, prepares the standalone Python runtime and TTS sidecars, and downloads/configures the supported local TTS models.
 
-```bash
-GIT_LFS_SKIP_SMUDGE=1 git clone https://github.com/mbellezi/dreamreader.git
-cd dreamreader
-```
-
-No PowerShell, defina a variavel antes do clone com `$env:GIT_LFS_SKIP_SMUDGE = "1"`. Para baixar os bundles posteriormente, instale o Git LFS e execute `git lfs pull`.
-
-Para conferir as fases sem executar downloads/instalacoes:
+Preview the setup steps without installing or downloading anything:
 
 ```bash
 npm run setup:dev -- --dry-run
 ```
 
-`npm run setup:dev` executa, em sequencia:
-
-- `npm install`: instala as dependencias Node/Electron/React do projeto.
-- `npm run download:readium-cli`: baixa o Readium CLI da plataforma atual para `vendor/readium/<platform-arch>/`.
-- `npm run setup:python-tts -- --install-sidecars`: instala o runtime Python local e as dependencias dos sidecars TTS.
-- `npm run download:tts-models`: baixa/prepara os modelos locais de TTS configurados pelo projeto.
-
-Para um setup minimo de leitura/importacao de EPUB em desenvolvimento, `npm install` + `npm run download:readium-cli` ja sao suficientes antes de `npm run dev`. Para preparar builds multiplataforma, rode tambem `npm run download:readium-cli -- --all`.
-
-Para instalar exatamente as versoes registradas em `package-lock.json` e executar apenas o leitor em modo de desenvolvimento:
+### Minimal reader-only setup
 
 ```bash
 npm ci
@@ -89,7 +195,28 @@ npm run download:readium-cli
 npm run dev
 ```
 
-`npm run dev` inicia o Electron com recompilacao automatica durante as alteracoes. Para validar a compilacao de producao sem gerar instaladores, use:
+`npm run dev` starts Electron with automatic recompilation. The minimal setup is enough for the library and reader; local neural TTS requires the full setup or manual engine installation.
+
+The default clone also downloads approximately 2.1 GB of Git LFS bundles. To clone only the source:
+
+```bash
+GIT_LFS_SKIP_SMUDGE=1 git clone https://github.com/mbellezi/dreamreader.git
+cd dreamreader
+```
+
+In PowerShell, set `$env:GIT_LFS_SKIP_SMUDGE = "1"` before cloning. Run `git lfs pull` later to download the bundles.
+
+### TTS backend setup
+
+Apple Silicon uses MLX/MPS by default. On Windows and Linux, select CUDA or Vulkan:
+
+```bash
+npm run setup:python-tts -- --backend=cuda --install-sidecars
+npm run setup:python-tts -- --backend=vulkan --install-sidecars
+npm run download:tts-models -- --backend=cuda
+```
+
+### Validate a development build
 
 ```bash
 npm run lint
@@ -97,46 +224,49 @@ npm test
 npm run build
 ```
 
-## Documentacao
+## Build desktop bundles
 
-- `docs/00-product-spec.md`: produto, publico, funcionalidades e nao-objetivos.
-- `docs/01-architecture.md`: arquitetura Electron, limites entre processos, IPC, banco, modelos e empacotamento.
-- `docs/02-ai-tts-pipeline.md`: pipeline de normalizacao PT-BR, tags de prosodia, TTS e cache de audio.
-- `docs/03-data-model.md`: schema PGlite/Drizzle atual e entidades planejadas.
-- `docs/04-roadmap.md`: estado das fases implementadas e proximas fases.
-- `docs/05-research-notes.md`: fontes e verificacoes tecnicas usadas nas decisoes iniciais.
-- `docs/06-apple-silicon-performance.md`: estrategia de performance para LLM/TTS em Apple Silicon.
-- `docs/07-tts-prosody-abstractions.md`: contratos de abstracao para prosodia, TTS e modelos locais.
-- `docs/08-audiobook-m4b.md`: montagem incremental de audiobooks M4B por livro.
-- `docs/09-readium-poc.md`: POC e integracao do Readium CLI.
-- `docs/10-thorium-reader-troubleshooting.md`: diagnostico do leitor Thorium/Readium.
-- `docs/11-build-bundles.md`: build e cross-compilacao dos bundles multiplataforma.
-
-## Backend de TTS
-
-No macOS Apple Silicon, `setup:python-tts` usa MLX/MPS por padrao. Em Windows e Linux, escolha o backend de instalacao com `--backend=cuda` ou `--backend=vulkan`:
+Cross-platform packaging is orchestrated by `scripts/build-bundle.py`. It checks host dependencies, downloads all Readium CLI targets, installs target-specific optional dependencies, rebuilds `ffmpeg-static`, runs `electron-builder`, and reports the artifact path and SHA-256 hash.
 
 ```bash
-npm run setup:python-tts -- --backend=cuda
-npm run setup:python-tts -- --backend=vulkan --install-sidecars
-npm run download:tts-models -- --backend=cuda
+python3 scripts/build-bundle.py --target linux-appimage
+python3 scripts/build-bundle.py --target windows-msi
+python3 scripts/build-bundle.py --target mac-dmg
+python3 scripts/build-bundle.py --target all
 ```
 
-## Importacao de vozes
+Host requirements:
 
-Os pacotes de vozes ficam em `voices/` como arquivos `.zip` compativeis com o formato `DreamReader Voice`. Os pacotes da raiz dessa pasta ja acompanham os bundles e sao importados automaticamente na primeira abertura. A pasta `voices/old` e excluida.
+- Linux AppImage builds natively on Linux; macOS and Windows require Docker or WSL2.
+- Windows installer builds natively on Windows; Linux and macOS require Wine.
+- macOS DMG builds require macOS.
+- `--target all` builds Linux and Windows targets and also includes macOS when running on a Mac.
 
-Para importar pela interface:
+Useful examples:
 
-1. Abra o app com `npm run dev`.
-2. Entre em **Estúdio** e abra a aba **Vozes**.
-3. Na seção **Vozes cadastradas**, clique em **Importar vozes**.
-4. No seletor de arquivos, escolha um ou mais pacotes `.zip` no formato `DreamReader Voice`.
-5. Confirme a importação. As vozes importadas aparecem em **Vozes cadastradas** e ficam disponíveis nos motores compatíveis instalados.
+```bash
+python3 scripts/build-bundle.py --target linux-appimage --arch x64 --linux-runner docker
+python3 scripts/build-bundle.py --target linux-appimage --arch arm64 --linux-runner docker
+python3 scripts/build-bundle.py --target windows-msi --check-only
+python3 scripts/build-bundle.py --target windows-msi --keep-intermediate
+python3 scripts/build-bundle.py --target mac-dmg --arch arm64
+python3 scripts/build-bundle.py --target mac-dmg --signed-mac
+```
 
-Para ouvir prévias ou usar essas vozes na geração de áudio, instale antes o modelo e o sidecar do motor desejado em **Estúdio > Motores**. Pacotes com áudio de referência criam bindings para motores com clonagem de voz instalados; pacotes com prompt de voz ficam disponíveis para o Qwen VoiceDesign quando esse motor estiver instalado.
+Cross-builds can leave `node_modules/` prepared for the target platform. Run `npm ci` afterward to restore dependencies for the current host. See [`docs/11-build-bundles.md`](docs/11-build-bundles.md) for Wine, Docker, WSL2, and Wrapped MSI details.
 
-## Comandos principais
+## Voice packages
+
+DreamReader imports ZIP archives that follow the `DreamReader Voice` package format:
+
+1. Start the app and open **Studio > Voices**.
+2. Choose **Import voices**.
+3. Select one or more compatible ZIP packages.
+4. Install a compatible engine under **Studio > Engines** to enable preview and generation.
+
+Packages with reference audio create bindings for installed voice-cloning engines. Prompt-based packages become available to Qwen VoiceDesign when that engine is installed.
+
+## Main commands
 
 ```bash
 npm install
@@ -153,83 +283,19 @@ npm run db:generate
 npm run db:migrate
 ```
 
-Use `--install-sidecars` quando quiser instalar tambem as dependencias Python dos sidecars. O backend CUDA usa o indice oficial de wheels CUDA do PyTorch por padrao e pode ser alterado com `DREAMREADER_TORCH_CUDA_INDEX_URL`.
+Use `--install-sidecars` to install Python sidecar dependencies. The CUDA backend uses the official PyTorch CUDA wheel index by default; override it with `DREAMREADER_TORCH_CUDA_INDEX_URL`.
 
-## Build de bundles
+## Documentation
 
-O empacotamento multiplataforma e orquestrado por `scripts/build-bundle.py`. O script valida dependencias do host, tenta instalar dependencias de sistema quando possivel e para antes do build se algo obrigatorio continuar ausente. Os artefatos finais sao gerados em `dist/` e o script imprime caminho, tamanho, SHA256 e tipo do arquivo quando o comando `file` esta disponivel.
-
-Alvos suportados:
-
-```bash
-python3 scripts/build-bundle.py --target linux-appimage
-python3 scripts/build-bundle.py --target windows-msi
-python3 scripts/build-bundle.py --target mac-dmg
-python3 scripts/build-bundle.py --target all
-```
-
-Matriz de hosts:
-
-- Linux AppImage: nativo em Linux; em Windows/macOS precisa de WSL2 ou Docker.
-- Windows MSI: nativo em Windows; em Linux/macOS precisa de Wine.
-- macOS DMG: exige host macOS. O script nao gera DMG fora do macOS.
-- `--target all`: tenta Linux AppImage e Windows MSI; inclui macOS DMG apenas quando o host e macOS.
-
-Em macOS Apple Silicon, o build Linux via Docker define a plataforma do container conforme `--arch`: `linux/amd64` para o padrao `x64` e `linux/arm64` para `--arch arm64`. Para gerar AppImage ARM64:
-
-```bash
-python3 scripts/build-bundle.py --target linux-appimage --arch arm64 --linux-runner docker
-```
-
-Para gerar um DMG Apple Silicon em host macOS, use `--arch arm64`. Em um Mac Apple Silicon, esse ja e o padrao quando o alvo for apenas `mac-dmg`:
-
-```bash
-python3 scripts/build-bundle.py --target mac-dmg --arch arm64
-```
-
-Por padrao, cada build executa:
-
-1. verificacao e, se necessario, tentativa de instalacao de dependencias de sistema;
-2. `npm ci`;
-3. `npm run download:readium-cli -- --all`;
-4. `npm run build`;
-5. instalacao de dependencias opcionais da plataforma alvo com `npm --os/--cpu`;
-6. rebuild de `ffmpeg-static` para a plataforma alvo;
-7. `electron-builder`;
-8. verificacao do artefato final.
-
-Opcoes uteis:
-
-```bash
-python3 scripts/build-bundle.py --target windows-msi --check-only
-python3 scripts/build-bundle.py --target windows-msi --no-install-deps
-python3 scripts/build-bundle.py --target windows-msi --keep-intermediate
-python3 scripts/build-bundle.py --target linux-appimage --linux-runner docker
-python3 scripts/build-bundle.py --target linux-appimage --linux-runner wsl
-python3 scripts/build-bundle.py --target mac-dmg --signed-mac
-```
-
-Notas importantes:
-
-- O alvo `windows-msi` usa Wrapped MSI: o artefato publicado e um `.msi`, mas ele embute um instalador NSIS gerado internamente e executado com `/S`. Por padrao, o `.exe` e o `.blockmap` intermediarios sao removidos; use `--keep-intermediate` para diagnostico.
-- O script tenta instalar dependencias automaticamente. Em Linux, isso pode usar `sudo`; se falhar, ele imprime os comandos manuais e nao continua o build. Use `--no-install-deps` para apenas validar e imprimir instrucoes.
-- Builds cruzados podem deixar `node_modules/` preparado para a plataforma alvo, especialmente por causa de `ffmpeg-static` e `node-llama-cpp`. Rode `npm ci` para voltar ao estado de desenvolvimento do host atual.
-- Use `--skip-npm-ci` e `--skip-build` apenas quando tiver certeza de que `node_modules/` e `out/` ja correspondem ao alvo.
-- Para detalhes sobre Wine, Docker, WSL2, Wrapped MSI e limitacoes por host, leia `docs/11-build-bundles.md`.
-
-## Empacotamento de audio
-
-O backend usa `music-metadata` para checar duracao/sample rate/canais de audio sem depender de `ffprobe` no `PATH`. Para reamostrar audio de referencia de voz, usa o binario de `ffmpeg-static`, tambem sem depender de `ffmpeg` instalado no sistema.
-
-Ao gerar bundles Electron, o binario de `ffmpeg-static` precisa ser empacotado e ficar fora do ASAR para poder ser executado. A configuracao atual de `electron-builder` usa `asarUnpack` para `node_modules/ffmpeg-static/**`; mantenha essa regra em qualquer configuracao futura de empacotamento. Antes de distribuir publicamente, revisar tambem o impacto de licenca do `ffmpeg-static` (`GPL-3.0-or-later`).
-
-## Direcao inicial
-
-A stack proposta faz sentido, com tres cuidados importantes desde o inicio:
-
-1. O renderer nao deve ter acesso direto a arquivos, banco, Python ou modelos locais. Tudo passa pelo preload e por IPC tipado/validado com Zod.
-2. EPUB e HTML de livros sao conteudo nao confiavel. O leitor precisa de isolamento, CSP, protocolo local controlado e scripts desativados por padrao.
-3. Em Apple Silicon, o caminho preferencial de performance deve ser MLX/Metal. `node-llama-cpp` com Metal continua como baseline forte para GGUF, mas os adapters devem permitir runtimes MLX quando forem mais rapidos.
-4. Modelos TTS/LLM e Python devem ser tratados como componentes externos e versionados por manifestos. Eles nao devem ficar presos dentro do ASAR nem bloquear a UI.
-5. Vozes clonadas devem ser perfis locais gerenciados pelo app e aparecer como opcoes de voz somente quando forem compativeis com o motor selecionado.
-6. A geracao de capitulos deve alimentar um exportador M4B incremental, com um arquivo parcial por livro atualizado conforme novos capitulos ficam prontos.
+- [Product specification](docs/00-product-spec.md)
+- [Architecture](docs/01-architecture.md)
+- [AI and TTS pipeline](docs/02-ai-tts-pipeline.md)
+- [Data model](docs/03-data-model.md)
+- [Roadmap](docs/04-roadmap.md)
+- [Research notes](docs/05-research-notes.md)
+- [Apple Silicon performance](docs/06-apple-silicon-performance.md)
+- [TTS and prosody abstractions](docs/07-tts-prosody-abstractions.md)
+- [M4B audiobook pipeline](docs/08-audiobook-m4b.md)
+- [Readium proof of concept](docs/09-readium-poc.md)
+- [Thorium/Readium troubleshooting](docs/10-thorium-reader-troubleshooting.md)
+- [Cross-platform bundle builds](docs/11-build-bundles.md)

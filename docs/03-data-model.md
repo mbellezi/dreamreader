@@ -1,10 +1,10 @@
-# Modelo de Dados
+# Data Model
 
-Este documento descreve o schema Drizzle/PGlite e tambem registra entidades planejadas para fases futuras.
+This document describes the Drizzle/PGlite schema and also records entities planned for future phases.
 
-## Estado Atual do Schema
+## Current Schema State
 
-As migrations atuais (`drizzle/0000_*.sql` ate `drizzle/0004_*.sql`) implementam estas tabelas:
+The current migrations (`drizzle/0000_*.sql` through `drizzle/0004_*.sql`) implement these tables:
 
 - `books`
 - `assets`
@@ -29,15 +29,15 @@ As migrations atuais (`drizzle/0000_*.sql` ate `drizzle/0004_*.sql`) implementam
 - `model_download_jobs`
 - `runtime_manifests`
 
-Essas tabelas cobrem as fases 0, 1, 2, 3 e 4: biblioteca local, assets de capa, posicao de leitura, anotacoes, bookmarks, settings, fila TTS persistente, cache de audio por capitulo, cache de prosodia por segmento, manifestos parciais de audiobook, catalogo de modelos, manifests de runtime, perfis de voz persistentes, samples, bindings e dicionario de pronuncia.
+These tables cover Phases 0, 1, 2, 3, and 4: local library, cover assets, reading position, annotations, bookmarks, settings, persistent TTS queue, per-chapter audio cache, per-segment prosody cache, partial audiobook manifests, model catalog, runtime manifests, persistent voice profiles, samples, bindings, and pronunciation dictionary.
 
-Ainda nao existem no schema atual:
+The current schema does not yet contain:
 
 - `voice_clone_jobs`
 
-`voice_clone_jobs` permanece planejada para empacotamento/polimento de sidecars quando a criacao de embeddings deixar de ser sincrona por adapter.
+`voice_clone_jobs` remains planned for sidecar packaging/polish when embedding creation is no longer synchronous per adapter.
 
-## Entidades
+## Entities
 
 ### `books`
 
@@ -59,10 +59,10 @@ Ainda nao existem no schema atual:
 - `updated_at`
 - `last_opened_at`
 
-Notas:
+Notes:
 
-- `content_hash` deve ser unico quando possivel.
-- `manifest_json` armazena metadados extraidos do motor de leitura, sem substituir campos normalizados.
+- `content_hash` should be unique whenever possible.
+- `manifest_json` stores metadata extracted by the reading engine without replacing normalized fields.
 
 ### `reading_positions`
 
@@ -74,10 +74,10 @@ Notas:
 - `audio_position_ms`
 - `updated_at`
 
-Notas:
+Notes:
 
-- `locator_json` deve ser o dado canonico para retomada de leitura.
-- `progression` e auxiliar para UI e ordenacao.
+- `locator_json` must be the canonical data for reading resumption.
+- `progression` is auxiliary data for the UI and sorting.
 
 ### `annotations`
 
@@ -92,9 +92,9 @@ Notas:
 - `updated_at`
 - `deleted_at`
 
-Notas:
+Notes:
 
-- Usar soft delete ajuda a evitar perda acidental e facilita exportacao.
+- Soft deletion helps prevent accidental loss and simplifies export.
 
 ### `bookmarks`
 
@@ -130,15 +130,15 @@ Notas:
 - `size_bytes`
 - `created_at`
 
-Usos:
+Uses:
 
-- capas
-- arquivos extraidos
-- audio por segmento
-- audio por capitulo
-- amostras de voz autorizadas
-- previews de voz
-- exports M4B parciais/finais
+- covers
+- extracted files
+- per-segment audio
+- per-chapter audio
+- authorized voice samples
+- voice previews
+- partial/final M4B exports
 
 ### `tts_engines`
 
@@ -156,12 +156,12 @@ Usos:
 - `created_at`
 - `updated_at`
 
-Notas:
+Notes:
 
-- `adapter_id` identifica o contrato de software, por exemplo `qwen3-tts-mlx`, `qwen3-tts-pytorch` ou `f5-tts-pt-br`.
-- `runtime`: `mlx`, `metal`, `mps`, `pytorch`, `cpu` ou `external`.
-- `accelerator`: `apple_metal`, `apple_mps`, `cpu` ou futuro valor por plataforma.
-- `performance_profile_json` guarda metricas observadas localmente: cold start, memoria de pico, RTF, segmentos/minuto e data do benchmark.
+- `adapter_id` identifies the software contract, for example `qwen3-tts-mlx`, `qwen3-tts-pytorch`, or `f5-tts-pt-br`.
+- `runtime`: `mlx`, `metal`, `mps`, `pytorch`, `cpu`, or `external`.
+- `accelerator`: `apple_metal`, `apple_mps`, `cpu`, or a future platform-specific value.
+- `performance_profile_json` stores locally observed metrics: cold start, peak memory, RTF, segments/minute, and benchmark date.
 
 ### `voice_profiles`
 
@@ -180,11 +180,11 @@ Notas:
 - `created_at`
 - `updated_at`
 
-Notas:
+Notes:
 
 - `kind`: `built_in`, `cloned`, `imported`, `generated`.
-- `source`: texto livre/estruturado sobre origem local do audio, sem upload.
-- Vozes visiveis para o usuario vivem aqui, mas compatibilidade por motor fica em `voice_engine_bindings`.
+- `source`: free-form/structured text describing the local audio origin, without upload.
+- User-visible voices live here, but per-engine compatibility lives in `voice_engine_bindings`.
 
 ### `voice_samples`
 
@@ -198,11 +198,11 @@ Notas:
 - `consent_confirmed_at`
 - `created_at`
 
-Usos:
+Uses:
 
-- Audios de referencia usados em voice cloning.
-- Transcricoes manuais ou revisadas.
-- Metricas de qualidade: ruido, clipping, sample rate, canal, idioma detectado.
+- Reference audio used in voice cloning.
+- Manual or reviewed transcripts.
+- Quality metrics: noise, clipping, sample rate, channel, and detected language.
 
 ### `voice_engine_bindings`
 
@@ -218,11 +218,11 @@ Usos:
 - `created_at`
 - `updated_at`
 
-Notas:
+Notes:
 
 - `binding_kind`: `reference_audio`, `speaker_embedding`, `preset`, `voice_design_prompt`.
-- Uma voz so aparece como disponivel para um motor quando existe binding `ready` para aquele adapter/engine.
-- Recriar binding para outro motor nao altera o perfil canonico da voz.
+- A voice appears as available for an engine only when a `ready` binding exists for that adapter/engine.
+- Recreating a binding for another engine does not change the canonical voice profile.
 
 ### `voice_clone_jobs`
 
@@ -297,12 +297,12 @@ Notas:
 - `created_at`
 - `updated_at`
 
-Notas:
+Notes:
 
-- A chave de cache usa `segment_hash`, `analyzer_id`, `analyzer_version` e `prompt_version`.
-- `prosody_json` armazena a prosodia canonica validada por Zod antes de chegar ao TTS.
-- Linhas com fallback tambem sao persistidas, para evitar repetir analises que ja falharam de forma recuperavel.
-- `raw_response_json` guarda a resposta estruturada local sem incluir texto completo do livro quando isso puder ser evitado.
+- The cache key uses `segment_hash`, `analyzer_id`, `analyzer_version`, and `prompt_version`.
+- `prosody_json` stores canonical prosody validated by Zod before it reaches TTS.
+- Fallback rows are also persisted to avoid repeating analyses that have already failed in a recoverable way.
+- `raw_response_json` stores the structured local response without including full book text whenever that can be avoided.
 
 ### `audiobook_exports`
 
@@ -325,12 +325,12 @@ Notas:
 - `updated_at`
 - `last_built_at`
 
-Notas:
+Notes:
 
-- `format` inicialmente `m4b`.
-- `draft_asset_id` aponta para M4B parcial.
-- `asset_id` aponta para M4B final, quando todos os capitulos escolhidos estiverem prontos.
-- `manifest_json` guarda ordem dos capitulos, assets de audio, duracoes, hashes, voz, engine e metadados.
+- `format` is initially `m4b`.
+- `draft_asset_id` points to the partial M4B.
+- `asset_id` points to the final M4B when all selected chapters are ready.
+- `manifest_json` stores chapter order, audio assets, durations, hashes, voice, engine, and metadata.
 
 ### `audiobook_chapters`
 
@@ -353,10 +353,10 @@ Notas:
 - `created_at`
 - `updated_at`
 
-Notas:
+Notes:
 
-- Esta tabela permite reconstruir o M4B sem depender de varrer arquivos.
-- Se um capitulo for regerado, `audio_hash` muda e o export fica `stale`.
+- This table allows the M4B to be rebuilt without scanning files.
+- If a chapter is regenerated, `audio_hash` changes and the export becomes `stale`.
 
 ### `audiobook_build_jobs`
 
@@ -375,10 +375,10 @@ Notas:
 - `finished_at`
 - `updated_at`
 
-Notas:
+Notes:
 
 - `reason`: `chapter_completed`, `chapter_regenerated`, `metadata_changed`, `manual_rebuild`.
-- Falha aqui nao altera o status dos capitulos de audio.
+- A failure here does not change the status of audio chapters.
 
 ### `pronunciation_entries`
 
@@ -392,9 +392,9 @@ Notas:
 - `created_at`
 - `updated_at`
 
-Notas:
+Notes:
 
-- `scope`: `global` ou `book`.
+- `scope`: `global` or `book`.
 - `match_kind`: `literal`, `word`, `regex`.
 
 ### `settings`
@@ -427,12 +427,12 @@ Notas:
 - `created_at`
 - `updated_at`
 
-Usos:
+Uses:
 
-- LLM GGUF.
-- Pesos Qwen3-TTS.
-- Pesos F5-TTS-pt-br.
-- Tokenizers e vocoders.
+- GGUF LLM.
+- Qwen3-TTS weights.
+- F5-TTS-pt-br weights.
+- Tokenizers and vocoders.
 
 ### `model_download_jobs`
 
@@ -451,11 +451,11 @@ Usos:
 - `finished_at`
 - `updated_at`
 
-Usos:
+Uses:
 
-- Persistir downloads iniciados pelo main process.
-- Expor progresso visual no renderer sem acesso direto ao filesystem.
-- Registrar falhas recuperaveis de download de modelos.
+- Persist downloads started by the main process.
+- Expose visual progress in the renderer without direct filesystem access.
+- Record recoverable model-download failures.
 
 ### `runtime_manifests`
 
@@ -470,16 +470,16 @@ Usos:
 - `created_at`
 - `updated_at`
 
-Usos:
+Uses:
 
-- Registrar sidecars Python MLX/PyTorch.
-- Registrar binarios Swift/MLX futuros.
-- Registrar runtime GGUF via `node-llama-cpp`.
-- Permitir troca de runtime sem mudar jobs, UI ou schema de prosodia.
+- Register MLX/PyTorch Python sidecars.
+- Register future Swift/MLX binaries.
+- Register the GGUF runtime through `node-llama-cpp`.
+- Allow runtime replacement without changing jobs, UI, or the prosody schema.
 
-## Indices
+## Indexes
 
-Indices implementados nas migrations atuais:
+Indexes implemented in the current migrations:
 
 - `books.content_hash`
 - `books.title`
@@ -509,7 +509,7 @@ Indices implementados nas migrations atuais:
 - `audiobook_chapters.chapter_href`
 - `audiobook_chapters.book_id + chapter_href`
 
-Indices planejados para fases futuras:
+Indexes planned for future phases:
 
 - `annotations.tags`
 - `voice_engine_bindings.voice_profile_id`
@@ -519,8 +519,8 @@ Indices planejados para fases futuras:
 - `model_assets.kind`
 - `model_assets.runtime`
 
-## Politica de Migracoes
+## Migration Policy
 
-- Toda alteracao de schema passa por Drizzle migration.
-- Dados derivados, como texto extraido e audio, devem ser reconstruiveis.
-- Dados do usuario, como notas, marcacoes, colecoes, vozes e dicionario de pronuncia, exigem migracoes conservadoras e backup antes de mudancas grandes.
+- Every schema change goes through a Drizzle migration.
+- Derived data, such as extracted text and audio, must be reconstructable.
+- User data, such as notes, highlights, collections, voices, and the pronunciation dictionary, requires conservative migrations and backups before large changes.

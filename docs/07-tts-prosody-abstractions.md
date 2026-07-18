@@ -1,13 +1,13 @@
-# Abstracoes de TTS e Prosodia
+# TTS and Prosody Abstractions
 
-## Objetivo
+## Objective
 
-Padronizar conversao para TTS, analise de emocao/prosodia e troca de modelos. O app deve depender de contratos internos, nao de APIs especificas de Qwen, F5 ou qualquer runtime futuro.
+Standardize conversion to TTS, emotion/prosody analysis, and model swapping. The app should depend on internal contracts, not APIs specific to Qwen, F5, or any future runtime.
 
-## Camadas
+## Layers
 
 ```text
-Texto do livro
+Book text
   -> TextExtractor
   -> PtBrNormalizer
   -> ProsodyAnalyzer
@@ -19,11 +19,11 @@ Texto do livro
   -> AudiobookAssembler
 ```
 
-## Contratos
+## Contracts
 
 ### `PtBrNormalizer`
 
-Responsavel por transformar texto original em texto falavel.
+Responsible for transforming original text into speakable text.
 
 ```ts
 type PtBrNormalizer = {
@@ -31,17 +31,17 @@ type PtBrNormalizer = {
 }
 ```
 
-Regras:
+Rules:
 
-- Deterministico.
-- Versionado.
-- Nao depende de LLM.
-- Usa dicionario global e por livro.
-- Retorna mapa entre texto original, texto normalizado e locator.
+- Deterministic.
+- Versioned.
+- Does not depend on an LLM.
+- Uses a global and per-book dictionary.
+- Returns a map between original text, normalized text, and locator.
 
 ### `ProsodyAnalyzer`
 
-Responsavel por sugerir emocao, ritmo, intensidade, pausas e papel de voz.
+Responsible for suggesting emotion, pace, intensity, pauses, and voice role.
 
 ```ts
 type ProsodyAnalyzer = {
@@ -50,22 +50,22 @@ type ProsodyAnalyzer = {
 }
 ```
 
-Implementacoes:
+Implementations:
 
-- `neutral-prosody`: regras por pontuacao, sem LLM.
+- `neutral-prosody`: punctuation-based rules, without an LLM.
 - `llm-prosody-gguf`: `node-llama-cpp` + Metal/GGUF.
-- `llm-prosody-mlx`: sidecar MLX para Apple Silicon, se aprovado em benchmark.
+- `llm-prosody-mlx`: MLX sidecar for Apple Silicon, if approved by benchmarking.
 
-Regras:
+Rules:
 
-- Nunca altera texto.
-- Retorna JSON validado por Zod.
-- Falha vira prosodia neutra.
-- Output e cacheado por segmento.
+- Never alter the text.
+- Return JSON validated by Zod.
+- Convert failures to neutral prosody.
+- Cache output by segment.
 
 ### `NarrationPlan`
 
-Formato canonico entre prosodia e TTS.
+Canonical format between prosody and TTS.
 
 ```ts
 type NarrationPlan = {
@@ -90,11 +90,11 @@ type NarrationPlan = {
 }
 ```
 
-Este plano e o principal contrato de interoperabilidade. Um adapter novo so precisa aceitar `NarrationPlan` e declarar capacidades.
+This plan is the primary interoperability contract. A new adapter only needs to accept `NarrationPlan` and declare its capabilities.
 
 ### `TtsAdapter`
 
-Responsavel por traduzir o plano canonico para um motor real.
+Responsible for translating the canonical plan to a real engine.
 
 ```ts
 type TtsAdapter = {
@@ -107,18 +107,18 @@ type TtsAdapter = {
 }
 ```
 
-Regras:
+Rules:
 
-- Adapter nao acessa UI.
-- Adapter nao decide fila global.
-- Adapter pode ignorar campos nao suportados, mas precisa logar.
-- Adapter retorna eventos de progresso por segmento.
-- Adapter deve ser testavel com fixtures de `NarrationPlan`.
-- Adapter declara se consegue criar ou usar voice cloning.
+- The adapter does not access the UI.
+- The adapter does not decide the global queue.
+- The adapter may ignore unsupported fields, but must log them.
+- The adapter returns per-segment progress events.
+- The adapter must be testable with `NarrationPlan` fixtures.
+- The adapter declares whether it can create or use voice cloning.
 
 ### `VoiceManager`
 
-Responsavel por criar, listar, validar e excluir vozes disponiveis.
+Responsible for creating, listing, validating, and deleting available voices.
 
 ```ts
 type VoiceManager = {
@@ -131,16 +131,16 @@ type VoiceManager = {
 }
 ```
 
-Regras:
+Rules:
 
-- Uma voz e um perfil canonico; o uso por motor depende de bindings.
-- Voz clonada precisa de consentimento confirmado antes de ficar disponivel.
-- Voz sem binding compativel aparece como indisponivel para aquele motor, nao como erro.
-- Preview usa texto curto padrao em PT-BR e fica cacheado.
+- A voice is a canonical profile; use by an engine depends on bindings.
+- A cloned voice requires confirmed consent before becoming available.
+- A voice without a compatible binding appears unavailable for that engine, not as an error.
+- Preview uses a short standard PT-BR text and is cached.
 
 ### `AudiobookAssembler`
 
-Responsavel por transformar capitulos gerados em um M4B de livro.
+Responsible for turning generated chapters into a book M4B.
 
 ```ts
 type AudiobookAssembler = {
@@ -151,35 +151,35 @@ type AudiobookAssembler = {
 }
 ```
 
-Regras:
+Rules:
 
-- Usa capitulos prontos como fonte; nao depende dos segmentos originais para montar o M4B.
-- Atualiza M4B parcial por rebuild atomico, nao por append in-place.
-- Mantem marcadores de capitulo e metadados do livro.
-- Falha na montagem nao invalida audio de capitulos.
-- Qualquer alteracao em voz, engine, ordem, capa ou metadados marca o export como `stale`.
+- Uses ready chapters as the source; it does not depend on original segments to assemble the M4B.
+- Updates the M4B by atomic rebuild, not in-place append.
+- Keeps chapter markers and book metadata.
+- A build failure does not invalidate chapter audio.
+- Any change to voice, engine, order, cover, or metadata marks the export as `stale`.
 
-## Mapeamento de Prosodia
+## Prosody Mapping
 
-O app usa categorias semanticas pequenas:
+The app uses small semantic categories:
 
-- emocao: `neutral`, `warm`, `tense`, `sad`, `joyful`, `angry`, `suspense`, `formal`
-- ritmo: `slow`, `normal`, `fast`
+- emotion: `neutral`, `warm`, `tense`, `sad`, `joyful`, `angry`, `suspense`, `formal`
+- pace: `slow`, `normal`, `fast`
 - pitch: `low`, `neutral`, `high`
-- intensidade: `0..1`
-- pausa antes/depois em ms
+- intensity: `0..1`
+- pause before/after in milliseconds
 
-Cada adapter converte isso:
+Each adapter converts these values:
 
-- Modelo com instrucao natural: gerar frase curta de instrucao.
-- Modelo com tags discretas: mapear para tag mais proxima.
-- Modelo com controles parametricos: mapear intensidade/emocao para parametros numericos e aplicar pausas no assembler.
-- Modelo sem controle emocional: ignorar com log `unsupported_prosody_field`.
-- Modelo com voz de referencia: preservar prosodia discreta e priorizar consistencia de voz.
+- Model with natural-language instruction: generate a short instruction sentence.
+- Model with discrete tags: map to the closest tag.
+- Model with parametric controls: map intensity/emotion to numeric parameters and apply pauses in the assembler.
+- Model without emotional control: ignore it and log `unsupported_prosody_field`.
+- Model with a reference voice: preserve discrete prosody and prioritize voice consistency.
 
-## Manifesto de Adapter
+## Adapter Manifest
 
-Cada adapter deve ter um manifesto:
+Each adapter must have a manifest:
 
 ```json
 {
@@ -199,49 +199,49 @@ Cada adapter deve ter um manifesto:
 }
 ```
 
-O app registra adapters por manifesto e healthcheck. Isso permite trocar implementacao Python por Swift/MLX sem mudar a UI.
+The app registers adapters by manifest and healthcheck. This allows a Python implementation to be replaced by Swift/MLX without changing the UI.
 
-Estado atual da fase 4:
+Current Phase 4 state:
 
-- `qwen3-tts-06b-mlx`, `qwen3-tts-17b-mlx`, `qwen3-tts-17b-base-mlx`, `chatterbox-multilingual-mlx` e `f5-tts-pt-br` ja sao registrados como engines reais.
-- `qwen3-tts-06b-mlx` e `qwen3-tts-17b-base-mlx` operam como Qwen Base: exigem voz clonada por referencia (`ref_audio` + `ref_text`) e nao recebem instrucao natural de prosodia no sidecar.
-- `qwen3-tts-17b-mlx` opera como VoiceDesign: vozes disponiveis sao prompts de voz, nao clonagem por audio.
-- `chatterbox-multilingual-mlx` opera via MLX/`mlx-audio`: usa `lang_code=pt` para PT-BR, aceita referencia opcional e mapeia prosodia para `exaggeration`, `cfgWeight` e pausas.
-- A sintese neural permanece bloqueada ate existir sidecar/healthcheck configurado.
-- A prosodia expressiva tenta usar `Qwen3-4B-Instruct-2507 GGUF Q4_K_M` via `node-llama-cpp`; se nao houver runtime ou arquivo local, o app volta ao analisador estruturado local.
-- O painel de audio exibe progresso de download de modelos em tempo real.
+- `qwen3-tts-06b-mlx`, `qwen3-tts-17b-mlx`, `qwen3-tts-17b-base-mlx`, `chatterbox-multilingual-mlx`, and `f5-tts-pt-br` are already registered as real engines.
+- `qwen3-tts-06b-mlx` and `qwen3-tts-17b-base-mlx` operate as Qwen Base: they require a cloned reference voice (`ref_audio` + `ref_text`) and do not receive natural-language prosody instructions in the sidecar.
+- `qwen3-tts-17b-mlx` operates as VoiceDesign: available voices are voice prompts, not audio cloning.
+- `chatterbox-multilingual-mlx` operates through MLX/`mlx-audio`: it uses `lang_code=pt` for Brazilian Portuguese, accepts an optional reference, and maps prosody to `exaggeration`, `cfgWeight`, and pauses.
+- Neural synthesis remains blocked until a sidecar/healthcheck is configured.
+- Expressive prosody attempts to use `Qwen3-4B-Instruct-2507 GGUF Q4_K_M` through `node-llama-cpp`; without the runtime or local file, the app returns to the local structured analyzer.
+- The audio panel displays model download progress in real time.
 
-## Testes de Contrato
+## Contract Tests
 
-Todo adapter precisa passar por fixtures:
+Every adapter must pass fixtures for:
 
-- narracao neutra PT-BR
-- dialogo com travessao
-- numeros, datas, moeda e siglas
-- emocao intensa que deve ser suavizada
-- campo de prosodia nao suportado
-- voz clonada compativel e voz clonada incompativel com o motor
-- cancelamento no meio de um lote
-- retomada usando cache parcial
-- rebuild M4B apos novo capitulo
-- rebuild M4B apos regerar capitulo com outra voz
+- neutral PT-BR narration
+- dialogue with an em dash
+- numbers, dates, currency, and acronyms
+- intense emotion that should be softened
+- unsupported prosody field
+- compatible and incompatible cloned voices
+- cancellation in the middle of a batch
+- resumption using partial cache
+- M4B rebuild after a new chapter
+- M4B rebuild after regenerating a chapter with another voice
 
-Saidas esperadas:
+Expected outputs:
 
-- audio ou evento mockado por segmento
-- manifesto de duracoes
-- manifesto M4B com capitulos e metadados
-- logs estruturados
-- nenhum acesso ao renderer
+- audio or a mocked event per segment
+- duration manifest
+- M4B manifest with chapters and metadata
+- structured logs
+- no renderer access
 
-## Beneficio Arquitetural
+## Architectural Benefit
 
-Com essa divisao:
+With this separation:
 
-- Trocar Qwen3 0.6B por 1.7B muda modelo/configuracao, nao pipeline.
-- Trocar PyTorch por MLX muda adapter/runtime, nao UI.
-- F5-TTS-pt-br pode ter regras especificas sem contaminar o restante.
-- Vozes clonadas viram perfis reutilizaveis e nao ficam presas a uma tela de geracao.
-- O M4B do livro e reconstruivel a partir de capitulos e manifestos.
-- O LLM de prosodia pode ser desligado sem quebrar TTS.
-- O cache continua valido por versoes claras de normalizador, prosodia, adapter e modelo.
+- Switching Qwen3 0.6B to 1.7B changes the model/configuration, not the pipeline.
+- Switching PyTorch for MLX changes the adapter/runtime, not the UI.
+- F5-TTS-pt-br can have specialized rules without contaminating the rest of the system.
+- Cloned voices become reusable profiles instead of being tied to a generation screen.
+- The book M4B can be rebuilt from chapters and manifests.
+- The prosody LLM can be disabled without breaking TTS.
+- The cache remains valid through explicit normalizer, prosody, adapter, and model versions.

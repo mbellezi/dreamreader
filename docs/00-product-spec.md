@@ -1,153 +1,153 @@
-# Especificacao de Produto
+# Product Specification
 
-## Visao
+## Vision
 
-DreamReader e um leitor de ebooks desktop, local-first, com uma experiencia de leitura caprichada para portugues do Brasil e um pipeline offline para transformar capitulos em audio usando modelos TTS locais escolhidos pelo usuario.
+DreamReader is a local-first desktop ebook reader with a polished reading experience for Brazilian Portuguese and an offline pipeline for turning chapters into audio using local TTS models selected by the user.
 
-O produto deve funcionar bem como leitor tradicional antes de tentar ser uma ferramenta de IA. A geracao de audio entra como uma extensao natural da biblioteca e do leitor, nao como uma tela separada ou experimental demais.
+The product must work well as a traditional reader before trying to become an AI tool. Audio generation is a natural extension of the library and reader, not a separate or overly experimental screen.
 
-## Publico
+## Audience
 
-- Leitores que mantem uma biblioteca local de livros digitais.
-- Pessoas que alternam leitura visual e audio.
-- Estudantes e pesquisadores que fazem marcacoes, notas e revisitam trechos.
-- Usuarios brasileiros que querem bom tratamento de PT-BR em UI, busca, ordenacao, segmentacao e pronuncia.
+- Readers who maintain a local library of digital books.
+- People who alternate between visual reading and audio.
+- Students and researchers who create highlights and notes and revisit passages.
+- Brazilian users who want proper PT-BR handling in the UI, search, sorting, segmentation, and pronunciation.
 
-## Objetivos
+## Goals
 
-- Ler EPUB com boa navegacao, progresso, sumario, marcacoes e retomada de posicao.
-- Suportar formatos textuais simples desde cedo: `.txt`, `.md` e `.html`.
-- Manter biblioteca local com metadados, capas, colecoes, tags, busca e filtros.
-- Salvar progresso por livro, posicao por capitulo, marcacoes, notas e favoritos.
-- Gerar audio por capitulo com modelos TTS locais, em fila, com retomada e cache.
-- Permitir escolha de motor/voz por livro ou por capitulo.
-- Criar, gerenciar e reutilizar vozes locais por voice cloning, com consentimento explicito e compatibilidade por motor.
-- Gerar um audiobook M4B por livro conforme os capitulos forem sintetizados.
-- Usar um LLM local pequeno para produzir instrucoes estruturadas de prosodia, emocao e ritmo para o TTS.
-- Tratar portugues do Brasil como idioma de primeira classe.
+- Read EPUB with good navigation, progress tracking, table of contents, highlights, and position resumption.
+- Support simple text formats from an early stage: `.txt`, `.md`, and `.html`.
+- Maintain a local library with metadata, covers, collections, tags, search, and filters.
+- Save progress per book, position per chapter, highlights, notes, and favorites.
+- Generate chapter audio with queued local TTS models, including resumption and caching.
+- Allow engine/voice selection per book or chapter.
+- Create, manage, and reuse local voices through voice cloning, with explicit consent and per-engine compatibility.
+- Generate one M4B audiobook per book as chapters are synthesized.
+- Use a small local LLM to produce structured prosody, emotion, and pacing instructions for TTS.
+- Treat Brazilian Portuguese as a first-class language.
 
-## Estado Atual
+## Current State
 
-As fases 0, 1, 2 e 3 estao implementadas. O produto atual e um MVP leitor desktop local-first com audio local basico e prosodia expressiva estruturada:
+Phases 0, 1, 2, and 3 are implemented. The current product is a local-first desktop reader MVP with basic local audio and structured expressive prosody:
 
-- App Electron com preload seguro, IPC validado por Zod, PGlite/Drizzle e biblioteca interna em `userData`.
-- Importacao de EPUB, TXT, Markdown e HTML por seletor nativo.
-- Extracao de metadados basicos, sumario, capitulos legiveis e capa EPUB quando disponivel.
-- Lista/grid da biblioteca com busca simples por metadados.
-- Leitor com fluxo continuo ou paginado, preferencias visuais, sumario, progresso, retomada de posicao e modo limpo.
-- Marcacoes coloridas, notas e favoritos com ancoragem por paragrafo/offset.
-- Exportacao de anotacoes em Markdown/JSON no main process; a UI atual expoe Markdown.
-- Configuracoes iniciais de idioma, aparencia e preferencias do leitor.
-- Fallback renderer com dados de exemplo quando o app roda sem bridge Electron.
-- Fila TTS persistente por capitulo, segmentacao/normalizacao PT-BR basica, adapter local WAV, cache de audio, player por capitulo e export M4B real a partir dos capitulos prontos.
-- Narracao expressiva opcional com analisador local estruturado, cache de prosodia por segmento, fallback neutro validado por Zod e comparacao entre audio neutro e expressivo na UI.
+- Electron app with a secure preload, Zod-validated IPC, PGlite/Drizzle, and an internal library under `userData`.
+- EPUB, TXT, Markdown, and HTML import through a native file picker.
+- Extraction of basic metadata, table of contents, readable chapters, and EPUB cover when available.
+- List/grid library with simple metadata search.
+- Reader with continuous or paginated flow, visual preferences, table of contents, progress, position resumption, and clean mode.
+- Colored highlights, notes, and favorites anchored by paragraph/offset.
+- Annotation export in Markdown/JSON from the main process; the current UI exposes Markdown.
+- Initial language, appearance, and reader preference settings.
+- Renderer fallback with sample data when the app runs without the Electron bridge.
+- Persistent per-chapter TTS queue, basic PT-BR segmentation/normalization, local WAV adapter, audio cache, chapter player, and real M4B export from ready chapters.
+- Optional expressive narration with a structured local analyzer, per-segment prosody cache, Zod-validated neutral fallback, and neutral-versus-expressive audio comparison in the UI.
 
-Ainda planejado:
+Still planned:
 
-- Busca no texto completo, filtros avancados, tags/colecoes completas e monitoramento de pastas.
-- Runtime GGUF/MLX real para prosodia, TTS neural local, adapters Qwen/F5, voice cloning persistente e empacotamento M4B avancado com capa/metadados finais.
+- Full-text search, advanced filters, complete tags/collections, and folder monitoring.
+- Real GGUF/MLX runtime for prosody, local neural TTS, Qwen/F5 adapters, persistent voice cloning, and advanced M4B packaging with final cover/metadata.
 
-## Nao-objetivos iniciais
+## Initial Non-goals
 
-- DRM, LCP, Kindle DRM ou remocao/conversao de protecoes.
-- Sincronizacao em nuvem.
-- Loja, catalogo remoto ou social reading.
-- Conversao completa de MOBI/AZW no MVP.
-- Editor de EPUB.
-- Audiobooks comerciais ou distribuicao publica de vozes geradas.
+- DRM, LCP, Kindle DRM, or protection removal/conversion.
+- Cloud synchronization.
+- Store, remote catalog, or social reading.
+- Full MOBI/AZW conversion in the MVP.
+- EPUB editor.
+- Commercial audiobooks or public distribution of generated voices.
 
-## Funcionalidades do Leitor
+## Reader Features
 
-### Biblioteca
+### Library
 
-- Importar arquivos por seletor, drag-and-drop e pasta monitorada opcional.
-- Calcular hash de conteudo para evitar duplicatas.
-- Extrair metadados: titulo, autores, idioma, editora, data, identificadores e capa.
-- Permitir corrigir metadados manualmente.
-- Organizar por colecoes, tags, autores, idioma, status e progresso.
-- Buscar por titulo, autor, tags, notas e texto extraido quando disponivel.
+- Import files through a picker, drag-and-drop, and optional monitored folders.
+- Calculate a content hash to avoid duplicates.
+- Extract metadata: title, authors, language, publisher, date, identifiers, and cover.
+- Allow manual metadata correction.
+- Organize by collections, tags, authors, language, status, and progress.
+- Search by title, author, tags, notes, and extracted text when available.
 
-### Leitura
+### Reading
 
-- Abrir livro a partir da ultima posicao salva.
-- Navegar por sumario, pagina/progressao, capitulo anterior/proximo e busca interna.
-- Ajustar fonte, tamanho, largura da coluna, espacamento, margens, alinhamento, tema e hifenizacao.
-- Suportar temas claro, escuro, sepia e alto contraste.
-- Salvar posicao usando locator persistente, nao apenas indice visual de pagina.
-- Criar marcacoes coloridas, notas, favoritos e tags em trechos.
-- Exportar notas e marcacoes em Markdown/JSON.
+- Open a book from its last saved position.
+- Navigate by table of contents, page/progression, previous/next chapter, and internal search.
+- Adjust font, size, column width, spacing, margins, alignment, theme, and hyphenation.
+- Support light, dark, sepia, and high-contrast themes.
+- Save position using a persistent locator, not only a visual page index.
+- Create colored highlights, notes, favorites, and tags on passages.
+- Export notes and highlights as Markdown/JSON.
 
-### Formatos
+### Formats
 
-- MVP: EPUB, TXT, Markdown e HTML local.
-- Beta: PDF com um fluxo separado, usando visualizacao por paginas e anotacao limitada.
-- Futuro: CBZ/CBR, OPDS e possivel conversao de formatos via ferramenta opcional, desde que licenca e empacotamento permitam.
+- MVP: local EPUB, TXT, Markdown, and HTML.
+- Beta: PDF through a separate flow with page-based viewing and limited annotation.
+- Future: CBZ/CBR, OPDS, and possible format conversion through an optional tool when licensing and packaging permit.
 
-## Portugues do Brasil
+## Brazilian Portuguese
 
-O app deve ter PT-BR como lingua principal da UI e do pipeline de texto:
+The app must use PT-BR as the primary language of the UI and text pipeline:
 
-- UI em PT-BR desde o inicio.
-- Ordenacao e busca tolerantes a acentos.
-- Deteccao e armazenamento de idioma por livro/capitulo.
-- Segmentacao de texto que respeite abreviacoes comuns: "Sr.", "Sra.", "Dr.", "Dra.", "etc.", "p.ex.".
-- Normalizacao TTS para numeros, datas, horas, moedas, porcentagens, ordinais e siglas.
-- Tratamento de travessao, aspas brasileiras, dialogos e elipses.
-- Dicionario de pronuncia editavel pelo usuario por livro e globalmente.
-- Preservacao de nomes proprios e termos estrangeiros quando a normalizacao puder piorar a fala.
+- PT-BR UI from the beginning.
+- Accent-tolerant sorting and search.
+- Language detection and storage per book/chapter.
+- Text segmentation that respects common abbreviations: “Sr.”, “Sra.”, “Dr.”, “Dra.”, “etc.”, “p.ex.”.
+- TTS normalization for numbers, dates, times, currencies, percentages, ordinals, and acronyms.
+- Handling of em dashes, Brazilian quotation marks, dialogue, and ellipses.
+- User-editable pronunciation dictionary per book and globally.
+- Preservation of proper names and foreign terms when normalization could make speech worse.
 
-## Audio e TTS
+## Audio and TTS
 
-### Motores planejados
+### Planned Engines
 
-- Qwen3-TTS 12Hz 0.6B: opcao mais leve/rapida.
-- Qwen3-TTS 12Hz 1.7B: opcao de maior qualidade.
-- F5-TTS-pt-br: opcao especializada em portugues brasileiro.
+- Qwen3-TTS 12Hz 0.6B: lighter/faster option.
+- Qwen3-TTS 12Hz 1.7B: higher-quality option.
+- F5-TTS-pt-br: option specialized for Brazilian Portuguese.
 
-Cada motor deve ser exposto por um adapter com capacidades declaradas. Exemplo: suporte a voz customizada, instrucao textual, emocao discreta, lote, streaming, GPU, CPU e formato de saida.
+Each engine must be exposed through an adapter with declared capabilities. Examples include custom voice support, text instructions, discrete emotion, batching, streaming, GPU, CPU, and output format.
 
-### Fluxo de audio
+### Audio Flow
 
-- Usuario escolhe livro, capitulo, motor, voz/perfil e qualidade.
-- O app quebra o capitulo em segmentos estaveis.
-- Um analisador local ou LLM local gera instrucoes estruturadas para cada segmento.
-- O adapter do motor traduz essas instrucoes para o formato aceito pelo modelo.
-- O TTS gera arquivos por segmento e depois um arquivo de capitulo.
-- Ao concluir um capitulo, o app atualiza o M4B parcial do livro em segundo plano.
-- O player salva progresso de audio e mantem alinhamento aproximado com o texto.
+- The user selects a book, chapter, engine, voice/profile, and quality.
+- The app breaks the chapter into stable segments.
+- A local analyzer or local LLM generates structured instructions for each segment.
+- The engine adapter translates those instructions into the model's accepted format.
+- TTS generates files per segment and then one chapter file.
+- When a chapter finishes, the app updates the book's partial M4B in the background.
+- The player saves audio progress and maintains approximate alignment with the text.
 
-### Gerenciador de Vozes
+### Voice Manager
 
-- Listar vozes embutidas de cada motor.
-- Criar vozes clonadas a partir de audio de referencia e transcricao.
-- Validar idioma, duracao minima, qualidade do audio e compatibilidade com o motor.
-- Salvar vozes como perfis locais reutilizaveis.
-- Mostrar uma voz clonada no seletor apenas quando o adapter do motor conseguir usa-la.
-- Permitir nome, descricao, idioma, motor preferido, etiquetas e preview curto.
-- Permitir excluir voz e todos os assets de referencia associados.
-- Permitir duplicar/adaptar uma voz para outro motor quando o adapter suportar conversao ou novo embedding.
+- List the built-in voices of each engine.
+- Create cloned voices from reference audio and a transcript.
+- Validate language, minimum duration, audio quality, and engine compatibility.
+- Save voices as reusable local profiles.
+- Show a cloned voice in the selector only when the engine adapter can use it.
+- Allow a name, description, language, preferred engine, tags, and a short preview.
+- Allow deletion of a voice and all associated reference assets.
+- Allow duplicating/adapting a voice for another engine when the adapter supports conversion or a new embedding.
 
-### Vozes, consentimento e seguranca
+### Voices, Consent, and Safety
 
-Se houver clonagem de voz ou uso de audio de referencia, a UI deve deixar claro que o usuario e responsavel por usar somente vozes autorizadas. O app deve manter esses arquivos locais, com exclusao simples e sem upload automatico.
+When voice cloning or reference audio is used, the UI must clearly state that the user is responsible for using only authorized voices. The app must keep those files local, support simple deletion, and never upload them automatically.
 
-O gerenciador de vozes deve registrar data de confirmacao de consentimento, origem do audio de referencia, motor usado, arquivos associados e escopo de uso local. Perfis de voz clonados nao devem ser exportados junto com logs ou diagnosticos.
+The voice manager must record the consent confirmation date, reference audio origin, engine used, associated files, and local-use scope. Cloned voice profiles must not be exported with logs or diagnostics.
 
-### Audiobook M4B
+### M4B Audiobook
 
-- Cada livro pode ter um arquivo M4B parcial e um arquivo M4B final.
-- O M4B parcial e atualizado conforme capitulos ficam prontos.
-- O arquivo deve incluir metadados basicos: titulo, autores, capa, idioma, duracao e marcadores de capitulo.
-- O app deve manter manifestos por capitulo para conseguir reconstruir o M4B se qualquer audio, voz, motor ou ordem de capitulos mudar.
-- A atualizacao do M4B deve ser atomica: gerar em arquivo temporario, validar, e substituir o draft anterior.
-- Se um capitulo for regerado, o M4B deve ser marcado como desatualizado e remontado em segundo plano.
-- O usuario deve poder pausar/desativar a montagem automatica de M4B por livro.
+- Each book can have a partial M4B file and a final M4B file.
+- The partial M4B is updated as chapters become ready.
+- The file should include basic metadata: title, authors, cover, language, duration, and chapter markers.
+- The app must maintain per-chapter manifests so it can rebuild the M4B if any audio, voice, engine, or chapter order changes.
+- M4B updates must be atomic: generate a temporary file, validate it, and replace the previous draft.
+- If a chapter is regenerated, the M4B must be marked stale and rebuilt in the background.
+- The user must be able to pause/disable automatic M4B assembly per book.
 
-## Requisitos Nao Funcionais
+## Non-functional Requirements
 
-- Offline-first: leitura, biblioteca, TTS e LLM devem funcionar sem rede depois que modelos/dependencias estiverem instalados.
-- Privacidade: livros, marcacoes, vozes e audios gerados ficam no dispositivo.
-- Resiliencia: jobs de TTS devem ser retomaveis apos fechar o app.
-- Performance: importacao, indexacao e TTS nao podem travar a UI.
-- Segurança: conteudo de livros e arquivos importados devem ser tratados como nao confiaveis.
-- Portabilidade: arquitetura preparada para macOS, Windows e Linux, mesmo que o primeiro ambiente de desenvolvimento seja macOS.
+- Offline-first: reading, library, TTS, and LLM must work without a network after models/dependencies are installed.
+- Privacy: books, highlights, voices, and generated audio remain on the device.
+- Resilience: TTS jobs must be resumable after the app closes.
+- Performance: import, indexing, and TTS must not block the UI.
+- Security: book content and imported files must be treated as untrusted.
+- Portability: the architecture must support macOS, Windows, and Linux even if the first development environment is macOS.

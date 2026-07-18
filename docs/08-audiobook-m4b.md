@@ -1,101 +1,101 @@
 # Audiobook M4B
 
-## Objetivo
+## Objective
 
-Criar um arquivo M4B por livro conforme os audios dos capitulos forem sendo gerados. O usuario deve poder ouvir/exportar um audiobook parcial enquanto o restante do livro ainda esta em fila.
+Create one M4B file per book as chapter audio is generated. The user should be able to listen to/export a partial audiobook while the rest of the book remains queued.
 
-## Principios
+## Principles
 
-- O M4B e derivado, nao fonte canonica.
-- A fonte canonica sao os capitulos de audio, manifestos e metadados no banco.
-- Atualizacao deve ser atomica: criar arquivo temporario, validar e substituir.
-- Falha de montagem M4B nao invalida audio de capitulo.
-- O app deve conseguir reconstruir o M4B a qualquer momento.
+- The M4B is derived, not canonical.
+- Canonical sources are chapter audio, manifests, and database metadata.
+- Updates must be atomic: create a temporary file, validate it, and replace the previous file.
+- An M4B assembly failure does not invalidate chapter audio.
+- The app must be able to rebuild the M4B at any time.
 
-## Fluxo
+## Flow
 
-1. TTS conclui um capitulo.
-2. O capitulo e salvo como asset de audio com duracao, codec, voz, engine e hash.
-3. `audiobook_chapters` e atualizado.
-4. `audiobook_exports.stale` vira `true`.
-5. Se auto-build estiver ligado, o assembler entra na fila.
-6. O assembler cria um M4B temporario com capitulos prontos.
-7. O app valida duracao, capitulos e metadados.
-8. O arquivo temporario substitui o draft anterior.
-9. Se todos os capitulos selecionados estiverem prontos, o export pode ser marcado como final.
+1. TTS completes a chapter.
+2. The chapter is saved as an audio asset with duration, codec, voice, engine, and hash.
+3. `audiobook_chapters` is updated.
+4. `audiobook_exports.stale` becomes `true`.
+5. If auto-build is enabled, the assembler is queued.
+6. The assembler creates a temporary M4B with ready chapters.
+7. The app validates duration, chapters, and metadata.
+8. The temporary file replaces the previous draft.
+9. If all selected chapters are ready, the export may be marked final.
 
-## Parcial vs Final
+## Partial versus Final
 
-### M4B Parcial
+### Partial M4B
 
-- Contem apenas capitulos ja gerados.
-- Pode ser substituido varias vezes.
-- Deve exibir claramente que esta incompleto.
-- Deve manter marcadores de capitulo para os capitulos incluidos.
+- Contains only chapters that have already been generated.
+- May be replaced several times.
+- Must clearly indicate that it is incomplete.
+- Must retain chapter markers for included chapters.
 
-### M4B Final
+### Final M4B
 
-- Contem todos os capitulos selecionados.
-- Deve ser estavel ate audio, voz, motor, capa, ordem ou metadados mudarem.
-- Pode ser reconstruido manualmente pelo usuario.
+- Contains all selected chapters.
+- Should remain stable until audio, voice, engine, cover, order, or metadata changes.
+- May be rebuilt manually by the user.
 
-## Metadados
+## Metadata
 
-Campos minimos:
+Minimum fields:
 
-- titulo
-- autores
-- idioma
-- capa
-- data de geracao
-- engine TTS
-- voz/perfil
-- duracao total
-- capitulos com titulo, inicio e fim
+- title
+- authors
+- language
+- cover
+- generation date
+- TTS engine
+- voice/profile
+- total duration
+- chapters with title, start, and end
 
-Campos opcionais:
+Optional fields:
 
-- subtitulo
-- editora
-- ano de publicacao
-- descricao
-- narrador/voz
-- comentario sobre geracao local
+- subtitle
+- publisher
+- publication year
+- description
+- narrator/voice
+- note about local generation
 
-## Codec e Container
+## Codec and Container
 
-Direcao inicial:
+Initial direction:
 
-- Intermediario: WAV por segmento para debug e montagem.
-- Capitulo: M4A/AAC quando encoder estiver disponivel.
-- Livro: M4B com AAC e chapter markers.
+- Intermediate: WAV per segment for debugging and assembly.
+- Chapter: M4A/AAC when an encoder is available.
+- Book: M4B with AAC and chapter markers.
 
-Se o encoder/empacotamento nao estiver pronto no MVP, o app pode manter WAV/M4A por capitulo e deixar M4B como job pendente, sem bloquear a geracao de audio.
+If encoding/packaging is not ready for the MVP, the app may keep WAV/M4A per chapter and leave M4B as a pending job without blocking audio generation.
 
-## Invalidacao
+## Invalidation
 
-Marcar export como `stale` quando:
+Mark the export as `stale` when:
 
-- capitulo for regerado;
-- voz mudar;
-- motor/modelo mudar;
-- normalizador ou prosodia mudar e afetar audio;
-- ordem de capitulos mudar;
-- capa/metadados mudarem;
-- encoder/configuracao de qualidade mudar.
+- a chapter is regenerated;
+- the voice changes;
+- the engine/model changes;
+- the normalizer or prosody changes and affects audio;
+- chapter order changes;
+- cover/metadata changes;
+- encoder/quality configuration changes.
 
 ## UI
 
-- Mostrar status por livro: sem audio, parcial, desatualizado, completo, erro.
-- Mostrar progresso: capitulos prontos/total e duracao pronta.
-- Acao de reconstruir M4B com status/progresso do build.
-- Toggle de auto-build por livro e global.
-- Acao de salvar o arquivo M4B em um caminho escolhido pelo usuario.
-- Aviso quando o M4B parcial nao contem todos os capitulos.
+- Show per-book status: no audio, partial, outdated, complete, or error.
+- Show progress: ready chapters/total and ready duration.
+- Provide an M4B rebuild action with build status/progress.
+- Provide an auto-build toggle per book and globally.
+- Provide an action to save the M4B file to a path chosen by the user.
+- Warn when a partial M4B does not contain all chapters.
 
 ## Jobs
 
-Estados:
+States:
 
 - `queued`
 - `building`
@@ -104,17 +104,17 @@ Estados:
 - `failed`
 - `cancelled`
 
-Prioridade:
+Priority:
 
-- Baixa por padrao.
-- Nunca deve interromper leitura/player.
-- Pode pausar se TTS precisar de CPU/IO.
+- Low by default.
+- Must never interrupt reading/player activity.
+- May pause if TTS needs CPU/I/O.
 
-## Testes
+## Tests
 
-- Montar M4B com um capitulo.
-- Atualizar M4B apos adicionar outro capitulo.
-- Regerar um capitulo com outra voz e confirmar `stale`.
-- Reconstruir final com capa e marcadores.
-- Cancelar build sem corromper draft anterior.
-- Simular falha de encoder e preservar capitulos de audio.
+- Assemble an M4B with one chapter.
+- Update the M4B after adding another chapter.
+- Regenerate a chapter with another voice and confirm `stale`.
+- Rebuild a final export with cover and markers.
+- Cancel a build without corrupting the previous draft.
+- Simulate an encoder failure and preserve chapter audio.

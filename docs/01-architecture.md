@@ -1,122 +1,122 @@
-# Arquitetura
+# Architecture
 
-## Stack Base
+## Base Stack
 
-- Desktop: Electron com `electron-vite`.
-- Renderer: React 19, TypeScript, Tailwind CSS 4, `shadcn/ui` e `lucide-react`.
-- Backend local: Node.js no main process do Electron.
-- Banco local: PGlite.
-- ORM e migrations: Drizzle ORM.
-- Contratos runtime: Zod.
-- Trabalho pesado: `worker_threads` e processos Python supervisionados.
-- LLM local: runtime abstrato, com `node-llama-cpp` + Metal como baseline GGUF e MLX como alvo preferencial de performance em Apple Silicon quando houver modelo/adapter estavel.
-- TTS local: runtime abstrato, com adapters por motor. Em Apple Silicon, preferir MLX/Metal; usar PyTorch MPS quando MLX nao existir; CPU apenas como fallback.
-- Governador de recursos: servico do main process que controla concorrencia, memoria unificada e uso do acelerador.
+- Desktop: Electron with `electron-vite`.
+- Renderer: React 19, TypeScript, Tailwind CSS 4, `shadcn/ui`, and `lucide-react`.
+- Local backend: Node.js in the Electron main process.
+- Local database: PGlite.
+- ORM and migrations: Drizzle ORM.
+- Runtime contracts: Zod.
+- Heavy work: `worker_threads` and supervised Python processes.
+- Local LLM: abstract runtime, with `node-llama-cpp` plus Metal as the GGUF baseline and MLX as the preferred Apple Silicon performance target when a stable model/adapter exists.
+- Local TTS: abstract runtime with per-engine adapters. On Apple Silicon, prefer MLX/Metal; use PyTorch MPS when MLX is unavailable; use CPU only as a fallback.
+- Resource governor: main-process service that controls concurrency, unified memory, and accelerator usage.
 
-## Estado Atual Implementado
+## Current Implemented State
 
-As fases 0, 1, 2 e 3 estao implementadas com esta arquitetura:
+Phases 0, 1, 2, and 3 are implemented with this architecture:
 
-- `src/main/index.ts` cria a janela Electron com `sandbox`, `contextIsolation` e `nodeIntegration: false`.
-- `src/preload/index.ts` expoe `window.dreamreader` via `contextBridge` e traduz respostas IPC tipadas para a UI.
-- `src/main/ipc/register.ts` registra handlers IPC e valida os payloads de entrada com schemas Zod de `src/shared/contracts/`.
-- `src/main/db/client.ts` inicializa PGlite persistente e aplica migrations Drizzle.
-- `src/main/services/library-service.ts` implementa importacao, listagem, abertura, recursos de leitura, posicao, anotacoes, bookmarks, exportacao de anotacoes e settings.
-- `src/main/protocol/asset-protocol.ts` serve assets registrados via `dreamreader://asset/:assetId`.
-- `src/renderer/App.tsx` orquestra estado e navegacao; componentes ficam em `src/renderer/components/`, tipos de UI em `src/renderer/app/` e helpers puros em `src/renderer/lib/`.
-- `src/renderer/lib/dreamreader.ts` atua como cliente usado pelo renderer; quando a bridge Electron nao existe, usa fallback local com dados de exemplo em `localStorage`.
-- `src/main/services/tts-service.ts` implementa fila TTS persistente por capitulo, segmentacao/normalizacao basica, adapter local WAV e cache de audio por capitulo.
-- `src/main/services/prosody-service.ts` aplica prosodia neutra ou expressiva sobre `NarrationPlan`, valida a resposta estruturada por Zod e persiste cache por segmento em `prosody_analyses`.
-- `src/main/services/audiobook-service.ts` persiste capitulos prontos, manifestos parciais e build jobs de audiobook. O rebuild gera um M4B real com AAC via `ffmpeg-static`, mantendo o manifesto no banco como fonte reconstruivel.
-- Servicos de vozes e modelos ainda mantem parte do comportamento como stub/diagnostico para fases futuras; runtime GGUF/MLX real de prosodia, engines neurais e voice cloning ainda nao executam inferencia/processamento externo.
+- `src/main/index.ts` creates the Electron window with `sandbox`, `contextIsolation`, and `nodeIntegration: false`.
+- `src/preload/index.ts` exposes `window.dreamreader` through `contextBridge` and translates typed IPC responses for the UI.
+- `src/main/ipc/register.ts` registers IPC handlers and validates input payloads with Zod schemas from `src/shared/contracts/`.
+- `src/main/db/client.ts` initializes persistent PGlite and applies Drizzle migrations.
+- `src/main/services/library-service.ts` implements import, listing, opening, reading resources, position, annotations, bookmarks, annotation export, and settings.
+- `src/main/protocol/asset-protocol.ts` serves registered assets through `dreamreader://asset/:assetId`.
+- `src/renderer/App.tsx` orchestrates state and navigation; components live under `src/renderer/components/`, UI types under `src/renderer/app/`, and pure helpers under `src/renderer/lib/`.
+- `src/renderer/lib/dreamreader.ts` is the client used by the renderer; when the Electron bridge is unavailable, it uses a local fallback with sample data in `localStorage`.
+- `src/main/services/tts-service.ts` implements a persistent per-chapter TTS queue, basic segmentation/normalization, a local WAV adapter, and per-chapter audio caching.
+- `src/main/services/prosody-service.ts` applies neutral or expressive prosody to `NarrationPlan`, validates the structured response with Zod, and persists per-segment cache entries in `prosody_analyses`.
+- `src/main/services/audiobook-service.ts` persists ready chapters, partial manifests, and audiobook build jobs. Rebuild generates a real AAC M4B through `ffmpeg-static`, keeping the database manifest as the reconstructable source.
+- Voice and model services still retain part of their behavior as stubs/diagnostics for future phases; real GGUF/MLX prosody runtime, neural engines, and voice cloning do not yet run external inference/processing.
 
-## Limites Entre Processos
+## Process Boundaries
 
 ### Renderer
 
-Responsavel por:
+Responsible for:
 
-- UI da biblioteca, leitor, anotacoes e configuracoes.
-- Estado visual e cache leve de consultas.
-- Renderizacao controlada do conteudo do livro.
-- Futuramente: fila/player de audio e telas de diagnostico de modelos.
+- Library, reader, annotation, and settings UI.
+- Visual state and lightweight query caching.
+- Controlled rendering of book content.
+- Future: audio queue/player and model diagnostic screens.
 
-Nao deve:
+Must not:
 
-- Acessar `fs`, PGlite, Python, `node-llama-cpp` ou modelos diretamente.
-- Abrir arquivos via `file://` sem mediacao.
-- Executar scripts embutidos em EPUB.
+- Directly access `fs`, PGlite, Python, `node-llama-cpp`, or models.
+- Open files through `file://` without mediation.
+- Execute scripts embedded in EPUB files.
 
 ### Preload
 
-Responsavel por:
+Responsible for:
 
-- Expor uma API pequena via `contextBridge`.
-- Validar payloads com Zod quando fizer sentido no limite do processo.
-- Transformar erros do main em erros tipados para a UI.
+- Exposing a small API through `contextBridge`.
+- Validating payloads with Zod when appropriate at the process boundary.
+- Converting main-process errors into typed errors for the UI.
 
 ### Main Process
 
-Responsavel por:
+Responsible for:
 
 - IPC handlers.
-- Banco PGlite e migrations Drizzle.
-- Importacao, extracao e armazenamento de livros.
-- Protocolo local seguro para recursos de livros.
-- Persistencia de posicao, anotacoes, bookmarks e settings.
-- Gerenciamento inicial/stub de modelos locais, jobs TTS, prosodia estruturada, perfis de voz e export M4B.
-- Futuramente: supervisao de workers Node e subprocessos Python, execucao real de runtimes LLM/TTS neurais, governador de recursos, voice cloning completo e montagem incremental de audiobooks M4B reais.
+- PGlite database and Drizzle migrations.
+- Book import, extraction, and storage.
+- Secure local protocol for book resources.
+- Persistence of position, annotations, bookmarks, and settings.
+- Initial/stub management of local models, TTS jobs, structured prosody, voice profiles, and M4B export.
+- Future: supervision of Node workers and Python subprocesses, real neural LLM/TTS runtime execution, resource governor, complete voice cloning, and real incremental M4B audiobook assembly.
 
 ### Workers
 
-Usos recomendados:
+Recommended uses:
 
-- Extracao e normalizacao de texto.
-- Indexacao para busca.
-- Segmentacao de capitulos.
-- Preparacao de prompts para o LLM.
-- Pos-processamento de audio e montagem de capitulos.
+- Text extraction and normalization.
+- Search indexing.
+- Chapter segmentation.
+- Prompt preparation for the LLM.
+- Audio post-processing and chapter assembly.
 
-Observacao: `node-llama-cpp` tem restricoes especificas no Electron. A integracao futura deve validar se ele pode rodar dentro de um `worker_thread` controlado pelo main. Se nao puder, o main process deve manter uma fila serializada para inferencia.
+Note: `node-llama-cpp` has Electron-specific restrictions. The future integration must validate whether it can run inside a `worker_thread` controlled by the main process. If it cannot, the main process must maintain a serialized inference queue.
 
-### Runtimes Locais de IA
+### Local AI Runtimes
 
-Usar runtimes locais como servicos supervisionados pelo main process:
+Use local runtimes as services supervised by the main process:
 
-- Preferir comunicacao por stdio JSON-RPC ou pipes.
-- Evitar abrir porta HTTP local no MVP.
-- Um adapter por motor/runtime: Qwen3-TTS MLX, Qwen3-TTS PyTorch, F5-TTS-pt-br PyTorch/MPS, LLM GGUF via `node-llama-cpp`, LLM MLX e futuros motores.
-- Retornar progresso por segmento, logs estruturados e erros recuperaveis.
-- Manter processos long-lived para nao pagar custo de startup/model load a cada segmento.
-- Expor healthcheck, versao, memoria estimada, acelerador usado e metricas de throughput.
+- Prefer communication through stdio JSON-RPC or pipes.
+- Avoid opening a local HTTP port in the MVP.
+- Use one adapter per engine/runtime: Qwen3-TTS MLX, Qwen3-TTS PyTorch, F5-TTS-pt-br PyTorch/MPS, GGUF LLM through `node-llama-cpp`, MLX LLM, and future engines.
+- Return per-segment progress, structured logs, and recoverable errors.
+- Keep processes long-lived to avoid startup/model-load cost for every segment.
+- Expose a health check, version, estimated memory, accelerator in use, and throughput metrics.
 
-## Apple Silicon e Performance
+## Apple Silicon and Performance
 
-Ver `docs/06-apple-silicon-performance.md` para a politica detalhada. Resumo arquitetural:
+See `docs/06-apple-silicon-performance.md` for the detailed policy. Architectural summary:
 
-- Detectar chip, memoria unificada, macOS, disponibilidade de Metal, MLX e MPS no diagnostico inicial.
-- Preferir modelos em formato MLX para TTS Qwen3 e, se os benchmarks aprovarem, para o LLM de prosodia.
-- Usar `node-llama-cpp` com Metal para GGUF quando a integracao Electron/Node for mais simples ou mais estavel.
-- Usar PyTorch MPS para F5-TTS-pt-br enquanto nao houver adapter MLX confiavel.
-- Serializar inferencia pesada por padrao: um job TTS ativo ou um job LLM ativo por acelerador.
-- Permitir concorrencia somente para etapas CPU leves: extracao, segmentacao, normalizacao, validacao de JSON e montagem de manifests.
-- Cachear analise de prosodia e audio por segmento para reduzir recomputacao.
+- Detect the chip, unified memory, macOS version, Metal availability, MLX, and MPS during initial diagnostics.
+- Prefer MLX-format models for Qwen3 TTS and, if benchmarks approve, for the prosody LLM.
+- Use `node-llama-cpp` with Metal for GGUF when the Electron/Node integration is simpler or more stable.
+- Use PyTorch MPS for F5-TTS-pt-br while no reliable MLX adapter exists.
+- Serialize heavy inference by default: one active TTS job or one active LLM job per accelerator.
+- Allow concurrency only for lightweight CPU stages: extraction, segmentation, normalization, JSON validation, and manifest assembly.
+- Cache prosody analysis and audio by segment to reduce recomputation.
 
-### Governador de Recursos
+### Resource Governor
 
-O `ResourceGovernor` deve ficar no main process e decidir quando um job pode adquirir recursos:
+The `ResourceGovernor` should live in the main process and decide when a job may acquire resources:
 
 - `accelerator`: `mlx`, `metal`, `mps`, `cpu`.
-- `memoryBudgetMb`: orcamento estimado por modelo e job.
+- `memoryBudgetMb`: estimated budget per model and job.
 - `thermalPolicy`: `quiet`, `balanced`, `maximum`.
-- `exclusiveGpu`: verdadeiro para TTS/LLM grandes no MVP.
-- `priority`: leitura/player e UI sempre vencem jobs de background.
+- `exclusiveGpu`: true for large TTS/LLM models in the MVP.
+- `priority`: reading/player and UI always take precedence over background jobs.
 
-O renderer nunca deve decidir concorrencia de modelo. Ele apenas pede jobs e recebe progresso.
+The renderer must never decide model concurrency. It only requests jobs and receives progress.
 
 ## IPC
 
-Os canais devem ser nomeados por dominio e validados com schemas Zod compartilhados:
+Channels must be named by domain and validated with shared Zod schemas:
 
 - `library.importFiles`
 - `library.listBooks`
@@ -149,11 +149,11 @@ Os canais devem ser nomeados por dominio e validados com schemas Zod compartilha
 - `settings.get`
 - `settings.update`
 
-O renderer deve importar apenas tipos e clientes de IPC, nunca implementacoes de servico.
+The renderer must import only IPC types and clients, never service implementations.
 
-## Banco e Arquivos
+## Database and Files
 
-Estrutura sugerida dentro de `app.getPath("userData")`:
+Suggested structure under `app.getPath("userData")`:
 
 ```text
 DreamReader/
@@ -169,116 +169,116 @@ DreamReader/
   backups/
 ```
 
-Padrao recomendado:
+Recommended pattern:
 
-- Copiar livros importados para a biblioteca interna por hash.
-- Guardar o caminho original como referencia, mas nao depender dele.
-- Cachear capas e manifestos extraidos.
-- Guardar audios gerados fora do banco, com metadados no PGlite.
-- Guardar M4B parcial/final fora do banco, com manifestos e metadados no PGlite.
-- Guardar referencias e embeddings de vozes em `voices/`, separados do cache de audio.
-- Guardar modelos fora do ASAR e fora do banco.
+- Copy imported books into the internal library by hash.
+- Keep the original path as a reference, but do not depend on it.
+- Cache covers and extracted manifests.
+- Store generated audio outside the database, with metadata in PGlite.
+- Store partial/final M4B files outside the database, with manifests and metadata in PGlite.
+- Store voice references and embeddings under `voices/`, separate from the audio cache.
+- Store models outside the ASAR and outside the database.
 
-## Vozes e Voice Cloning
+## Voices and Voice Cloning
 
-O app deve tratar voz como um recurso local versionado:
+The app must treat a voice as a versioned local resource:
 
-- `VoiceProfile`: identidade visivel para o usuario, com nome, idioma, descricao, tags e consentimento.
-- `VoiceSample`: audio/transcricao de referencia, qualidade e origem.
-- `VoiceBinding`: material especifico de um adapter, como embedding, speaker id, preset ou referencia processada.
+- `VoiceProfile`: user-visible identity with name, language, description, tags, and consent.
+- `VoiceSample`: reference audio/transcript, quality, and origin.
+- `VoiceBinding`: adapter-specific material such as an embedding, speaker ID, preset, or processed reference.
 
-Uma voz pode existir como perfil canonico e ter um ou mais bindings. Exemplo: a mesma voz pode ter um binding para Qwen3-TTS Base e outro para F5-TTS-pt-br, se ambos forem criados/validados. O seletor de vozes mostra apenas perfis que tenham binding compativel com o motor escolhido.
+A voice may exist as a canonical profile with one or more bindings. For example, the same voice may have one binding for Qwen3-TTS Base and another for F5-TTS-pt-br if both are created/validated. The voice selector shows only profiles that have a binding compatible with the selected engine.
 
-O processo de criacao de voz deve rodar como job local:
+The voice creation process must run as a local job:
 
-- importar audio de referencia;
-- opcionalmente transcrever ou solicitar transcricao manual;
-- validar duracao, ruido, formato e idioma;
-- confirmar consentimento;
-- gerar preview curto;
-- criar binding por adapter;
-- registrar metricas e falhas.
+- import reference audio;
+- optionally transcribe it or request a manual transcript;
+- validate duration, noise, format, and language;
+- confirm consent;
+- generate a short preview;
+- create an adapter binding;
+- record metrics and failures.
 
-## Audiobook M4B
+## M4B Audiobook
 
-Ver `docs/08-audiobook-m4b.md` para detalhes. Resumo arquitetural:
+See `docs/08-audiobook-m4b.md` for details. Architectural summary:
 
-- Cada capitulo concluido gera audio canonico de capitulo e atualiza um manifesto do livro.
-- Um `AudiobookAssembler` observa capitulos prontos e gera um M4B parcial em segundo plano.
-- Como M4B e container MP4, a estrategia padrao e remontar o arquivo a partir do manifesto em arquivo temporario e substituir atomicamente o draft anterior.
-- O arquivo parcial deve ser reproduzivel mesmo antes do livro inteiro estar pronto.
-- Ao concluir todos os capitulos selecionados, o draft vira export final ou e remuxado como final.
-- Mudancas de voz, motor, ordem de capitulos, capa ou metadados invalidam o M4B e disparam rebuild.
+- Every completed chapter produces canonical chapter audio and updates the book manifest.
+- An `AudiobookAssembler` observes ready chapters and generates a partial M4B in the background.
+- Because M4B is an MP4 container, the default strategy is to rebuild the file from the manifest into a temporary file and atomically replace the previous draft.
+- The partial file must be playable even before the full book is ready.
+- When all selected chapters are complete, the draft becomes the final export or is remuxed as final.
+- Changes to voice, engine, chapter order, cover, or metadata invalidate the M4B and trigger a rebuild.
 
-## Motor de Leitura
+## Reading Engine
 
-Estado atual do MVP:
+Current MVP state:
 
-- O app usa um motor proprio simples no `LibraryService`: EPUB e lido com `JSZip` + `fast-xml-parser`; TXT/Markdown/HTML viram um manifesto interno.
-- EPUBs com spine ou NCX sao convertidos em capitulos legiveis; anchors de NCX podem dividir secoes dentro do mesmo arquivo HTML.
-- O preload busca recursos pelo IPC `reader.getResource` e converte HTML para texto simples para o renderer atual.
-- O renderer implementa leitura continua e paginada, preferencias, sumario, locators, marcacoes por selecao e retomada de posicao.
-- Readium Web/TS Toolkit e `epub.js` nao foram adotados no MVP atual.
+- The app uses a simple custom engine in `LibraryService`: EPUB is read with `JSZip` plus `fast-xml-parser`; TXT/Markdown/HTML become an internal manifest.
+- EPUB files with a spine or NCX are converted into readable chapters; NCX anchors may split sections within the same HTML file.
+- The preload fetches resources through `reader.getResource` IPC and converts HTML to plain text for the current renderer.
+- The renderer implements continuous and paginated reading, preferences, table of contents, locators, selection-based highlights, and position resumption.
+- Readium Web/TS Toolkit and `epub.js` were not adopted in the current MVP.
 
-Endurecimento futuro:
+Future hardening:
 
-- Abrir EPUB local sem expor `file://`.
-- Salvar e restaurar locator.
-- Criar marcacao em texto selecionado.
-- Navegar por sumario.
-- Aplicar temas e preferencias.
-- Isolar conteudo rico em iframe sandboxed quando a renderizacao HTML completa for necessaria.
-- Bloquear scripts e navegacao externa dentro de conteudo de livro.
+- Open local EPUB without exposing `file://`.
+- Save and restore a locator.
+- Create a highlight from selected text.
+- Navigate through the table of contents.
+- Apply themes and preferences.
+- Isolate rich content in a sandboxed iframe when full HTML rendering is needed.
+- Block scripts and external navigation inside book content.
 
-## Seguranca de Conteudo
+## Content Security
 
-EPUB e HTML importado devem ser tratados como conteudo nao confiavel:
+Imported EPUB and HTML must be treated as untrusted content:
 
-- Usar protocolo local controlado, por exemplo `dreamreader://book/:bookId/...`.
-- Resolver recursos por ID de livro e caminho whitelisted.
-- Desativar scripts de publicacoes por padrao.
-- Aplicar CSP estrita.
-- Renderizar conteudo em iframe sandboxed quando possivel.
-- Bloquear navegacao externa automatica; links externos devem pedir confirmacao.
-- Nunca expor APIs do preload para iframes de conteudo do livro.
+- Use a controlled local protocol, for example `dreamreader://book/:bookId/...`.
+- Resolve resources by book ID and a whitelisted path.
+- Disable publication scripts by default.
+- Apply a strict CSP.
+- Render content in a sandboxed iframe whenever possible.
+- Block automatic external navigation; external links must request confirmation.
+- Never expose preload APIs to book-content iframes.
 
-## LLM Local
+## Local LLM
 
-O LLM local nao deve "interpretar" o livro para o usuario. Seu papel inicial e operacional:
+The local LLM must not “interpret” the book for the user. Its initial role is operational:
 
-- Classificar tom local de segmentos.
-- Sugerir ritmo, pausas e intensidade.
-- Gerar instrucoes curtas e estruturadas para o TTS.
-- Respeitar schema Zod e limites de tokens.
+- Classify the local tone of segments.
+- Suggest pacing, pauses, and intensity.
+- Generate short, structured instructions for TTS.
+- Respect the Zod schema and token limits.
 
-Modelos candidatos iniciais:
+Initial candidate models:
 
-- Baseline: GGUF pequeno e multilingue, como Qwen3 0.6B/1.7B Instruct quantizado, rodando via `node-llama-cpp` com Metal.
-- Caminho de performance Apple Silicon: modelo equivalente em MLX, rodando em sidecar Python/Swift quando os benchmarks mostrarem ganho real.
+- Baseline: a small multilingual GGUF model, such as a quantized Qwen3 0.6B/1.7B Instruct, running through `node-llama-cpp` with Metal.
+- Apple Silicon performance path: an equivalent MLX model running in a Python/Swift sidecar when benchmarks show a real gain.
 
-O output do LLM deve ser validado e normalizado. Se falhar, usar prosodia neutra.
+The LLM output must be validated and normalized. If it fails, use neutral prosody.
 
-Estado atual:
+Current state:
 
-- A fase 3 implementa o contrato com um analisador local estruturado `llm-prosody-local`, cache persistente e fallback neutro.
-- A integracao com modelo GGUF via `node-llama-cpp` ou MLX permanece planejada para a etapa de runtime/modelos.
+- Phase 3 implements the contract with the structured local analyzer `llm-prosody-local`, persistent cache, and neutral fallback.
+- Integration with a GGUF model through `node-llama-cpp` or MLX remains planned for the runtime/models stage.
 
-## Empacotamento
+## Packaging
 
-Pontos de atencao:
+Points requiring attention:
 
-- `node-llama-cpp` nao deve ser bundleado pelo Vite.
-- Binarios nativos precisam manter estrutura de arquivos.
-- Modelos devem ficar fora do ASAR.
-- Metadados de audio devem ser lidos por biblioteca Node (`music-metadata`), sem depender de `ffprobe` no `PATH`.
-- Conversao/reamostragem de audio usa `ffmpeg-static`; ao gerar bundles Electron, empacotar esse binario e mante-lo fora do ASAR (`asarUnpack: node_modules/ffmpeg-static/**`) para que o main process consiga executa-lo.
-- Antes de distribuicao publica/comercial, revisar o impacto de licenca do binario `ffmpeg-static` (`GPL-3.0-or-later`) ou substituir por uma build/licenca compativel.
-- Python/PyTorch/TTS/MLX provavelmente exigem empacotamento por plataforma.
-- MLX e modelos MLX devem ser instalados em `userData/models` ou em pasta escolhida pelo usuario, nunca dentro do ASAR.
-- O MVP pode exigir instalacao manual de modelos, com um gerenciador local simples que aponta para pastas ja baixadas.
+- `node-llama-cpp` must not be bundled by Vite.
+- Native binaries must retain their file structure.
+- Models must remain outside the ASAR.
+- Audio metadata must be read through a Node library (`music-metadata`) without depending on `ffprobe` in `PATH`.
+- Audio conversion/resampling uses `ffmpeg-static`; when generating Electron bundles, package this binary outside the ASAR (`asarUnpack: node_modules/ffmpeg-static/**`) so the main process can execute it.
+- Before public/commercial distribution, review the licensing impact of the `ffmpeg-static` binary (`GPL-3.0-or-later`) or replace it with a build/license compatible with the distribution.
+- Python/PyTorch/TTS/MLX will probably require platform-specific packaging.
+- MLX and MLX models must be installed under `userData/models` or a user-selected folder, never inside the ASAR.
+- The MVP may require manual model installation, with a simple local manager pointing to folders that are already downloaded.
 
-## Observabilidade Local
+## Local Observability
 
-- Logs estruturados por dominio: `library`, `reader`, `tts`, `llm`, `db`, `ipc`.
-- Tela de diagnostico simples no app.
-- Exportacao de pacote de diagnostico sem incluir livros, audios ou vozes por padrao.
+- Structured logs by domain: `library`, `reader`, `tts`, `llm`, `db`, `ipc`.
+- Simple in-app diagnostics screen.
+- Diagnostic package export that excludes books, audio, and voices by default.
