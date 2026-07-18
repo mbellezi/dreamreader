@@ -9,11 +9,13 @@ release/
 *.log
 .env
 .env.*
+.claude/
 coverage/
 *.epub
 .dreamreader-local/
 vendor/readium/*
 !vendor/readium/.gitkeep
+voices/old/
 
 # Python generated files
 __pycache__/
