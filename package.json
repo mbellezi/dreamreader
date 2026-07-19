@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "description": "Local-first desktop ebook reader with PT-BR focused audio generation.",
   "author": "DreamReader",
+  "license": "GPL-3.0-or-later",
   "private": true,
   "type": "module",
   "main": "out/main/index.js",
