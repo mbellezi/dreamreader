@@ -49,7 +49,7 @@ const chatterboxDefaults: TtsModelSettings = {
 
 const mossDefaults: TtsModelSettings = {
   doSample: true,
-  maxNewTokens: 4096,
+  maxNewTokens: 420,
   repetitionPenalty: 1,
   temperature: 1.7,
   topK: 25,

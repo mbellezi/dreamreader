@@ -17,6 +17,8 @@ import { AppError } from "@main/lib/errors"
 import { hashBuffer } from "@main/lib/hash"
 import { runWithSidecarProcessLock } from "@main/services/sidecar-process-lock"
 
+const maxCapturedSidecarOutputChars = 1024 * 1024
+
 const SidecarSegmentResultSchema = z.object({
   segmentId: z.string().trim().min(1),
   segmentIndex: z.number().int().min(0).optional(),
@@ -285,7 +287,7 @@ function runSidecarProcess(input: {
 
     child.stdout.setEncoding("utf8")
     child.stdout.on("data", (chunk) => {
-      stdout += chunk
+      stdout = appendBoundedSidecarOutput(stdout, chunk)
       lineBuffer += chunk
       let newlineIndex = lineBuffer.indexOf("\n")
       while (newlineIndex >= 0) {
@@ -297,7 +299,7 @@ function runSidecarProcess(input: {
     })
     child.stderr.setEncoding("utf8")
     child.stderr.on("data", (chunk) => {
-      stderr += chunk
+      stderr = appendBoundedSidecarOutput(stderr, chunk)
     })
     child.on("error", (error) => {
       finish(() => reject(cancelled ? new AppError("tts_job_cancelled", "TTS job was cancelled") : error))
@@ -329,6 +331,13 @@ function runSidecarProcess(input: {
     })
     child.stdin.end(`${JSON.stringify(input.request)}\n`)
   })
+}
+
+export function appendBoundedSidecarOutput(current: string, chunk: string): string {
+  const combined = current + chunk
+  return combined.length <= maxCapturedSidecarOutputChars
+    ? combined
+    : combined.slice(combined.length - maxCapturedSidecarOutputChars)
 }
 
 function isResultLike(value: unknown): boolean {

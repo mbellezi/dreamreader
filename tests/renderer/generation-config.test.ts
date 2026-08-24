@@ -64,7 +64,7 @@ describe("MOSS-TTS-v1.5 model settings", () => {
     const defaults = defaultModelSettingsForEngine("moss-tts-v15-mlx")
     const fields = modelSettingFieldsForEngine("moss-tts-v15-mlx")
 
-    expect(defaults).toMatchObject({ maxNewTokens: 4096, temperature: 1.7, topK: 25, topP: 0.8 })
+    expect(defaults).toMatchObject({ maxNewTokens: 420, temperature: 1.7, topK: 25, topP: 0.8 })
     expect(fields.map((field) => field.key)).toContain("doSample")
     expect(defaultGenerationLanguageForEngine("moss-tts-v15-mlx")).toBe("Portuguese")
     expect(languageOptionsForEngine("moss-tts-v15-mlx").some((option) => option.value === "Portuguese")).toBe(true)

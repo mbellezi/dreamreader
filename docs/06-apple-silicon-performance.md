@@ -68,6 +68,8 @@ Notes:
 - Always provide the known language tag (`Portuguese` for PT-BR) because v1.5's multilingual quality is stronger with explicit tags.
 - Treat the model as an exclusive heavy accelerator job and expect a substantially larger unified-memory budget than Qwen3-TTS 0.6B/1.7B.
 - Direct synthesis and authorized zero-shot reference cloning use the same adapter; native `[pause X.Ys]` markup is preserved.
+- Clear MLX's free memory cache after each segment while keeping the model and reference codes loaded. The sidecar limits the free cache to 512 MiB by default; `DREAMREADER_MOSS_CACHE_LIMIT_MB` overrides that value, and `DREAMREADER_MOSS_MEMORY_LIMIT_MB` optionally sets a device-specific total MLX memory guideline.
+- Keep the validated MOSS runtime versions pinned together because `mlx`, `mlx-audio`, and the Transformers tokenizer integration evolve in lockstep.
 
 ## Long-lived Processes
 

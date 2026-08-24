@@ -1,6 +1,9 @@
 import importlib.util
 from pathlib import Path
+import sys
+import types
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -129,6 +132,41 @@ class TtsSidecarSeedTest(unittest.TestCase):
         self.assertEqual(kwargs["audio_top_k"], 30)
         self.assertEqual(kwargs["audio_top_p"], 0.85)
         self.assertEqual(kwargs["instruction"], "Narrar com calma.")
+
+    def test_moss_uses_bounded_quality_token_defaults(self):
+        self.assertEqual(self.moss.quality_max_tokens("draft"), 320)
+        self.assertEqual(self.moss.quality_max_tokens("standard"), 420)
+        self.assertEqual(self.moss.quality_max_tokens("high"), 512)
+
+    def test_moss_clears_mlx_cache_and_reports_segment_memory(self):
+        calls = []
+        fake_core = types.ModuleType("mlx.core")
+        fake_core.get_active_memory = lambda: 3 * 1024 * 1024
+        fake_core.get_cache_memory = lambda: 0 if calls else 2 * 1024 * 1024
+        fake_core.get_peak_memory = lambda: 5 * 1024 * 1024
+        fake_core.clear_cache = lambda: calls.append("clear")
+        fake_mlx = types.ModuleType("mlx")
+        fake_mlx.core = fake_core
+
+        with patch.dict(sys.modules, {"mlx": fake_mlx, "mlx.core": fake_core}):
+            snapshot = self.moss.clear_mlx_segment_memory()
+
+        self.assertEqual(calls, ["clear"])
+        self.assertEqual(
+            snapshot,
+            {
+                "available": True,
+                "activeMemoryMb": 3.0,
+                "cacheMemoryBeforeMb": 2.0,
+                "cacheMemoryAfterMb": 0.0,
+                "peakMemoryMb": 5.0,
+            },
+        )
+
+    def test_moss_releases_each_generation_result_before_clearing_cache(self):
+        source = (ROOT / "sidecars/tts/moss_tts_mlx_sidecar.py").read_text(encoding="utf-8")
+
+        self.assertIn("finally:\n            result = None\n            memory_snapshot = clear_mlx_segment_memory()", source)
 
     def test_moss_omits_redundant_default_instruction_for_neutral_segments(self):
         kwargs = self.moss.generation_kwargs(

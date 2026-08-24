@@ -10,6 +10,8 @@ from pathlib import Path
 SCHEMA_VERSION = "dreamreader-tts-sidecar-result/v1"
 CACHE_SCHEMA_VERSION = "dreamreader-moss-reference-codes/v1"
 MAX_GENERATION_SEED = 4_294_967_295
+DEFAULT_MLX_CACHE_LIMIT_MB = 512
+MEBIBYTE = 1024 * 1024
 LANGUAGE_NAMES = {
     "ar": "Arabic",
     "cs": "Czech",
@@ -85,6 +87,7 @@ def synthesize(request, emit=lambda event: None):
     from mlx_audio.audio_io import write as audio_write
     from mlx_audio.tts import load
 
+    mlx_memory_policy = configure_mlx_memory()
     output_dir = Path(str(request["outputDirectory"])).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     model_path = str(Path(str(request["modelPath"])).resolve())
@@ -96,6 +99,7 @@ def synthesize(request, emit=lambda event: None):
     reference_codes, reference_cache = reference_codes_for(model, reference, model_path)
 
     rendered_segments = []
+    memory_snapshots = []
     for index, segment in enumerate(request["plan"]["segments"]):
         segment_id = str(segment["segmentId"])
         text = str(segment.get("normalizedText") or segment.get("originalText") or "").strip()
@@ -109,9 +113,17 @@ def synthesize(request, emit=lambda event: None):
             if reference.get("text"):
                 kwargs["ref_text"] = reference["text"]
 
-        apply_mlx_seed(moss_segment_seed(seed, index, request, segment))
-        result = next(model.generate(**kwargs))
-        audio_write(str(target_path), result.audio, result.sample_rate)
+        result = None
+        reset_mlx_peak_memory()
+        try:
+            apply_mlx_seed(moss_segment_seed(seed, index, request, segment))
+            result = next(model.generate(**kwargs))
+            audio_write(str(target_path), result.audio, result.sample_rate)
+        finally:
+            result = None
+            memory_snapshot = clear_mlx_segment_memory()
+            memory_snapshot["segmentIndex"] = index
+            memory_snapshots.append(memory_snapshot)
         duration_ms = wav_duration_ms(target_path)
         segment_payload = {
             "segmentId": segment_id,
@@ -146,6 +158,8 @@ def synthesize(request, emit=lambda event: None):
                     "segmentCount": len(rendered_segments),
                     "usedReference": reference is not None,
                     "referenceCache": reference_cache,
+                    "mlxMemoryPolicy": mlx_memory_policy,
+                    "segmentMemory": memory_snapshots,
                     "unsupportedProsodyFields": unsupported,
                 },
             }
@@ -170,6 +184,72 @@ def generation_kwargs(request, settings, segment, text: str, language: str):
     if instruction:
         kwargs["instruction"] = instruction
     return kwargs
+
+
+def configure_mlx_memory():
+    try:
+        import mlx.core as mx
+
+        cache_limit_mb = integer_setting(
+            environment_number("DREAMREADER_MOSS_CACHE_LIMIT_MB"),
+            DEFAULT_MLX_CACHE_LIMIT_MB,
+            0,
+            16384,
+        )
+        mx.set_cache_limit(cache_limit_mb * MEBIBYTE)
+        memory_limit_mb = environment_number("DREAMREADER_MOSS_MEMORY_LIMIT_MB")
+        if memory_limit_mb is not None:
+            memory_limit_mb = integer_setting(memory_limit_mb, 0, 1024, 262144)
+            mx.set_memory_limit(memory_limit_mb * MEBIBYTE)
+        return {
+            "available": True,
+            "cacheLimitMb": cache_limit_mb,
+            **({"memoryLimitMb": memory_limit_mb} if memory_limit_mb is not None else {}),
+        }
+    except Exception as exc:
+        return {"available": False, "error": str(exc)}
+
+
+def reset_mlx_peak_memory() -> None:
+    try:
+        import mlx.core as mx
+
+        mx.reset_peak_memory()
+    except Exception:
+        pass
+
+
+def clear_mlx_segment_memory():
+    try:
+        import mlx.core as mx
+
+        active_memory_mb = bytes_to_mb(mx.get_active_memory())
+        cache_memory_before_mb = bytes_to_mb(mx.get_cache_memory())
+        peak_memory_mb = bytes_to_mb(mx.get_peak_memory())
+        mx.clear_cache()
+        return {
+            "available": True,
+            "activeMemoryMb": active_memory_mb,
+            "cacheMemoryBeforeMb": cache_memory_before_mb,
+            "cacheMemoryAfterMb": bytes_to_mb(mx.get_cache_memory()),
+            "peakMemoryMb": peak_memory_mb,
+        }
+    except Exception as exc:
+        return {"available": False, "error": str(exc)}
+
+
+def bytes_to_mb(value) -> float:
+    return round(float(value) / MEBIBYTE, 2)
+
+
+def environment_number(name: str):
+    value = str(os.environ.get(name) or "").strip()
+    if not value:
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
 
 
 def instruction_for_segment(segment) -> str:
@@ -351,10 +431,10 @@ def apply_mlx_seed(seed: int) -> None:
 
 def quality_max_tokens(value) -> int:
     if value == "draft":
-        return 2048
+        return 320
     if value == "high":
-        return 8192
-    return 4096
+        return 512
+    return 420
 
 
 def merge_wavs(rendered_segments, plan_segments, target_path: Path) -> int:
