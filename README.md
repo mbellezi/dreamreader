@@ -46,10 +46,10 @@ Books, annotations, generated audio, voices, and model settings stay on the user
 
 ### Local engines and model management
 
-- Qwen3-TTS 0.6B, Qwen3-TTS 1.7B Base, Qwen3-TTS 1.7B VoiceDesign, Chatterbox Multilingual, and F5-TTS PT-BR engine definitions.
-- Supervised local sidecars for Qwen3-TTS MLX, Chatterbox MLX, and F5-TTS PT-BR.
+- Qwen3-TTS 0.6B, Qwen3-TTS 1.7B Base, Qwen3-TTS 1.7B VoiceDesign, Chatterbox Multilingual, MOSS-TTS-v1.5, and F5-TTS PT-BR engine definitions.
+- Supervised local sidecars for Qwen3-TTS MLX, Chatterbox MLX, MOSS-TTS-v1.5 MLX, and F5-TTS PT-BR.
 - Standalone local Python runtime setup for sidecars without modifying the system Python installation.
-- MLX/MPS support on Apple Silicon and CUDA or Vulkan setup paths on Windows and Linux.
+- MLX/MPS support on Apple Silicon, including the native `mlx-audio` path for MOSS-TTS-v1.5, and CUDA or Vulkan setup paths on Windows and Linux.
 - Local model catalog, readiness diagnostics, storage usage, download/install progress, retries, folder-based installation, and removal.
 - Optional Qwen3 4B GGUF prosody model through `node-llama-cpp`, with a deterministic local fallback.
 - Sidecar output validation and Electron main-process supervision.
@@ -74,6 +74,7 @@ Books, annotations, generated audio, voices, and model settings stay on the user
 - Bundled voice packages are imported automatically on first launch and reconciled when compatible engines are installed.
 - Global and per-book pronunciation dictionaries included in the TTS cache key.
 - Chatterbox multilingual language selection and optional reference-voice cloning.
+- MOSS-TTS-v1.5 Portuguese language tagging, direct synthesis, optional zero-shot voice cloning, and explicit `[pause X.Ys]` markers.
 
 ### Audiobooks
 

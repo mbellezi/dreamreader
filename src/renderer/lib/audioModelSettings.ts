@@ -47,6 +47,15 @@ const chatterboxDefaults: TtsModelSettings = {
   temperature: 0.8
 }
 
+const mossDefaults: TtsModelSettings = {
+  doSample: true,
+  maxNewTokens: 4096,
+  repetitionPenalty: 1,
+  temperature: 1.7,
+  topK: 25,
+  topP: 0.8
+}
+
 const qwenFields: AudioModelSettingField[] = [
   numberField("temperature", 0, 2, 0.05),
   numberField("topK", 0, 200, 1),
@@ -77,6 +86,15 @@ const chatterboxFields: AudioModelSettingField[] = [
   numberField("exaggeration", 0, 1.5, 0.05),
   numberField("cfgWeight", 0, 2, 0.05),
   numberField("maxNewTokens", 1, 32768, 128)
+]
+
+const mossFields: AudioModelSettingField[] = [
+  numberField("temperature", 0, 2, 0.05),
+  numberField("topK", 0, 200, 1),
+  numberField("topP", 0, 1, 0.01),
+  numberField("repetitionPenalty", 0, 3, 0.01),
+  numberField("maxNewTokens", 1, 32768, 128),
+  booleanField("doSample")
 ]
 
 const qwenLanguageOptions: AudioLanguageOption[] = [
@@ -120,6 +138,9 @@ const chatterboxLanguageOptions: AudioLanguageOption[] = [
 ]
 
 export function defaultModelSettingsForEngine(engineId: string): TtsModelSettings {
+  if (isMossEngine(engineId)) {
+    return { ...mossDefaults }
+  }
   if (isQwenEngine(engineId)) {
     return { ...qwenDefaults }
   }
@@ -133,6 +154,9 @@ export function defaultModelSettingsForEngine(engineId: string): TtsModelSetting
 }
 
 export function modelSettingFieldsForEngine(engineId: string): AudioModelSettingField[] {
+  if (isMossEngine(engineId)) {
+    return mossFields
+  }
   if (isQwenEngine(engineId)) {
     return qwenFields
   }
@@ -146,6 +170,9 @@ export function modelSettingFieldsForEngine(engineId: string): AudioModelSetting
 }
 
 export function languageOptionsForEngine(engineId: string): AudioLanguageOption[] {
+  if (isMossEngine(engineId)) {
+    return qwenLanguageOptions
+  }
   if (isQwenEngine(engineId)) {
     return qwenLanguageOptions
   }
@@ -156,6 +183,9 @@ export function languageOptionsForEngine(engineId: string): AudioLanguageOption[
 }
 
 export function defaultGenerationLanguageForEngine(engineId: string): string | undefined {
+  if (isMossEngine(engineId)) {
+    return "Portuguese"
+  }
   if (isQwenEngine(engineId)) {
     return "Portuguese"
   }
@@ -206,6 +236,10 @@ function isQwenEngine(engineId: string): boolean {
 
 function isChatterboxEngine(engineId: string): boolean {
   return engineId === "chatterbox-multilingual-mlx"
+}
+
+function isMossEngine(engineId: string): boolean {
+  return engineId === "moss-tts-v15-mlx"
 }
 
 function booleanField(key: keyof TtsModelSettings): AudioModelSettingField {

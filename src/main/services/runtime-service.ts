@@ -33,6 +33,9 @@ export const F5_TTS_MODEL_DIR_NAME = "f5-tts-pt-br"
 export const QWEN3_TTS_06B_MODEL_DIR_NAME = "qwen3-tts-06b-mlx"
 export const QWEN3_TTS_17B_MODEL_DIR_NAME = "qwen3-tts-17b-mlx"
 export const QWEN3_TTS_17B_BASE_MODEL_DIR_NAME = "qwen3-tts-17b-base-mlx"
+export const MOSS_TTS_V15_MODEL_DIR_NAME = "moss-tts-v15-mlx"
+const MOSS_AUDIO_TOKENIZER_REPO = "OpenMOSS-Team/MOSS-Audio-Tokenizer"
+const MOSS_AUDIO_TOKENIZER_DIR_NAME = "audio_tokenizer"
 
 export type RuntimeDiagnostic = {
   id: string
@@ -168,6 +171,28 @@ const recommendedModels: RecommendedModel[] = [
     }
   },
   {
+    id: "model_moss_tts_v15_mlx",
+    kind: "tts",
+    name: "MOSS-TTS-v1.5",
+    provider: "OpenMOSS / mlx-audio",
+    version: "v1.5",
+    runtime: "mlx-sidecar",
+    format: "mlx",
+    acceleratorPreference: "mlx",
+    memoryEstimateMb: 20480,
+    license: "apache-2.0",
+    engineId: "moss-tts-v15-mlx",
+    metadata: {
+      role: "tts",
+      huggingFaceRepo: "OpenMOSS-Team/MOSS-TTS-v1.5",
+      installMode: "user-data-folder",
+      localFolder: `models/${MOSS_TTS_V15_MODEL_DIR_NAME}`,
+      originalRepo: "OpenMOSS/MOSS-TTS",
+      sampleRate: 24000,
+      supportedBackends: ["mlx"]
+    }
+  },
+  {
     id: "model_f5_tts_ptbr_pytorch",
     kind: "tts",
     name: "F5-TTS PT-BR",
@@ -213,6 +238,19 @@ const recommendedRuntimeManifests = [
       engines: ["chatterbox-multilingual-mlx"],
       output: ["audio/wav", "audio/mp4"],
       prosodyControls: ["exaggeration", "cfgWeight", "pauseAfterMs"]
+    }
+  },
+  {
+    id: "runtime_moss_tts_mlx_sidecar",
+    adapterId: "moss-tts-mlx",
+    runtime: "mlx",
+    version: "sidecar-v1",
+    capabilities: {
+      protocol: "dreamreader-tts-sidecar/v1",
+      engines: ["moss-tts-v15-mlx"],
+      output: ["audio/wav", "audio/mp4"],
+      voiceClone: true,
+      explicitPause: true
     }
   },
   {
@@ -285,6 +323,7 @@ export class RuntimeService {
     const qwenProsody = models.find((model) => model.id === QWEN_PROSODY_MODEL_ID)
     const qwenTtsReady = sidecarReady(models, manifests, "qwen3-tts-mlx")
     const chatterboxReady = sidecarReady(models, manifests, "chatterbox-mlx")
+    const mossReady = sidecarReady(models, manifests, "moss-tts-mlx")
     const f5Ready = sidecarReady(models, manifests, "f5-tts-pt-br")
     return [
       {
@@ -325,6 +364,14 @@ export class RuntimeService {
         detail: chatterboxReady
           ? "Chatterbox Multilingual model and MLX sidecar are configured for synthesis"
           : "Install the Chatterbox Multilingual MLX model and register a chatterbox-mlx sidecar executable"
+      },
+      {
+        id: "moss-tts-sidecar",
+        label: "MOSS-TTS-v1.5 MLX Sidecar",
+        status: mossReady ? "available" : "not_configured",
+        detail: mossReady
+          ? "MOSS-TTS-v1.5 and its MLX sidecar are configured for synthesis"
+          : "Install MOSS-TTS-v1.5 and register a moss-tts-mlx sidecar executable"
       },
       {
         id: "device",
@@ -836,13 +883,16 @@ export class RuntimeService {
       const detectedRuntime = await detectedRuntimeForManifest(manifest.adapterId, this.paths)
       const disabled = existing?.environmentJson?.disabled === true
       const existingExecutablePath = existing?.executablePath && isUsablePersistedPath(existing.executablePath, this.paths) ? existing.executablePath : undefined
-      const executablePath = disabled ? undefined : existingExecutablePath ?? detectedRuntime?.executablePath
+      const preferProjectLocalRuntime =
+        detectedRuntime && isDevPathLayout(this.paths) && isPathInside(detectedRuntime.executablePath, projectLocalPythonDir(this.paths))
+      const persistedExecutablePath = preferProjectLocalRuntime ? undefined : existingExecutablePath
+      const executablePath = disabled ? undefined : persistedExecutablePath ?? detectedRuntime?.executablePath
       const environmentJson = disabled
         ? { disabled: true }
-        : existingExecutablePath && existing
+        : persistedExecutablePath && existing
         ? existing.environmentJson
         : detectedRuntime?.environmentJson ?? existing?.environmentJson ?? {}
-      const healthcheckCommand = disabled ? undefined : existingExecutablePath ? existing?.healthcheckCommand : detectedRuntime?.healthcheckCommand
+      const healthcheckCommand = disabled ? undefined : persistedExecutablePath ? existing?.healthcheckCommand : detectedRuntime?.healthcheckCommand
       await this.db
         .insert(runtimeManifests)
         .values({
@@ -1060,39 +1110,47 @@ export class RuntimeService {
       await mkdir(localDir, { recursive: true })
       const huggingFaceToken = await this.readHuggingFaceToken()
       this.appendOperationLog(operationId, "info", "modelManager.log.backendSelected", { backend })
-      this.appendOperationLog(operationId, "info", "modelManager.log.modelSnapshotStarted", { repo: repoId, path: localDir })
       this.updateOperation(operationId, {
         progress: 0.5,
         progressLabelKey: "modelManager.progress.downloading"
       })
-      await this.runProcess(
-        operationId,
-        pythonExecutable,
-        [
-          "-c",
+      const snapshots = modelSnapshotDownloads(model, repoId, localDir)
+      const snapshotProgress = 0.4 / snapshots.length
+      for (const [index, snapshot] of snapshots.entries()) {
+        const progressStart = 0.5 + snapshotProgress * index
+        this.appendOperationLog(operationId, "info", "modelManager.log.modelSnapshotStarted", {
+          repo: snapshot.repoId,
+          path: snapshot.localDir
+        })
+        await this.runProcess(
+          operationId,
+          pythonExecutable,
           [
-            "import os, sys",
-            "from huggingface_hub import snapshot_download",
-            "repo_id = sys.argv[1]",
-            "local_dir = sys.argv[2]",
-            "token = os.environ.get('HF_TOKEN') or None",
-            "snapshot_download(repo_id=repo_id, local_dir=local_dir, token=token)"
-          ].join("; "),
-          repoId,
-          localDir
-        ],
-        {
-          cwd: this.paths.userData,
-          env: {
-            ...process.env,
-            HF_HOME: this.paths.huggingFaceDir,
-            ...(huggingFaceToken ? { HF_TOKEN: huggingFaceToken } : {})
-          },
-          progressStart: 0.5,
-          progressEnd: 0.9,
-          progressLabelKey: "modelManager.progress.downloading"
-        }
-      )
+            "-c",
+            [
+              "import os, sys",
+              "from huggingface_hub import snapshot_download",
+              "repo_id = sys.argv[1]",
+              "local_dir = sys.argv[2]",
+              "token = os.environ.get('HF_TOKEN') or None",
+              "snapshot_download(repo_id=repo_id, local_dir=local_dir, token=token)"
+            ].join("; "),
+            snapshot.repoId,
+            snapshot.localDir
+          ],
+          {
+            cwd: this.paths.userData,
+            env: {
+              ...process.env,
+              HF_HOME: this.paths.huggingFaceDir,
+              ...(huggingFaceToken ? { HF_TOKEN: huggingFaceToken } : {})
+            },
+            progressStart,
+            progressEnd: progressStart + snapshotProgress,
+            progressLabelKey: "modelManager.progress.downloading"
+          }
+        )
+      }
       await this.ensureCatalog()
       const installed = await this.db.query.modelAssets.findFirst({ where: eq(modelAssets.id, model.id) })
       if (!installed || installed.installStatus !== "available") {
@@ -1492,6 +1550,9 @@ function sidecarName(adapterId: string): string {
   if (adapterId === "chatterbox-mlx") {
     return "Chatterbox Multilingual MLX"
   }
+  if (adapterId === "moss-tts-mlx") {
+    return "MOSS-TTS-v1.5 MLX"
+  }
   if (adapterId === "f5-tts-pt-br") {
     return "F5-TTS PT-BR PyTorch"
   }
@@ -1504,6 +1565,9 @@ function requirementsPathForAdapter(adapterId: string, sidecarsDir: string): str
   }
   if (adapterId === "chatterbox-mlx") {
     return path.join(sidecarsDir, "tts", "requirements-chatterbox-mlx.txt")
+  }
+  if (adapterId === "moss-tts-mlx") {
+    return path.join(sidecarsDir, "tts", "requirements-moss-tts-mlx.txt")
   }
   if (adapterId === "f5-tts-pt-br") {
     return path.join(sidecarsDir, "tts", "requirements-f5-tts-ptbr.txt")
@@ -1686,6 +1750,9 @@ function modelForPath(modelPath: string): RecommendedModel {
   if (normalized.includes("chatterbox")) {
     return recommendedModelById("model_chatterbox_multilingual_mlx")
   }
+  if (normalized.includes("moss-tts") || normalized.includes("moss_tts")) {
+    return recommendedModelById("model_moss_tts_v15_mlx")
+  }
   if (normalized.includes("f5") || normalized.endsWith(".safetensors")) {
     return recommendedModelById("model_f5_tts_ptbr_pytorch")
   }
@@ -1840,6 +1907,9 @@ function adapterIdForEngine(engineId: string): string {
   if (engineId === "chatterbox-multilingual-mlx") {
     return "chatterbox-mlx"
   }
+  if (engineId === "moss-tts-v15-mlx") {
+    return "moss-tts-mlx"
+  }
   if (engineId === "f5-tts-pt-br") {
     return "f5-tts-pt-br"
   }
@@ -1869,24 +1939,27 @@ function acceleratorForModel(model: RecommendedModel): string {
 function capabilitiesForModel(model: RecommendedModel): Record<string, unknown> {
   const runtime = runtimeForModel(model)
   const isChatterbox = model.engineId === "chatterbox-multilingual-mlx"
+  const isMoss = model.engineId === "moss-tts-v15-mlx"
   return {
     id: model.engineId,
     displayName: model.name,
     runtime,
     modelFormat: model.format,
-    languages: isChatterbox
+    languages: isMoss
+      ? ["pt-BR", "pt", "en", "zh", "yue", "ar", "cs", "da", "de", "nl", "es", "fr", "fi", "el", "he", "hi", "hu", "ja", "it", "ko", "mk", "ms", "ru", "fa", "pl", "sv", "ro", "sw", "tl", "th", "tr", "vi"]
+      : isChatterbox
       ? ["pt-BR", "pt", "en", "es", "fr", "de", "it", "ja", "ko", "zh", "ar", "da", "el", "fi", "he", "hi", "ms", "nl", "no", "pl", "ru", "sv", "sw", "tr"]
       : model.engineId === "f5-tts-pt-br"
         ? ["pt-BR"]
         : ["pt-BR", "en"],
     supportsVoiceClone:
-      isChatterbox || model.engineId === "f5-tts-pt-br" || model.engineId === "qwen3-tts-06b-mlx" || model.engineId === "qwen3-tts-17b-base-mlx",
-    supportsNaturalLanguageInstruction: model.engineId === "qwen3-tts-17b-mlx",
+      isMoss || isChatterbox || model.engineId === "f5-tts-pt-br" || model.engineId === "qwen3-tts-06b-mlx" || model.engineId === "qwen3-tts-17b-base-mlx",
+    supportsNaturalLanguageInstruction: isMoss || model.engineId === "qwen3-tts-17b-mlx",
     supportsDiscreteEmotion: isChatterbox || model.engineId === "qwen3-tts-17b-mlx",
     supportsBatch: true,
     supportsStreaming: false,
     supportsSegmentTimestamps: model.engineId !== "f5-tts-pt-br",
-    supportsSsmlLikeMarkup: false,
+    supportsSsmlLikeMarkup: isMoss,
     preferredInputCase: "preserve",
     estimatedMemoryMb: model.memoryEstimateMb
   }
@@ -1907,6 +1980,9 @@ function managedModelPathFor(model: RecommendedModel, paths: AppPaths): string |
   }
   if (model.id === "model_chatterbox_multilingual_mlx") {
     return path.join(paths.modelsDir, CHATTERBOX_MULTILINGUAL_MODEL_DIR_NAME)
+  }
+  if (model.id === "model_moss_tts_v15_mlx") {
+    return path.join(paths.modelsDir, MOSS_TTS_V15_MODEL_DIR_NAME)
   }
   if (model.id === "model_f5_tts_ptbr_pytorch") {
     return path.join(paths.modelsDir, F5_TTS_MODEL_DIR_NAME)
@@ -1948,6 +2024,9 @@ function projectLocalModelPathFor(model: RecommendedModel, paths: AppPaths): str
   if (model.id === "model_chatterbox_multilingual_mlx") {
     return path.join(modelsRoot, CHATTERBOX_MULTILINGUAL_MODEL_DIR_NAME)
   }
+  if (model.id === "model_moss_tts_v15_mlx") {
+    return path.join(modelsRoot, MOSS_TTS_V15_MODEL_DIR_NAME)
+  }
   if (model.id === "model_f5_tts_ptbr_pytorch") {
     return path.join(modelsRoot, F5_TTS_MODEL_DIR_NAME)
   }
@@ -1965,7 +2044,8 @@ async function modelPathReady(model: RecommendedModel, modelPath: string): Promi
     model.id === "model_qwen3_tts_06b_base_mlx" ||
     model.id === "model_qwen3_tts_17b_customvoice_mlx" ||
     model.id === "model_qwen3_tts_17b_base_mlx" ||
-    model.id === "model_chatterbox_multilingual_mlx"
+    model.id === "model_chatterbox_multilingual_mlx" ||
+    model.id === "model_moss_tts_v15_mlx"
   ) {
     return (await exists(path.join(modelPath, "config.json"))) || hasAnyModelFile(modelPath, [".safetensors", ".npz"])
   }
@@ -2014,6 +2094,9 @@ function sidecarScriptForAdapter(adapterId: string, sidecarsDir: string): string
   if (adapterId === "chatterbox-mlx") {
     return path.join(sidecarsDir, "tts", "chatterbox_mlx_sidecar.py")
   }
+  if (adapterId === "moss-tts-mlx") {
+    return path.join(sidecarsDir, "tts", "moss_tts_mlx_sidecar.py")
+  }
   if (adapterId === "f5-tts-pt-br") {
     return path.join(sidecarsDir, "tts", "f5_tts_ptbr_sidecar.py")
   }
@@ -2053,6 +2136,18 @@ type DetectedPythonRuntime = {
 }
 
 async function detectedPythonRuntime(paths: AppPaths): Promise<DetectedPythonRuntime | undefined> {
+  if (isDevPathLayout(paths)) {
+    const projectLocalExecutable = await firstExistingPath(projectLocalPythonExecutableCandidates(paths))
+    if (projectLocalExecutable) {
+      const localRoot = projectLocalRoot(paths)
+      return {
+        executablePath: projectLocalExecutable,
+        huggingFaceDir: path.join(localRoot, "huggingface"),
+        runtimeCacheDir: path.join(localRoot, "cache")
+      }
+    }
+  }
+
   const managedExecutable = await firstExistingPath(localPythonExecutableCandidates(paths))
   if (managedExecutable) {
     return {
@@ -2061,21 +2156,18 @@ async function detectedPythonRuntime(paths: AppPaths): Promise<DetectedPythonRun
       runtimeCacheDir: paths.runtimeCacheDir
     }
   }
+  return undefined
+}
 
-  if (!isDevPathLayout(paths)) {
-    return undefined
+function modelSnapshotDownloads(model: RecommendedModel, repoId: string, localDir: string): Array<{ repoId: string; localDir: string }> {
+  const snapshots = [{ repoId, localDir }]
+  if (model.id === "model_moss_tts_v15_mlx") {
+    snapshots.push({
+      repoId: MOSS_AUDIO_TOKENIZER_REPO,
+      localDir: path.join(localDir, MOSS_AUDIO_TOKENIZER_DIR_NAME)
+    })
   }
-
-  const projectLocalExecutable = await firstExistingPath(projectLocalPythonExecutableCandidates(paths))
-  if (!projectLocalExecutable) {
-    return undefined
-  }
-  const localRoot = projectLocalRoot(paths)
-  return {
-    executablePath: projectLocalExecutable,
-    huggingFaceDir: path.join(localRoot, "huggingface"),
-    runtimeCacheDir: path.join(localRoot, "cache")
-  }
+  return snapshots
 }
 
 function projectLocalRoot(paths: AppPaths): string {

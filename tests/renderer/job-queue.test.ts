@@ -68,12 +68,12 @@ describe("jobQueue helpers", () => {
     expect(isPartialTtsJob(job("completed"))).toBe(false)
   })
 
-  it("uses only audio generation progress for segment-only jobs", () => {
+  it("shows completed progress for segment-only jobs", () => {
     const segmentOnly = { ...job("completed"), progress: 1, settings: { segmentsOnly: true } }
     const audioJob = { ...job("synthesizing"), progress: 0.42 }
 
     expect(isSegmentOnlyTtsJob(segmentOnly)).toBe(true)
-    expect(audioProgressForJob(segmentOnly)).toBe(0)
+    expect(audioProgressForJob(segmentOnly)).toBe(1)
     expect(audioProgressForJob(audioJob)).toBe(0.42)
   })
 })

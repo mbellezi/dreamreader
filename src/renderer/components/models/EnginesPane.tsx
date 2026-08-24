@@ -882,6 +882,10 @@ function diagnosticsForModel(model: RuntimeModel, diagnostics: RuntimeDiagnostic
     diagnosticIds.add("chatterbox-tts-sidecar")
   }
 
+  if (engineId.startsWith("moss-tts") || provider.includes("openmoss")) {
+    diagnosticIds.add("moss-tts-sidecar")
+  }
+
   if (engineId.startsWith("f5-tts") || provider.includes("firstpixel")) {
     diagnosticIds.add("f5-tts-sidecar")
   }
@@ -898,6 +902,10 @@ function diagnosticsForSidecar(sidecar: RuntimeSidecar, diagnostics: RuntimeDiag
 
   if (sidecar.adapterId === "chatterbox-mlx") {
     diagnosticIds.add("chatterbox-tts-sidecar")
+  }
+
+  if (sidecar.adapterId === "moss-tts-mlx") {
+    diagnosticIds.add("moss-tts-sidecar")
   }
 
   if (sidecar.adapterId === "f5-tts-pt-br") {

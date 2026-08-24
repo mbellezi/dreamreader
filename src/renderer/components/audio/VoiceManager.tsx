@@ -6,7 +6,7 @@ import { cn } from "@renderer/lib/utils"
 import { pickPreviewEngineId } from "@renderer/lib/voicePreview"
 import type { RuntimeModel, VoiceDesignPreview, VoiceProfile } from "@renderer/types"
 
-const CLONE_ENGINE_IDS = ["qwen3-tts-06b-mlx", "qwen3-tts-17b-base-mlx", "chatterbox-multilingual-mlx", "f5-tts-pt-br"]
+const CLONE_ENGINE_IDS = ["qwen3-tts-06b-mlx", "qwen3-tts-17b-base-mlx", "chatterbox-multilingual-mlx", "moss-tts-v15-mlx", "f5-tts-pt-br"]
 const DESIGN_ENGINE_ID = "qwen3-tts-17b-mlx"
 const DESIGN_LANGUAGE_OPTIONS = [
   { labelKey: "audio.language.portuguese", sampleKey: "voiceManager.sampleText.default.pt-BR", value: "pt-BR" },

@@ -144,7 +144,11 @@ describe("TtsService", () => {
       })
       await tts.drainQueue()
       await audiobook.rebuild("book-audio")
-      expect((await audiobook.getExport("book-audio")).stale).toBe(false)
+      const exportBeforeRegeneration = await audiobook.getExport("book-audio")
+      expect(exportBeforeRegeneration.stale).toBe(false)
+      const chapterAssetBeforeRegeneration = exportBeforeRegeneration.manifest?.chapters.find(
+        (chapter) => chapter.chapterHref === "chapter-1"
+      )?.audioAssetId
 
       const matches = await tts.searchSegments({ bookId: "book-audio", query: "Cust", limit: 10 })
       expect(matches.length).toBeGreaterThan(0)
@@ -165,11 +169,19 @@ describe("TtsService", () => {
       const row = await db.query.ttsSegments.findFirst({ where: eq(ttsSegments.id, segment.id) })
       expect(row?.originalText).toBe("Texto alterado às 14h30.")
       expect(row?.normalizedText).toContain("quatorze horas e trinta minutos")
+      expect(row?.adapterPayloadJson).toMatchObject({ regenerationSeed: expect.any(Number) })
       expect(await db.query.assets.findFirst({ where: eq(assets.id, oldAssetId ?? "") })).toBeUndefined()
 
       const editedMatches = await tts.searchSegments({ bookId: "book-audio", query: "alter", limit: 10 })
       expect(editedMatches.map((item) => item.id)).toContain(segment.id)
-      expect((await audiobook.getExport("book-audio")).stale).toBe(true)
+      const exportAfterRegeneration = await audiobook.getExport("book-audio")
+      const recomposedChapter = exportAfterRegeneration.manifest?.chapters.find(
+        (chapter) => chapter.chapterHref === "chapter-1"
+      )
+      expect(exportAfterRegeneration.stale).toBe(true)
+      expect(recomposedChapter?.audioAssetId).toBeTruthy()
+      expect(recomposedChapter?.audioAssetId).not.toBe(chapterAssetBeforeRegeneration)
+      expect(await db.query.assets.findFirst({ where: eq(assets.id, recomposedChapter?.audioAssetId ?? "") })).toBeTruthy()
     } finally {
       await client.close()
     }
@@ -186,7 +198,7 @@ describe("TtsService", () => {
         chapterHrefs: ["chapter-1"]
       })
       expect(firstJob.status).toBe("completed")
-      expect(firstJob.progress).toBe(0)
+      expect(firstJob.progress).toBe(1)
       expect(firstJob.chapterTitle).toBe("Capitulo 1")
       expect(firstJob.settings.segmentsOnly).toBe(true)
 
@@ -208,7 +220,7 @@ describe("TtsService", () => {
         chapterHrefs: ["chapter-1"]
       })
       expect(secondJob.id).not.toBe(firstJob.id)
-      expect(secondJob.progress).toBe(0)
+      expect(secondJob.progress).toBe(1)
       expect(secondJob.chapterTitle).toBe("Capitulo 1")
 
       const jobs = await tts.listJobs({ bookId: "book-audio" })
@@ -318,7 +330,9 @@ process.stdin.on("end", () => {
         text: segment.text,
         engineId: "qwen3-tts-17b-base-mlx",
         voiceProfileId: "voice_qwen_base_clone",
-        quality: "draft"
+        quality: "draft",
+        seed: 1234,
+        seedFixed: true
       })
 
       expect(updated.audioAssetId).toBeTruthy()
@@ -326,8 +340,10 @@ process.stdin.on("end", () => {
       expect(row?.adapterPayloadJson).toMatchObject({
         adapterId: "qwen3-tts-mlx",
         engineId: "qwen3-tts-17b-base-mlx",
+        regenerationSeed: expect.any(Number),
         voiceProfileId: "voice_qwen_base_clone"
       })
+      expect((row?.adapterPayloadJson as { regenerationSeed?: number }).regenerationSeed).not.toBe(1234)
       const asset = await db.query.assets.findFirst({ where: eq(assets.id, updated.audioAssetId ?? "") })
       expect(await readFile(asset?.path ?? "", "utf8")).toBe("single-segment-qwen3-tts-17b-base-mlx")
     } finally {

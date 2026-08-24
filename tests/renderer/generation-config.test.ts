@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { selectPreferredGenerationEngineId, type SelectOption } from "../../src/renderer/app/useGenerationConfig"
-import { defaultModelSettingsForEngine, modelSettingFieldsForEngine } from "../../src/renderer/lib/audioModelSettings"
+import { defaultGenerationLanguageForEngine, defaultModelSettingsForEngine, languageOptionsForEngine, modelSettingFieldsForEngine } from "../../src/renderer/lib/audioModelSettings"
 import type { VoiceProfile } from "../../src/renderer/types"
 
 function voice(id: string, compatibleEngineIds?: string[]): VoiceProfile {
@@ -56,5 +56,17 @@ describe("Qwen model settings", () => {
 
     expect(defaults.qwenChunkedDecodePatchEnabled).toBe(false)
     expect(fields.some((field) => field.key === "qwenChunkedDecodePatchEnabled" && field.kind === "boolean")).toBe(true)
+  })
+})
+
+describe("MOSS-TTS-v1.5 model settings", () => {
+  it("uses the multilingual MLX defaults and Portuguese language tag", () => {
+    const defaults = defaultModelSettingsForEngine("moss-tts-v15-mlx")
+    const fields = modelSettingFieldsForEngine("moss-tts-v15-mlx")
+
+    expect(defaults).toMatchObject({ maxNewTokens: 4096, temperature: 1.7, topK: 25, topP: 0.8 })
+    expect(fields.map((field) => field.key)).toContain("doSample")
+    expect(defaultGenerationLanguageForEngine("moss-tts-v15-mlx")).toBe("Portuguese")
+    expect(languageOptionsForEngine("moss-tts-v15-mlx").some((option) => option.value === "Portuguese")).toBe(true)
   })
 })

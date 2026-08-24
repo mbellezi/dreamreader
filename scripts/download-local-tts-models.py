@@ -24,6 +24,10 @@ MLX_MODELS = {
         "repo_id": "mlx-community/chatterbox-fp16",
         "local_dir": MODELS_ROOT / "chatterbox-multilingual-mlx",
     },
+    "moss-tts-v15-mlx": {
+        "repo_id": "OpenMOSS-Team/MOSS-TTS-v1.5",
+        "local_dir": MODELS_ROOT / "moss-tts-v15-mlx",
+    },
     "f5-tts-pt-br": {
         "repo_id": "firstpixel/F5-TTS-pt-br",
         "local_dir": MODELS_ROOT / "f5-tts-pt-br",
@@ -32,6 +36,15 @@ MLX_MODELS = {
         "repo_id": "charactr/vocos-mel-24khz",
         "local_dir": MODELS_ROOT / "vocos-mel-24khz",
     },
+}
+
+MODEL_DEPENDENCIES = {
+    "moss-tts-v15-mlx": [
+        {
+            "repo_id": "OpenMOSS-Team/MOSS-Audio-Tokenizer",
+            "local_subdir": "audio_tokenizer",
+        }
+    ]
 }
 
 PYTORCH_MODEL_REPOS = {
@@ -134,6 +147,15 @@ def main() -> int:
             local_dir=str(local_dir),
             token=token,
         )
+        for dependency in MODEL_DEPENDENCIES.get(model_id, []):
+            dependency_dir = local_dir / dependency["local_subdir"]
+            dependency_dir.mkdir(parents=True, exist_ok=True)
+            print(f"Downloading {dependency['repo_id']} -> {dependency_dir.relative_to(PROJECT_ROOT)}")
+            snapshot_download(
+                repo_id=dependency["repo_id"],
+                local_dir=str(dependency_dir),
+                token=token,
+            )
     return 0
 
 

@@ -44,6 +44,11 @@ export type M4bBuildResult = {
   encoder: "aac" | "aac_at" | "copy"
 }
 
+export type AudioSegmentMergeInput = {
+  filePath: string
+  pauseAfterMs?: number
+}
+
 let preferredAacEncoderPromise: Promise<"aac" | "aac_at"> | undefined
 
 /**
@@ -118,6 +123,60 @@ export async function transcodeAudioToAac(input: {
     encoder,
     mimeType: "audio/mp4",
     sizeBytes: (await stat(input.destPath)).size
+  }
+}
+
+export async function mergeAudioSegmentsToWav(input: {
+  segments: AudioSegmentMergeInput[]
+  outputPath: string
+}): Promise<{
+  audioPath: string
+  contentHash: string
+  durationMs: number
+  mimeType: "audio/wav"
+  sizeBytes: number
+}> {
+  if (!input.segments.length) {
+    throw new Error("At least one audio segment is required")
+  }
+  const ffmpegPath = await bundledFfmpegPath()
+  if (!ffmpegPath) {
+    throw new Error("Bundled FFmpeg binary is unavailable")
+  }
+
+  const firstProbe = await probeAudio(input.segments[0].filePath)
+  const sampleRate = firstProbe.sampleRate && firstProbe.sampleRate > 0 ? firstProbe.sampleRate : TARGET_SAMPLE_RATE
+  const args = ["-y"]
+  for (const segment of input.segments) {
+    args.push("-i", segment.filePath)
+  }
+
+  const filters: string[] = []
+  const concatInputs: string[] = []
+  input.segments.forEach((segment, index) => {
+    filters.push(`[${index}:a]aresample=${sampleRate},aformat=sample_fmts=fltp:channel_layouts=mono[s${index}]`)
+    concatInputs.push(`[s${index}]`)
+    const pauseAfterMs = index < input.segments.length - 1 ? Math.max(0, Math.round(segment.pauseAfterMs ?? 0)) : 0
+    if (pauseAfterMs > 0) {
+      filters.push(`anullsrc=r=${sampleRate}:cl=mono:d=${(pauseAfterMs / 1000).toFixed(3)}[p${index}]`)
+      concatInputs.push(`[p${index}]`)
+    }
+  })
+  filters.push(`${concatInputs.join("")}concat=n=${concatInputs.length}:v=0:a=1[out]`)
+
+  await mkdir(path.dirname(input.outputPath), { recursive: true })
+  await execFileAsync(
+    ffmpegPath,
+    [...args, "-filter_complex", filters.join(";"), "-map", "[out]", "-c:a", "pcm_s16le", "-ar", String(sampleRate), "-ac", "1", input.outputPath],
+    { maxBuffer: 8 * 1024 * 1024 }
+  )
+  const probe = await probeAudio(input.outputPath)
+  return {
+    audioPath: input.outputPath,
+    contentHash: await hashFile(input.outputPath),
+    durationMs: probe.durationMs ?? 0,
+    mimeType: "audio/wav",
+    sizeBytes: (await stat(input.outputPath)).size
   }
 }
 

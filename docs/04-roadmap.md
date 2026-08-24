@@ -102,16 +102,17 @@ Known Phase 3 limits:
 - Direct download of the recommended `Qwen3-4B-Instruct-2507 GGUF Q4_K_M` for prosody.
 - Real GGUF prosody provider through `node-llama-cpp`, enabled when the local file and optional runtime are available.
 - Automatic fallback to the structured local analyzer when Qwen GGUF or `node-llama-cpp` is not installed.
-- Registration of `qwen3-tts-06b-mlx`, `qwen3-tts-17b-mlx`, `qwen3-tts-17b-base-mlx`, `chatterbox-multilingual-mlx`, and `f5-tts-pt-br` in `tts_engines`.
+- Registration of `qwen3-tts-06b-mlx`, `qwen3-tts-17b-mlx`, `qwen3-tts-17b-base-mlx`, `chatterbox-multilingual-mlx`, `moss-tts-v15-mlx`, and `f5-tts-pt-br` in `tts_engines`.
 - Runtime manifest registration in `runtime_manifests` for future Python/Swift/MLX/PyTorch sidecars.
-- Sidecar adapters `qwen3-tts-mlx`, `chatterbox-mlx`, and `f5-tts-pt-br` using a protocol supervised by the main process.
+- Sidecar adapters `qwen3-tts-mlx`, `chatterbox-mlx`, `moss-tts-mlx`, and `f5-tts-pt-br` using a protocol supervised by the main process.
 - Neural synthesis enabled when the TTS model is installed and `runtime_manifest` points to a compatible local executable.
-- Standalone local Python runtime in `.dreamreader-local/`, ignored by git, for Qwen3-TTS/Chatterbox/F5-TTS-pt-br sidecars and local model weights.
+- Standalone local Python runtime in `.dreamreader-local/`, ignored by git, for Qwen3-TTS/Chatterbox/MOSS-TTS-v1.5/F5-TTS-pt-br sidecars and local model weights.
 - Validation that sidecar output paths stay inside the job directory before importing assets.
 - Per-chapter engine, voice, quality, and expressive-narration selectors in the audio panel.
 - Persistent voice profiles, authorized samples, and per-engine bindings in `voice_profiles`, `voice_samples`, and `voice_engine_bindings`.
 - Qwen3-TTS Base (`0.6B` and `1.7B Base`) requires a cloned voice with reference audio and a transcript; prompt presets are restricted to `1.7B VoiceDesign`.
 - Chatterbox Multilingual MLX supports Portuguese through `lang_code=pt`, a default voice or optional reference cloning, and parametric prosody through `exaggeration`/`cfgWeight`.
+- MOSS-TTS-v1.5 uses `mlx-audio` on Apple Silicon, supports Portuguese language tags, direct synthesis or authorized reference cloning, and native `[pause X.Ys]` markup.
 - Local cloned-voice manager in the main process, with mandatory consent, sample copy into `voices/`, compatible binding, and local WAV preview.
 - Global and per-book pronunciation dictionary in `pronunciation_entries`, applied to the `NarrationPlan` and versioned in the cache key.
 - Per-chapter audio/cache deletion, removing jobs, segments, audio assets, and the audiobook entry.
@@ -120,7 +121,7 @@ Known Phase 3 limits:
 
 Known Phase 4 limits:
 
-- Qwen3-TTS/Chatterbox/F5-TTS sidecars are configurable local executables; the repository does not package Python/MLX/PyTorch or model weights.
+- Qwen3-TTS/Chatterbox/MOSS-TTS-v1.5/F5-TTS sidecars are configurable local executables; the repository does not package Python/MLX/PyTorch or model weights.
 - Multi-file TTS snapshot downloads remain a local-folder installation process.
 - M4B export creates a real `.m4b` from ready chapters; covers, quality tuning, and advanced packaging remain pending.
 

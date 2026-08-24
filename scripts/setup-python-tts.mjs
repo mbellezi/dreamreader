@@ -28,6 +28,7 @@ const qwen06bModelDir = path.join(modelsRoot, modelFolderName("qwen3-tts-06b-mlx
 const qwen17bModelDir = path.join(modelsRoot, modelFolderName("qwen3-tts-17b-mlx", installBackend))
 const qwen17bBaseModelDir = path.join(modelsRoot, modelFolderName("qwen3-tts-17b-base-mlx", installBackend))
 const chatterboxModelDir = path.join(modelsRoot, modelFolderName("chatterbox-multilingual-mlx", installBackend))
+const mossTtsModelDir = installBackend === "mlx" ? path.join(modelsRoot, "moss-tts-v15-mlx") : undefined
 const f5ModelDir = path.join(modelsRoot, "f5-tts-pt-br")
 const vocosModelDir = path.join(modelsRoot, "vocos-mel-24khz")
 
@@ -56,6 +57,7 @@ mkdirSync(qwen06bModelDir, { recursive: true })
 mkdirSync(qwen17bModelDir, { recursive: true })
 mkdirSync(qwen17bBaseModelDir, { recursive: true })
 mkdirSync(chatterboxModelDir, { recursive: true })
+if (mossTtsModelDir) mkdirSync(mossTtsModelDir, { recursive: true })
 mkdirSync(f5ModelDir, { recursive: true })
 mkdirSync(vocosModelDir, { recursive: true })
 
@@ -112,6 +114,17 @@ writeModelReadme(
     "This model supports Portuguese via lang_code=pt and exposes emotion exaggeration/CFG controls."
   ]
 )
+if (mossTtsModelDir) {
+  writeModelReadme(
+    mossTtsModelDir,
+    [
+      "MOSS-TTS-v1.5 MLX local model folder.",
+      "",
+      "Put OpenMOSS-Team/MOSS-TTS-v1.5 files here for inference through mlx-audio on Apple Silicon.",
+      "The model supports Portuguese language tags, zero-shot voice cloning, and explicit [pause X.Ys] markers."
+    ]
+  )
+}
 writeModelReadme(
   f5ModelDir,
   [
@@ -138,6 +151,7 @@ console.log(`Qwen3-TTS 0.6B folder: ${path.relative(projectRoot, qwen06bModelDir
 console.log(`Qwen3-TTS 1.7B VoiceDesign folder: ${path.relative(projectRoot, qwen17bModelDir)}`)
 console.log(`Qwen3-TTS 1.7B Base folder: ${path.relative(projectRoot, qwen17bBaseModelDir)}`)
 console.log(`Chatterbox Multilingual folder: ${path.relative(projectRoot, chatterboxModelDir)}`)
+if (mossTtsModelDir) console.log(`MOSS-TTS-v1.5 folder: ${path.relative(projectRoot, mossTtsModelDir)}`)
 console.log(`F5-TTS PT-BR folder: ${path.relative(projectRoot, f5ModelDir)}`)
 console.log(`F5-TTS Vocos folder: ${path.relative(projectRoot, vocosModelDir)}`)
 if (installSidecars) {

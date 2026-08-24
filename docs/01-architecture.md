@@ -85,7 +85,7 @@ Use local runtimes as services supervised by the main process:
 
 - Prefer communication through stdio JSON-RPC or pipes.
 - Avoid opening a local HTTP port in the MVP.
-- Use one adapter per engine/runtime: Qwen3-TTS MLX, Qwen3-TTS PyTorch, F5-TTS-pt-br PyTorch/MPS, GGUF LLM through `node-llama-cpp`, MLX LLM, and future engines.
+- Use one adapter per engine/runtime: Qwen3-TTS MLX, MOSS-TTS-v1.5 MLX, Qwen3-TTS PyTorch, F5-TTS-pt-br PyTorch/MPS, GGUF LLM through `node-llama-cpp`, MLX LLM, and future engines.
 - Return per-segment progress, structured logs, and recoverable errors.
 - Keep processes long-lived to avoid startup/model-load cost for every segment.
 - Expose a health check, version, estimated memory, accelerator in use, and throughput metrics.

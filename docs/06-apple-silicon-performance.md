@@ -57,6 +57,18 @@ Notes:
 - Prosody should use the model's exposed controls (`exaggeration` and CFG), preserving the app's canonical plan.
 - A reference voice is optional; when used, the sample should match the selected language to avoid unwanted accent transfer.
 
+### MOSS-TTS-v1.5
+
+1. MLX through `mlx-audio` on Apple Silicon.
+2. Keep upstream PyTorch/CUDA as a future non-Mac adapter behind the same engine contract.
+
+Notes:
+
+- The upstream 8B checkpoint is supported directly by `mlx-audio`; no separate converted model ID is required.
+- Always provide the known language tag (`Portuguese` for PT-BR) because v1.5's multilingual quality is stronger with explicit tags.
+- Treat the model as an exclusive heavy accelerator job and expect a substantially larger unified-memory budget than Qwen3-TTS 0.6B/1.7B.
+- Direct synthesis and authorized zero-shot reference cloning use the same adapter; native `[pause X.Ys]` markup is preserved.
+
 ## Long-lived Processes
 
 Do not start Python or load a model per segment. Each heavy runtime should run as a sidecar:
@@ -140,6 +152,7 @@ Before the audio MVP:
 
 - Benchmark GGUF/Metal LLM versus MLX LLM for generating a `NarrationPlan`.
 - Benchmark Qwen3-TTS MLX 0.6B versus 1.7B on a Brazilian Portuguese excerpt.
+- Benchmark MOSS-TTS-v1.5 MLX on the same excerpt, including cold start, warm RTF, peak unified memory, cloning stability, and long-form punctuation/pause behavior.
 - Benchmark F5-TTS-pt-br on PyTorch MPS and CPU.
 - Test a chapter containing dialogue, numbers, abbreviations, and accents.
 - Measure whether running prosody + TTS in parallel worsens total time; the initial hypothesis is that serialization will be more stable.

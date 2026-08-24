@@ -171,6 +171,7 @@ The adapter is responsible for mapping the canonical plan to the model format:
 - Qwen3-TTS CustomVoice: map emotion/pacing to presets when available.
 - Qwen3-TTS Base: use a voice/reference and ignore unsupported fields without failing.
 - Chatterbox Multilingual MLX: map emotion/intensity to `exaggeration`, pacing to `cfgWeight`, PT-BR to `lang_code=pt`, and use plan pauses during chapter assembly.
+- MOSS-TTS-v1.5 MLX: send the canonical language as the model language tag, preserve native `[pause X.Ys]` markers, use the authorized reference for zero-shot cloning, and apply plan pauses during chapter assembly.
 - F5-TTS-pt-br: apply the recommended normalization, lowercase when necessary, voice/emotion references, and discrete markers when available.
 
 Unsupported fields must never break generation. They become no-ops with a structured log.
@@ -182,8 +183,8 @@ The main process registers recommended models in `model_assets` and controls dow
 Implemented:
 
 - `Qwen3-4B-Instruct-2507 GGUF Q4_K_M` for prosody analysis through `node-llama-cpp`.
-- Qwen3-TTS 0.6B, Qwen3-TTS 1.7B, Chatterbox Multilingual MLX, and F5-TTS-pt-br as real TTS models that can be registered from local folders.
-- Neural synthesis sidecars for Qwen3-TTS, Chatterbox Multilingual MLX, and F5-TTS-pt-br through a protocol supervised by the main process.
+- Qwen3-TTS 0.6B, Qwen3-TTS 1.7B, Chatterbox Multilingual MLX, MOSS-TTS-v1.5, and F5-TTS-pt-br as real TTS models that can be registered from local folders.
+- Neural synthesis sidecars for Qwen3-TTS, Chatterbox Multilingual MLX, MOSS-TTS-v1.5 MLX, and F5-TTS-pt-br through a protocol supervised by the main process.
 - Multi-file snapshot downloads for TTS models installed under `.dreamreader-local/models`.
 - Download progress saved in the database and displayed visually in the UI.
 - Local prosody fallback when the GGUF model or optional runtime is unavailable.

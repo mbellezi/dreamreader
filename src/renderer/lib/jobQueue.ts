@@ -19,7 +19,7 @@ export function isSegmentOnlyTtsJob(job: TtsJob): boolean {
 }
 
 export function audioProgressForJob(job: TtsJob): number {
-  return isSegmentOnlyTtsJob(job) ? 0 : job.progress
+  return job.progress
 }
 
 export function isClearableTerminalJob(job: TtsJob): boolean {

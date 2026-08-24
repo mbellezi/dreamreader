@@ -8,9 +8,9 @@ import type { ProsodyEmotion, SegmentProsody, TtsSegment } from "@renderer/types
 //   (F5-TTS, and the Qwen "base" variants). Expressive only affects pauses.
 export type ProsodyEngineSupport = "instruction" | "controls" | "reference"
 
-// Qwen VoiceDesign is generation-only; audiobook engines currently use controls
-// or reference audio rather than free-form instructions.
-const INSTRUCTION_ENGINE_IDS = new Set<string>()
+// Qwen VoiceDesign is generation-only. MOSS consumes free-form instructions;
+// the remaining audiobook engines currently use controls or reference audio.
+const INSTRUCTION_ENGINE_IDS = new Set<string>(["moss-tts-v15-mlx"])
 const CONTROL_ENGINE_IDS = new Set<string>(["chatterbox-multilingual-mlx"])
 
 export function prosodyEngineSupport(engineId: string | undefined): ProsodyEngineSupport {

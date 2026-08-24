@@ -203,10 +203,11 @@ The app registers adapters by manifest and healthcheck. This allows a Python imp
 
 Current Phase 4 state:
 
-- `qwen3-tts-06b-mlx`, `qwen3-tts-17b-mlx`, `qwen3-tts-17b-base-mlx`, `chatterbox-multilingual-mlx`, and `f5-tts-pt-br` are already registered as real engines.
+- `qwen3-tts-06b-mlx`, `qwen3-tts-17b-mlx`, `qwen3-tts-17b-base-mlx`, `chatterbox-multilingual-mlx`, `moss-tts-v15-mlx`, and `f5-tts-pt-br` are already registered as real engines.
 - `qwen3-tts-06b-mlx` and `qwen3-tts-17b-base-mlx` operate as Qwen Base: they require a cloned reference voice (`ref_audio` + `ref_text`) and do not receive natural-language prosody instructions in the sidecar.
 - `qwen3-tts-17b-mlx` operates as VoiceDesign: available voices are voice prompts, not audio cloning.
 - `chatterbox-multilingual-mlx` operates through MLX/`mlx-audio`: it uses `lang_code=pt` for Brazilian Portuguese, accepts an optional reference, and maps prosody to `exaggeration`, `cfgWeight`, and pauses.
+- `moss-tts-v15-mlx` operates through MLX/`mlx-audio` on Apple Silicon: it uses explicit language tags, accepts an optional authorized reference, preserves native pause markup, and consumes natural-language narration instructions when present.
 - Neural synthesis remains blocked until a sidecar/healthcheck is configured.
 - Expressive prosody attempts to use `Qwen3-4B-Instruct-2507 GGUF Q4_K_M` through `node-llama-cpp`; without the runtime or local file, the app returns to the local structured analyzer.
 - The audio panel displays model download progress in real time.

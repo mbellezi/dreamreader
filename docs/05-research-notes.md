@@ -12,6 +12,10 @@ Date: 2026-06-06.
 
 - Chatterbox Multilingual MLX: an `mlx-community/chatterbox-fp16` conversion of Chatterbox for `mlx-audio`, supporting 23 languages including Portuguese through `lang_code=pt`, optional reference voice, and expressiveness controls.
   - https://huggingface.co/mlx-community/chatterbox-fp16
+- MOSS-TTS-v1.5: 8B multilingual TTS from OpenMOSS with 31 languages, zero-shot cloning, punctuation-aware prosody, and explicit `[pause X.Ys]` control. `mlx-audio` supports the upstream checkpoint directly on Apple Silicon.
+  - https://github.com/OpenMOSS/MOSS-TTS
+  - https://huggingface.co/OpenMOSS-Team/MOSS-TTS-v1.5
+  - https://github.com/Blaizzy/mlx-audio/tree/main/mlx_audio/tts/models/moss_tts
 
 - PGlite: documentation indicates support for Node/Bun/Deno and the browser, filesystem/IndexedDB persistence, parameterized queries, and extensions.
   - https://pglite.dev/docs/

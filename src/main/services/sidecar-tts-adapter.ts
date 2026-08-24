@@ -15,6 +15,7 @@ import {
 } from "@shared/contracts/ai"
 import { AppError } from "@main/lib/errors"
 import { hashBuffer } from "@main/lib/hash"
+import { runWithSidecarProcessLock } from "@main/services/sidecar-process-lock"
 
 const SidecarSegmentResultSchema = z.object({
   segmentId: z.string().trim().min(1),
@@ -123,21 +124,25 @@ export class SidecarTtsAdapter {
       seed: input.seed
     }
 
-    const raw = await runSidecarProcess({
-      environment: input.runtimeManifest.environmentJson,
-      executablePath,
-      request,
-      signal: input.signal,
-      timeoutMs: timeoutMsFor(input.runtimeManifest.environmentJson),
-      onEvent: (event) => {
-        const segment = SidecarSegmentEventSchema.safeParse(event)
-        if (!segment.success) {
-          return
-        }
-        assertOutputPath(input.outputDirectory, segment.data.audioPath)
-        input.onSegment?.(segment.data)
-      }
-    })
+    const raw = await runWithSidecarProcessLock(
+      () =>
+        runSidecarProcess({
+          environment: input.runtimeManifest.environmentJson,
+          executablePath,
+          request,
+          signal: input.signal,
+          timeoutMs: timeoutMsFor(input.runtimeManifest.environmentJson),
+          onEvent: (event) => {
+            const segment = SidecarSegmentEventSchema.safeParse(event)
+            if (!segment.success) {
+              return
+            }
+            assertOutputPath(input.outputDirectory, segment.data.audioPath)
+            input.onSegment?.(segment.data)
+          }
+        }),
+      input.signal
+    )
     const parsed = SidecarSynthesisResultSchema.parse(raw)
     assertOutputPath(input.outputDirectory, parsed.chapter.audioPath)
     parsed.segments.forEach((segment) => assertOutputPath(input.outputDirectory, segment.audioPath))

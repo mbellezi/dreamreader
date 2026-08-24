@@ -133,6 +133,10 @@ export function pipInstallPlanForBackend(backend, projectRoot) {
         args: ["-m", "pip", "install", "-r", path.join(sidecarRoot, "requirements-chatterbox-mlx.txt")]
       },
       {
+        label: "MOSS-TTS-v1.5 MLX sidecar",
+        args: ["-m", "pip", "install", "-r", path.join(sidecarRoot, "requirements-moss-tts-mlx.txt")]
+      },
+      {
         label: "F5-TTS PyTorch/MPS sidecar",
         args: ["-m", "pip", "install", "-r", f5Requirements]
       }

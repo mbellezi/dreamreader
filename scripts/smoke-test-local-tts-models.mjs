@@ -36,6 +36,12 @@ const modelDefinitions = {
     modelPath: path.join(localRoot, "models", "chatterbox-multilingual-mlx"),
     sidecarScript: path.join(projectRoot, "sidecars", "tts", "chatterbox_mlx_sidecar.py")
   },
+  "moss-tts-v15-mlx": {
+    adapterId: "moss-tts-mlx",
+    engineId: "moss-tts-v15-mlx",
+    modelPath: path.join(localRoot, "models", "moss-tts-v15-mlx"),
+    sidecarScript: path.join(projectRoot, "sidecars", "tts", "moss_tts_mlx_sidecar.py")
+  },
   "f5-tts-pt-br": {
     adapterId: "f5-tts-pt-br",
     engineId: "f5-tts-pt-br",
@@ -77,6 +83,10 @@ Qwen3-TTS 1.7B Base clone smoke needs a reference voice:
 Chatterbox can run with its default voice or optional reference cloning:
   DREAMREADER_CHATTERBOX_REFERENCE_AUDIO=/path/ref.wav
   DREAMREADER_CHATTERBOX_REFERENCE_TEXT="optional transcript"
+
+MOSS-TTS-v1.5 can run directly or with optional reference cloning:
+  DREAMREADER_MOSS_REFERENCE_AUDIO=/path/ref.wav
+  DREAMREADER_MOSS_REFERENCE_TEXT="optional transcript"
 `)
     process.exit(0)
   }
@@ -153,7 +163,12 @@ function runSidecar(definition, outputDirectory) {
       jobId: `tts_smoke_${Date.now()}`,
       modelPath: definition.modelPath,
       outputDirectory,
-      generationLanguage: definition.engineId === "chatterbox-multilingual-mlx" ? "pt" : undefined,
+      generationLanguage:
+        definition.engineId === "chatterbox-multilingual-mlx"
+          ? "pt"
+          : definition.engineId === "moss-tts-v15-mlx"
+            ? "Portuguese"
+            : undefined,
       quality: "standard",
       referenceAudioPath: reference?.audioPath,
       referenceText: reference?.text,
@@ -229,6 +244,20 @@ function runSidecar(definition, outputDirectory) {
 }
 
 function voiceBindingFor(definition) {
+  if (definition.adapterId === "moss-tts-mlx") {
+    return {
+      id: "smoke-binding-moss",
+      voiceProfileId: "voice_moss_tts_v15_ptbr_neutral",
+      engineId: definition.engineId,
+      adapterId: definition.adapterId,
+      status: "ready",
+      bindingKind: "preset",
+      settings: { preset: "pt-br-neutral" },
+      compatibility: { builtIn: true },
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }
+  }
   if (definition.adapterId === "chatterbox-mlx") {
     return {
       id: "smoke-binding-chatterbox",
@@ -281,6 +310,15 @@ function voiceBindingFor(definition) {
 }
 
 function referenceFor(engineId) {
+  if (engineId === "moss-tts-v15-mlx") {
+    const audioPath = process.env.DREAMREADER_MOSS_REFERENCE_AUDIO
+    const text = process.env.DREAMREADER_MOSS_REFERENCE_TEXT
+    if (!audioPath) {
+      return undefined
+    }
+    assertExists(audioPath, "MOSS-TTS reference audio not found")
+    return { audioPath: path.resolve(audioPath), text }
+  }
   if (engineId === "qwen3-tts-17b-base-mlx") {
     const audioPath = process.env.DREAMREADER_QWEN_REFERENCE_AUDIO
     const text = process.env.DREAMREADER_QWEN_REFERENCE_TEXT

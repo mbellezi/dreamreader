@@ -14,6 +14,7 @@ export type BuiltInVoicePreset = {
 
 const QWEN_17B_ENGINE_ID = "qwen3-tts-17b-mlx"
 const CHATTERBOX_ENGINE_ID = "chatterbox-multilingual-mlx"
+const MOSS_TTS_V15_ENGINE_ID = "moss-tts-v15-mlx"
 
 const qwenVoiceDesignPresets = [
   {
@@ -73,6 +74,22 @@ export const builtInVoicePresets: BuiltInVoicePreset[] = [
       temperature: 0.8
     },
     engineIds: [CHATTERBOX_ENGINE_ID],
+    bindingKind: "preset"
+  },
+  {
+    id: "voice_moss_tts_v15_ptbr_neutral",
+    name: "MOSS-TTS PT-BR neutro",
+    description: "Preset neutro para MOSS-TTS-v1.5 em portugues brasileiro.",
+    language: "pt-BR",
+    tags: ["moss-tts", "pt-BR", "narrador"],
+    source: {
+      provider: "openmoss",
+      preset: "pt-br-neutral"
+    },
+    settings: {
+      preset: "pt-br-neutral"
+    },
+    engineIds: [MOSS_TTS_V15_ENGINE_ID],
     bindingKind: "preset"
   },
   ...qwenVoiceDesignPresets.map((preset) => ({

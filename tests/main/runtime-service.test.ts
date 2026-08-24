@@ -9,6 +9,7 @@ import * as schema from "../../src/main/db/schema"
 import {
   CHATTERBOX_MULTILINGUAL_MODEL_DIR_NAME,
   F5_TTS_MODEL_DIR_NAME,
+  MOSS_TTS_V15_MODEL_DIR_NAME,
   QWEN3_TTS_17B_BASE_MODEL_DIR_NAME,
   QWEN3_TTS_06B_MODEL_DIR_NAME,
   QWEN_PROSODY_GGUF_FILE,
@@ -31,10 +32,17 @@ describe("RuntimeService", () => {
       const models = await service.listModels()
       const qwen = models.find((model) => model.id === QWEN_PROSODY_MODEL_ID)
       const f5 = models.find((model) => model.id === "model_f5_tts_ptbr_pytorch")
+      const moss = models.find((model) => model.id === "model_moss_tts_v15_mlx")
 
       expect(qwen?.installStatus).toBe("not_configured")
       expect(qwen?.canDownload).toBe(true)
       expect(f5?.canDownload).toBe(false)
+      expect(moss).toMatchObject({
+        acceleratorPreference: "mlx",
+        engineId: "moss-tts-v15-mlx",
+        installStatus: "not_configured",
+        runtime: "mlx-sidecar"
+      })
 
       const modelPath = path.join(paths.modelsDir, "manual", QWEN_PROSODY_GGUF_FILE)
       await mkdir(path.dirname(modelPath), { recursive: true })
@@ -82,6 +90,14 @@ describe("RuntimeService", () => {
       expect(chatterboxModel.id).toBe("model_chatterbox_multilingual_mlx")
       expect(chatterboxModel.installStatus).toBe("available")
       expect(chatterboxModel.path).toBe(chatterboxPath)
+
+      const mossPath = path.join(paths.modelsDir, "MOSS-TTS-v1.5")
+      await mkdir(mossPath, { recursive: true })
+
+      const mossModel = await service.installFromPath(mossPath)
+      expect(mossModel.id).toBe("model_moss_tts_v15_mlx")
+      expect(mossModel.installStatus).toBe("available")
+      expect(mossModel.path).toBe(mossPath)
     } finally {
       await client.close()
     }
@@ -94,29 +110,35 @@ describe("RuntimeService", () => {
       const qwenModelPath = path.join(paths.modelsDir, QWEN3_TTS_06B_MODEL_DIR_NAME)
       const qwen17BaseModelPath = path.join(paths.modelsDir, QWEN3_TTS_17B_BASE_MODEL_DIR_NAME)
       const chatterboxModelPath = path.join(paths.modelsDir, CHATTERBOX_MULTILINGUAL_MODEL_DIR_NAME)
+      const mossModelPath = path.join(paths.modelsDir, MOSS_TTS_V15_MODEL_DIR_NAME)
       const f5ModelPath = path.join(paths.modelsDir, F5_TTS_MODEL_DIR_NAME)
       const qwenSidecarPath = path.join(paths.sidecarsDir, "tts", "qwen3_tts_mlx_sidecar.py")
       const chatterboxSidecarPath = path.join(paths.sidecarsDir, "tts", "chatterbox_mlx_sidecar.py")
+      const mossSidecarPath = path.join(paths.sidecarsDir, "tts", "moss_tts_mlx_sidecar.py")
       const f5SidecarPath = path.join(paths.sidecarsDir, "tts", "f5_tts_ptbr_sidecar.py")
       await mkdir(path.dirname(pythonExecutable), { recursive: true })
       await mkdir(qwenModelPath, { recursive: true })
       await mkdir(qwen17BaseModelPath, { recursive: true })
       await mkdir(chatterboxModelPath, { recursive: true })
+      await mkdir(mossModelPath, { recursive: true })
       await mkdir(f5ModelPath, { recursive: true })
       await mkdir(path.dirname(qwenSidecarPath), { recursive: true })
       await writeFile(pythonExecutable, "#!/usr/bin/env python3\n")
       await writeFile(path.join(qwenModelPath, "config.json"), "{}\n")
       await writeFile(path.join(qwen17BaseModelPath, "config.json"), "{}\n")
       await writeFile(path.join(chatterboxModelPath, "config.json"), "{}\n")
+      await writeFile(path.join(mossModelPath, "config.json"), "{}\n")
       await writeFile(path.join(f5ModelPath, "model_last.safetensors"), "f5\n")
       await writeFile(qwenSidecarPath, "# qwen sidecar\n")
       await writeFile(chatterboxSidecarPath, "# chatterbox sidecar\n")
+      await writeFile(mossSidecarPath, "# moss sidecar\n")
       await writeFile(f5SidecarPath, "# f5 sidecar\n")
 
       const models = await service.listModels()
       const qwenModel = models.find((model) => model.id === "model_qwen3_tts_06b_base_mlx")
       const qwen17BaseModel = models.find((model) => model.id === "model_qwen3_tts_17b_base_mlx")
       const chatterboxModel = models.find((model) => model.id === "model_chatterbox_multilingual_mlx")
+      const mossModel = models.find((model) => model.id === "model_moss_tts_v15_mlx")
       const f5Model = models.find((model) => model.id === "model_f5_tts_ptbr_pytorch")
       expect(qwenModel?.installStatus).toBe("available")
       expect(qwenModel?.path).toBe(qwenModelPath)
@@ -124,6 +146,8 @@ describe("RuntimeService", () => {
       expect(qwen17BaseModel?.path).toBe(qwen17BaseModelPath)
       expect(chatterboxModel?.installStatus).toBe("available")
       expect(chatterboxModel?.path).toBe(chatterboxModelPath)
+      expect(mossModel?.installStatus).toBe("available")
+      expect(mossModel?.path).toBe(mossModelPath)
       expect(f5Model?.installStatus).toBe("available")
       expect(f5Model?.path).toBe(f5ModelPath)
 
@@ -135,6 +159,9 @@ describe("RuntimeService", () => {
       })
       const chatterboxEngine = await db.query.ttsEngines.findFirst({
         where: (table, { eq }) => eq(table.id, "chatterbox-multilingual-mlx")
+      })
+      const mossEngine = await db.query.ttsEngines.findFirst({
+        where: (table, { eq }) => eq(table.id, "moss-tts-v15-mlx")
       })
       const qwen17BaseEngine = await db.query.ttsEngines.findFirst({
         where: (table, { eq }) => eq(table.id, "qwen3-tts-17b-base-mlx")
@@ -151,6 +178,15 @@ describe("RuntimeService", () => {
       expect(chatterboxEngine?.installPath).toBe(chatterboxModelPath)
       expect(chatterboxEngine?.adapterId).toBe("chatterbox-mlx")
       expect(chatterboxEngine?.capabilitiesJson).toMatchObject({ supportsVoiceClone: true, supportsDiscreteEmotion: true })
+      expect(mossEngine?.installed).toBe(true)
+      expect(mossEngine?.installPath).toBe(mossModelPath)
+      expect(mossEngine?.adapterId).toBe("moss-tts-mlx")
+      expect(mossEngine?.runtime).toBe("mlx")
+      expect(mossEngine?.capabilitiesJson).toMatchObject({
+        languages: expect.arrayContaining(["pt-BR", "pt"]),
+        supportsSsmlLikeMarkup: true,
+        supportsVoiceClone: true
+      })
       expect(f5Engine?.installed).toBe(true)
       expect(f5Engine?.installPath).toBe(f5ModelPath)
       expect(f5Engine?.adapterId).toBe("f5-tts-pt-br")
@@ -164,21 +200,28 @@ describe("RuntimeService", () => {
       const chatterboxManifest = await db.query.runtimeManifests.findFirst({
         where: (table, { eq }) => eq(table.adapterId, "chatterbox-mlx")
       })
+      const mossManifest = await db.query.runtimeManifests.findFirst({
+        where: (table, { eq }) => eq(table.adapterId, "moss-tts-mlx")
+      })
       expect(qwenManifest?.executablePath).toBe(pythonExecutable)
       expect(qwenManifest?.environmentJson).toMatchObject({ args: [qwenSidecarPath] })
       expect(chatterboxManifest?.executablePath).toBe(pythonExecutable)
       expect(chatterboxManifest?.environmentJson).toMatchObject({ args: [chatterboxSidecarPath] })
+      expect(mossManifest?.executablePath).toBe(pythonExecutable)
+      expect(mossManifest?.environmentJson).toMatchObject({ args: [mossSidecarPath] })
       expect(f5Manifest?.executablePath).toBe(pythonExecutable)
       expect(f5Manifest?.environmentJson).toMatchObject({ args: [f5SidecarPath] })
 
       const sidecars = await service.listSidecars()
       expect(sidecars.find((sidecar) => sidecar.id === "runtime_qwen3_tts_mlx_sidecar")?.status).toBe("available")
       expect(sidecars.find((sidecar) => sidecar.id === "runtime_chatterbox_mlx_sidecar")?.status).toBe("available")
+      expect(sidecars.find((sidecar) => sidecar.id === "runtime_moss_tts_mlx_sidecar")?.status).toBe("available")
       expect(sidecars.find((sidecar) => sidecar.id === "runtime_f5_tts_pt_br_pytorch_sidecar")?.status).toBe("available")
 
       const diagnostics = await service.diagnostics()
       expect(diagnostics.find((item) => item.id === "qwen3-tts-sidecar")?.status).toBe("available")
       expect(diagnostics.find((item) => item.id === "chatterbox-tts-sidecar")?.status).toBe("available")
+      expect(diagnostics.find((item) => item.id === "moss-tts-sidecar")?.status).toBe("available")
       expect(diagnostics.find((item) => item.id === "f5-tts-sidecar")?.status).toBe("available")
     } finally {
       await client.close()
@@ -190,14 +233,29 @@ describe("RuntimeService", () => {
     try {
       const localRoot = path.join(paths.appRoot, ".dreamreader-local")
       const pythonExecutable = path.join(localRoot, "python", "bin", "python")
+      const managedPythonExecutable = path.join(paths.pythonDir, "bin", "python")
       const qwenModelPath = path.join(localRoot, "models", QWEN3_TTS_06B_MODEL_DIR_NAME)
       const qwenSidecarPath = path.join(paths.sidecarsDir, "tts", "qwen3_tts_mlx_sidecar.py")
       await mkdir(path.dirname(pythonExecutable), { recursive: true })
+      await mkdir(path.dirname(managedPythonExecutable), { recursive: true })
       await mkdir(qwenModelPath, { recursive: true })
       await mkdir(path.dirname(qwenSidecarPath), { recursive: true })
       await writeFile(pythonExecutable, "#!/usr/bin/env python3\n")
+      await writeFile(managedPythonExecutable, "#!/usr/bin/env python3\n")
       await writeFile(path.join(qwenModelPath, "config.json"), "{}\n")
       await writeFile(qwenSidecarPath, "# qwen sidecar\n")
+      await db.insert(schema.runtimeManifests).values({
+        id: "runtime_qwen3_tts_mlx_sidecar",
+        adapterId: "qwen3-tts-mlx",
+        runtime: "mlx",
+        version: "sidecar-v1",
+        executablePath: managedPythonExecutable,
+        environmentJson: {
+          args: [qwenSidecarPath],
+          env: { HF_HOME: paths.huggingFaceDir }
+        },
+        capabilitiesJson: {}
+      })
 
       const models = await service.listModels()
       const qwenModel = models.find((model) => model.id === "model_qwen3_tts_06b_base_mlx")

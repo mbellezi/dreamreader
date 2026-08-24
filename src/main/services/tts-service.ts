@@ -1,4 +1,5 @@
 import { mkdir, rm, unlink, writeFile } from "node:fs/promises"
+import { randomInt } from "node:crypto"
 import path from "node:path"
 import { and, asc, eq, inArray, sql } from "drizzle-orm"
 import {
@@ -42,7 +43,7 @@ import { AppError } from "@main/lib/errors"
 import { hashBuffer } from "@main/lib/hash"
 import { createId } from "@main/lib/ids"
 import type { AppPaths } from "@main/lib/paths"
-import { transcodeAudioToAac } from "@main/lib/audio-transcode"
+import { mergeAudioSegmentsToWav, transcodeAudioToAac } from "@main/lib/audio-transcode"
 import {
   builtInBindingIdFor,
   builtInBindingKindFor,
@@ -278,6 +279,37 @@ const neuralTtsEngineDefinitions: TtsEngineDefinition[] = [
     }
   },
   {
+    id: "moss-tts-v15-mlx",
+    displayName: "MOSS-TTS-v1.5",
+    version: "v1.5",
+    adapterId: "moss-tts-mlx",
+    runtime: "mlx",
+    modelFormat: "mlx",
+    accelerator: "apple_metal",
+    installed: false,
+    capabilities: {
+      id: "moss-tts-v15-mlx",
+      displayName: "MOSS-TTS-v1.5",
+      runtime: "mlx",
+      modelFormat: "mlx",
+      languages: ["pt-BR", "pt", "en", "zh", "yue", "ar", "cs", "da", "de", "nl", "es", "fr", "fi", "el", "he", "hi", "hu", "ja", "it", "ko", "mk", "ms", "ru", "fa", "pl", "sv", "ro", "sw", "tl", "th", "tr", "vi"],
+      supportsVoiceClone: true,
+      supportsNaturalLanguageInstruction: true,
+      supportsDiscreteEmotion: false,
+      supportsBatch: true,
+      supportsStreaming: false,
+      supportsSegmentTimestamps: true,
+      supportsSsmlLikeMarkup: true,
+      preferredInputCase: "preserve",
+      estimatedMemoryMb: 20480
+    },
+    performanceProfile: {
+      mode: "mlx-sidecar",
+      requiresSidecar: true,
+      explicitPauseMarkup: "[pause X.Ys]"
+    }
+  },
+  {
     id: "f5-tts-pt-br",
     displayName: "F5-TTS PT-BR",
     version: "pt-br",
@@ -476,7 +508,7 @@ export class TtsService {
           engineId,
           voiceProfileId: DEFAULT_VOICE_PROFILE_ID,
           status: "completed",
-          progress: 0,
+          progress: 1,
           settingsJson: compactJson({
             normalizationDictionaryVersion: plan.normalization.dictionaryVersion,
             normalizationLanguage: plan.source.language,
@@ -649,6 +681,7 @@ export class TtsService {
     const originalText = input.text.replace(/\s+/g, " ").trim()
     const pronunciation = await this.pronunciationEntriesForBook(existing.bookId)
     const regenerationContext = await this.segmentRegenerationContext(job, input)
+    const regenerationSeed = randomGenerationSeed(regenerationContext.seed)
     const source = await this.getChapterSource(existing.bookId, job.chapterHref)
     const narrationLanguage = narrationLanguageFor(source.language, regenerationContext.generationLanguage)
     const dictionaryVersion = dictionaryVersionFor(pronunciation)
@@ -678,45 +711,149 @@ export class TtsService {
       outputDir,
       quality: regenerationContext.quality,
       readyEngine,
-      seed: regenerationContext.seed,
+      seed: regenerationSeed,
       segment,
       dictionaryVersion,
       language: narrationLanguage
     })
     const previousAssetId = existing.audioAssetId ?? undefined
-    const [updated] = await this.db
-      .update(ttsSegments)
-      .set({
-        segmentHash,
-        originalText,
-        normalizedText,
-        prosodyJson: prosody,
-        adapterPayloadJson: compactJson({
-          ...jsonObject(existing.adapterPayloadJson),
-          adapterId: readyEngine.adapterId,
-          engineId: regenerationContext.job.engineId,
-          generationLanguage: regenerationContext.generationLanguage,
-          modelSettings: regenerationContext.modelSettings,
-          normalizationLanguage: narrationLanguage,
-          quality: regenerationContext.quality,
-          regeneratedAt: new Date().toISOString(),
-          regeneratedFromSegmentId: existing.id,
-          voiceBindingId: regenerationContext.job.voiceBindingId ?? undefined,
-          voiceProfileId: regenerationContext.job.voiceProfileId ?? undefined
-        }),
-        audioAssetId: audio.assetId,
-        durationMs: audio.durationMs,
-        status: "completed",
-        errorMessage: null,
-        updatedAt: new Date()
-      })
-      .where(eq(ttsSegments.id, existing.id))
-      .returning()
+    try {
+      const [updated] = await this.db
+        .update(ttsSegments)
+        .set({
+          segmentHash,
+          originalText,
+          normalizedText,
+          prosodyJson: prosody,
+          adapterPayloadJson: compactJson({
+            ...jsonObject(existing.adapterPayloadJson),
+            adapterId: readyEngine.adapterId,
+            engineId: regenerationContext.job.engineId,
+            generationLanguage: regenerationContext.generationLanguage,
+            modelSettings: regenerationContext.modelSettings,
+            normalizationLanguage: narrationLanguage,
+            quality: regenerationContext.quality,
+            regenerationSeed,
+            regeneratedAt: new Date().toISOString(),
+            regeneratedFromSegmentId: existing.id,
+            voiceBindingId: regenerationContext.job.voiceBindingId ?? undefined,
+            voiceProfileId: regenerationContext.job.voiceProfileId ?? undefined
+          }),
+          audioAssetId: audio.assetId,
+          durationMs: audio.durationMs,
+          status: "completed",
+          errorMessage: null,
+          updatedAt: new Date()
+        })
+        .where(eq(ttsSegments.id, existing.id))
+        .returning()
 
-    await this.cleanupReplacedSegmentAsset(previousAssetId)
-    await this.updateJob(job.id, {})
-    await this.audiobook.markStale(existing.bookId)
-    return toTtsSegmentSummary(updated)
+      const chapterRecomposed = await this.recomposeChapterAfterSegmentRegeneration({
+        job: regenerationContext.job,
+        segmentJobId: existing.jobId,
+        regenerationSeed,
+        regeneratedSegmentId: existing.id
+      })
+      await this.cleanupReplacedSegmentAsset(previousAssetId)
+      await this.updateJob(job.id, {})
+      if (!chapterRecomposed) {
+        await this.audiobook.markStale(existing.bookId)
+      }
+      return toTtsSegmentSummary(updated)
+    } catch (error) {
+      await this.db
+        .update(ttsSegments)
+        .set({
+          segmentHash: existing.segmentHash,
+          originalText: existing.originalText,
+          normalizedText: existing.normalizedText,
+          prosodyJson: existing.prosodyJson,
+          adapterPayloadJson: existing.adapterPayloadJson,
+          audioAssetId: existing.audioAssetId,
+          durationMs: existing.durationMs,
+          status: existing.status,
+          errorMessage: existing.errorMessage,
+          updatedAt: new Date()
+        })
+        .where(eq(ttsSegments.id, existing.id))
+      await this.cleanupReplacedSegmentAsset(audio.assetId)
+      throw error
+    }
+  }
+
+  private async recomposeChapterAfterSegmentRegeneration(input: {
+    job: TtsJobRow
+    segmentJobId: string
+    regenerationSeed: number
+    regeneratedSegmentId: string
+  }): Promise<boolean> {
+    const jobSettings = jsonObject(input.job.settingsJson)
+    if (jobSettings.partial === true || typeof jobSettings.paragraphLimit === "number") {
+      return false
+    }
+    const rows = await this.db.query.ttsSegments.findMany({
+      where: eq(ttsSegments.jobId, input.segmentJobId),
+      orderBy: [asc(ttsSegments.segmentIndex)]
+    })
+    if (!rows.length || rows.some((row) => row.status !== "completed" || !row.audioAssetId)) {
+      return false
+    }
+    const assetRows = await this.db.query.assets.findMany({
+      where: inArray(assets.id, rows.map((row) => row.audioAssetId as string))
+    })
+    const assetsById = new Map(assetRows.map((asset) => [asset.id, asset]))
+    if (rows.some((row) => !row.audioAssetId || !assetsById.has(row.audioAssetId))) {
+      return false
+    }
+
+    const outputDir = path.join(this.jobOutputDirectory(input.job), "regenerated-chapters")
+    const merged = await mergeAudioSegmentsToWav({
+      outputPath: path.join(outputDir, `chapter-${Date.now()}-${input.regenerationSeed}.wav`),
+      segments: rows.map((row) => ({
+        filePath: assetsById.get(row.audioAssetId as string)!.path,
+        pauseAfterMs: NarrationProsodySchema.safeParse(row.prosodyJson).success
+          ? NarrationProsodySchema.parse(row.prosodyJson).pauseAfterMs
+          : 350
+      }))
+    })
+    const finalized = await this.createChapterAudioAsset(input.job, {
+      rawChapterPath: merged.audioPath,
+      rawChapterAudioHash: merged.contentHash,
+      rawChapterDurationMs: merged.durationMs,
+      rawChapterMimeType: merged.mimeType,
+      rawChapterSizeBytes: merged.sizeBytes
+    })
+    const source = await this.getChapterSource(input.job.bookId, input.job.chapterHref)
+    const chapterCacheHash = hashBuffer(
+      `${String(jobSettings.chapterCacheHash ?? source.contentHash)}:manual:${merged.contentHash}`
+    )
+    await this.audiobook.recordChapterAudio({
+      audioAssetId: finalized.chapterAssetId,
+      audioHash: finalized.chapterAudioHash,
+      bookId: input.job.bookId,
+      chapterHref: input.job.chapterHref,
+      chapterIndex: source.chapterIndex,
+      contentHash: chapterCacheHash,
+      durationMs: finalized.chapterDurationMs,
+      engineId: input.job.engineId,
+      title: source.title,
+      voiceBindingId: input.job.voiceBindingId ?? undefined,
+      voiceProfileId: input.job.voiceProfileId ?? undefined
+    })
+    await this.updateJob(input.job.id, {
+      settingsJson: compactJson({
+        ...jobSettings,
+        chapterAudioAssetId: finalized.chapterAssetId,
+        chapterAudioHash: finalized.chapterAudioHash,
+        chapterAudioEncoding: finalized.encoding,
+        chapterAudioMimeType: finalized.mimeType,
+        chapterCacheHash,
+        chapterDurationMs: finalized.chapterDurationMs,
+        manuallyRegeneratedSegmentId: input.regeneratedSegmentId,
+        regenerationSeed: input.regenerationSeed
+      })
+    })
+    return true
   }
 
   private async segmentRegenerationContext(
@@ -2271,6 +2408,11 @@ function chapterTitleKey(bookId: string, chapterHref: string): string {
   return `${bookId}\u0000${chapterHref}`
 }
 
+function randomGenerationSeed(previousSeed?: number): number {
+  const candidate = randomInt(0, 4_294_967_296)
+  return candidate === previousSeed ? (candidate + 1) % 4_294_967_296 : candidate
+}
+
 function toTtsSegmentSummary(row: TtsSegmentRow, jobId = row.jobId): TtsSegmentSummary {
   const prosody = NarrationProsodySchema.safeParse(row.prosodyJson)
   const rawMode = (row.adapterPayloadJson as { prosodyMode?: unknown }).prosodyMode
@@ -2501,6 +2643,9 @@ function adapterIdForEngine(engineId: string): string {
   }
   if (engineId === "chatterbox-multilingual-mlx") {
     return "chatterbox-mlx"
+  }
+  if (engineId === "moss-tts-v15-mlx") {
+    return "moss-tts-mlx"
   }
   if (engineId === "f5-tts-pt-br") {
     return "f5-tts-pt-br"
